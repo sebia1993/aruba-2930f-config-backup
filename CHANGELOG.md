@@ -14,6 +14,11 @@
 - 수정된 Paramiko PyPI 버전이 나올 때까지 유지할 정확히 한 건의 감사 예외,
   배포 경계, 재검토 기한과 제거 조건을 별도 문서로 공개
 
+### 변경
+
+- CI와 릴리스의 checkout, Python 설정, artifact 업로드·다운로드 Actions를
+  Node.js 24 기반 최신 major의 검증된 commit SHA로 고정
+
 ## [0.1.8] - 2026-08-21
 
 ### 추가
