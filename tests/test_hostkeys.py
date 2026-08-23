@@ -82,8 +82,9 @@ def test_host_key_probe_disables_sha1_rsa_before_transport_start(monkeypatch) ->
     monkeypatch.setitem(sys.modules, "paramiko", fake_paramiko)
     monkeypatch.setattr(
         "aruba2930f_backup.hostkeys.socket.create_connection",
-        lambda address, timeout: calls.update(address=address, connect_timeout=timeout)
-        or connection,
+        lambda address, timeout: (
+            calls.update(address=address, connect_timeout=timeout) or connection
+        ),
     )
 
     observed = ParamikoHostKeyProbe().probe(TARGET, timeout=7.5)
