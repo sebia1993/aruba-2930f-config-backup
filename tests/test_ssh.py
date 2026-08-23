@@ -529,6 +529,10 @@ def test_actual_authenticated_driver_uses_pinned_policy(tmp_path, monkeypatch) -
 
     assert connection.kwargs["device_type"] == "aruba_osswitch"
     assert connection.kwargs["auto_connect"] is False
+    assert connection.kwargs["disabled_algorithms"] == {
+        "keys": ["ssh-rsa"],
+        "pubkeys": ["ssh-rsa"],
+    }
     client.policy.missing_host_key(client, target.ip, expected_key)
     with pytest.raises(CollectionFailure) as changed:
         client.policy.missing_host_key(client, target.ip, FakeKey(b"changed-key"))

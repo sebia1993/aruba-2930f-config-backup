@@ -49,10 +49,10 @@ try {
     Invoke-Checked $PythonPath $pytestArguments
 
     if (-not $SkipAudit) {
-        # Paramiko 4 is required only for explicitly documented legacy 2930F SSH support.
+        # No fixed Paramiko release exists yet; both SSH paths block ssh-rsa fail-closed.
         Invoke-Checked $PythonPath @(
             "-m", "pip_audit", "-r", "requirements-lock.txt", "--strict",
-            "--ignore-vuln", "PYSEC-2026-2858"
+            "--ignore-vuln", "CVE-2026-44405"
         )
     }
     Write-Host "Repository validation passed."

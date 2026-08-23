@@ -86,7 +86,7 @@ HOST_KEY_CHANGED
 SSH_ALGORITHM_INCOMPATIBLE
 ```
 
-일부 구형 2930F는 오래된 SSH 알고리즘만 제공할 수 있습니다.
+일부 구형 2930F는 RSA/SHA-1 서명 방식인 `ssh-rsa`만 제공할 수 있습니다.
 
 장비에서 가능한 경우 다음을 확인합니다.
 
@@ -95,7 +95,9 @@ show ip ssh
 show version
 ```
 
-가능하면 ArubaOS-Switch를 적절한 지원 버전으로 유지하고 SHA-2 기반 알고리즘을 사용할 수 있도록 설정합니다.
+ArubaOS-Switch를 적절한 지원 버전으로 유지하고 RSA-SHA2, ECDSA 또는 Ed25519
+서버 키를 사용할 수 있도록 설정합니다. 이 도구는 `ssh-rsa` 차단을 자동으로
+해제하지 않으며, 해당 방식만 제공하는 장비에는 인증 정보를 보내지 않습니다.
 
 ## `no page` 실패
 

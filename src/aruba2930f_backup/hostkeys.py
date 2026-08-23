@@ -30,6 +30,18 @@ class HostKeyProbe(Protocol):
     def probe(self, target: DeviceTarget, *, timeout: float = 15.0) -> HostKeyObservation: ...
 
 
+def disabled_sha1_rsa_algorithms() -> dict[str, list[str]]:
+    """Return a fresh Paramiko policy that rejects RSA/SHA-1 signatures.
+
+    Paramiko 4.0.0 still enables ``ssh-rsa`` for both server host keys and
+    public-key authentication. Keeping this policy in one place prevents the
+    unauthenticated probe and the authenticated Netmiko connection from
+    drifting apart while CVE-2026-44405 has no fixed PyPI release.
+    """
+
+    return {"keys": ["ssh-rsa"], "pubkeys": ["ssh-rsa"]}
+
+
 def sha256_fingerprint(key_bytes: bytes) -> str:
     digest = hashlib.sha256(key_bytes).digest()
     encoded = base64.b64encode(digest).decode("ascii").rstrip("=")
@@ -251,7 +263,10 @@ class ParamikoHostKeyProbe:
         try:
             connection = socket.create_connection((target.ip, target.port), timeout=timeout)
             connection.settimeout(timeout)
-            transport = paramiko.Transport(connection)
+            transport = paramiko.Transport(
+                connection,
+                disabled_algorithms=disabled_sha1_rsa_algorithms(),
+            )
             transport.start_client(timeout=timeout)
             key = transport.get_remote_server_key()
             return HostKeyObservation(
