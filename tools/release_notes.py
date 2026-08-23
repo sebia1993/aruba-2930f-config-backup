@@ -136,12 +136,12 @@ Aruba2930FConfigBackup_v{version}_sbom.cdx.json
 
 ## 상세 문서
 
-- [README](https://github.com/sebia1993/Aruba-2930F-/blob/main/README.md)
-- [프로그램 구조](https://github.com/sebia1993/Aruba-2930F-/blob/main/docs/ARCHITECTURE.md)
-- [SSH 수집 및 운영 안전](https://github.com/sebia1993/Aruba-2930F-/blob/main/docs/SSH_AND_SAFETY.md)
-- [오류 코드](https://github.com/sebia1993/Aruba-2930F-/blob/main/docs/ERROR_CODES.md)
-- [현장 문제 해결](https://github.com/sebia1993/Aruba-2930F-/blob/main/docs/TROUBLESHOOTING.md)
-- [릴리즈 운영 원칙](https://github.com/sebia1993/Aruba-2930F-/blob/main/docs/RELEASE_POLICY.md)
+- [README](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/README.md)
+- [프로그램 구조](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/ARCHITECTURE.md)
+- [SSH 수집 및 운영 안전](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/SSH_AND_SAFETY.md)
+- [오류 코드](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/ERROR_CODES.md)
+- [현장 문제 해결](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/TROUBLESHOOTING.md)
+- [릴리즈 운영 원칙](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/RELEASE_POLICY.md)
 """
 
 

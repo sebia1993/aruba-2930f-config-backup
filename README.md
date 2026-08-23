@@ -1,6 +1,6 @@
 # Aruba 2930F 설정 백업
 
-[![CI](https://github.com/sebia1993/Aruba-2930F-/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sebia1993/Aruba-2930F-/actions/workflows/ci.yml)
+[![CI](https://github.com/sebia1993/aruba-2930f-config-backup/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sebia1993/aruba-2930f-config-backup/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **ArubaOS-Switch 기반 Aruba 2930F 여러 대의 `running-config`를 SSH로 일괄 수집하는 Windows용 읽기 전용 네트워크 자동화 도구입니다.**
@@ -8,6 +8,16 @@
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
 > 현재 배포 버전은 **v0.1.8 사전릴리즈**입니다. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다.
+
+## 포트폴리오 요약
+
+| 채용 관점 | 내용 |
+|---|---|
+| 해결한 문제 | 여러 스위치에 반복 접속해 설정을 백업하고 결과를 수작업으로 정리하던 과정을 하나의 Windows 도구로 표준화 |
+| 담당 범위 | 문제 정의, Windows GUI, SSH 안전 경계, 장비 식별, 결과 무결성, 패키징, 테스트와 CI/CD |
+| 핵심 판단 | 빠른 수집보다 **잘못된 장비·바뀐 SSH 지문·불완전한 출력에서 멈추는 것**을 우선 |
+| 검증 증거 | v0.1.8 기준 374개 테스트 통과, Windows CI, 배포 ZIP·SHA-256·CycloneDX SBOM 독립 검증 |
+| 증거의 한계 | 자동 테스트와 합성 SSH 검증 결과이며, 실제 운영 장비·업무 성과 수치로 해석하지 않음 |
 
 ## 한눈에 보기
 
@@ -270,6 +280,14 @@ py -3.14 -m venv .venv
 powershell -ExecutionPolicy Bypass -File .\tools\validate.ps1 `
   -PythonPath .\.venv\Scripts\python.exe
 ```
+
+## 함께 보는 네트워크 자동화 프로젝트
+
+| 프로젝트 | 보여주는 역량 |
+|---|---|
+| [Aruba Cluster Health Dashboard](https://github.com/sebia1993/aruba-cluster-health-dashboard) | 여러 장비 관측값의 상관분석과 장애·수집 실패 구분 |
+| [HPE Comware Change Validator](https://github.com/sebia1993/hpe-comware-change-validator) | 작업 전·후 상태 비교와 위험도 분류 |
+| [Aruba MM Session Cleanup](https://github.com/sebia1993/aruba-mm-session-cleanup) | 상태 변경 자동화의 승인·대상 고정·사후 검증 |
 
 ## 라이선스와 보안 제보
 
