@@ -179,14 +179,18 @@ def test_workflow_dependency_installation_fails_closed(workflow_name: str) -> No
     assert install_step.count("if ($LASTEXITCODE -ne 0)") == 3
 
 
-def test_dependency_audit_has_only_the_documented_legacy_ssh_exception() -> None:
+def test_dependency_audit_has_only_the_documented_sha1_rsa_exception() -> None:
     validation = (ROOT / "tools" / "validate.ps1").read_text(encoding="utf-8")
     security_policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    exception_policy = (ROOT / "docs" / "DEPENDENCY_AUDIT_EXCEPTIONS_KO.md").read_text(
+        encoding="utf-8"
+    )
 
     assert validation.count('"--ignore-vuln"') == 1
-    assert validation.count('"PYSEC-2026-2858"') == 1
-    assert "PYSEC-2026-2858" in security_policy
+    assert validation.count('"CVE-2026-44405"') == 1
     assert "CVE-2026-44405" in security_policy
+    assert "CVE-2026-44405" in exception_policy
+    assert "2026-09-24" in exception_policy
 
 
 def test_publish_job_rechecks_remote_refs_and_artifact_provenance() -> None:

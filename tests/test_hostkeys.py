@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 
 import pytest
 
 from aruba2930f_backup.hostkeys import (
     HostKeyStore,
+    ParamikoHostKeyProbe,
     _classify_probe_failure,
     sha256_fingerprint,
 )
@@ -39,6 +42,62 @@ def test_algorithm_incompatibility_is_safe_and_non_retryable() -> None:
     assert code is ErrorCode.SSH_ALGORITHM_INCOMPATIBLE
     assert "compatible" in message
     assert transient is False
+
+
+def test_host_key_probe_disables_sha1_rsa_before_transport_start(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    class FakeConnection:
+        def settimeout(self, timeout: float) -> None:
+            calls["socket_timeout"] = timeout
+
+        def close(self) -> None:
+            calls["socket_closed"] = True
+
+    class FakeKey:
+        def get_name(self) -> str:
+            return "ssh-ed25519"
+
+        def asbytes(self) -> bytes:
+            return b"host-key"
+
+    class FakeTransport:
+        def __init__(self, connection: object, *, disabled_algorithms: object) -> None:
+            calls["connection"] = connection
+            calls["disabled_algorithms"] = disabled_algorithms
+
+        def start_client(self, *, timeout: float) -> None:
+            calls["start_timeout"] = timeout
+
+        def get_remote_server_key(self) -> FakeKey:
+            return FakeKey()
+
+        def close(self) -> None:
+            calls["transport_closed"] = True
+
+    fake_paramiko = types.ModuleType("paramiko")
+    fake_paramiko.Transport = FakeTransport  # type: ignore[attr-defined]
+    fake_paramiko.SSHException = RuntimeError  # type: ignore[attr-defined]
+    connection = FakeConnection()
+    monkeypatch.setitem(sys.modules, "paramiko", fake_paramiko)
+    monkeypatch.setattr(
+        "aruba2930f_backup.hostkeys.socket.create_connection",
+        lambda address, timeout: calls.update(address=address, connect_timeout=timeout)
+        or connection,
+    )
+
+    observed = ParamikoHostKeyProbe().probe(TARGET, timeout=7.5)
+
+    assert calls["disabled_algorithms"] == {
+        "keys": ["ssh-rsa"],
+        "pubkeys": ["ssh-rsa"],
+    }
+    assert calls["address"] == (TARGET.ip, TARGET.port)
+    assert calls["connect_timeout"] == 7.5
+    assert calls["start_timeout"] == 7.5
+    assert calls["transport_closed"] is True
+    assert calls["socket_closed"] is True
+    assert observed.key_type == "ssh-ed25519"
 
 
 def test_connection_refused_is_reported_without_endpoint_details() -> None:

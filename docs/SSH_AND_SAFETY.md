@@ -107,20 +107,27 @@ show modules
 
 설정 TXT 자체에는 실제 네트워크 구성이 들어 있으므로 별도 보호가 필요합니다.
 
-## 레거시 SSH 알고리즘
+## SSH 알고리즘 안전 경계
 
 일부 2930F는 다음과 같은 오래된 SSH 방식만 제공할 수 있습니다.
 
 - `ssh-rsa`
 - `diffie-hellman-group14-sha1`
 
-현재 호환성 경로는 장비가 강한 알고리즘을 함께 지원하면 강한 방식을 우선하고, 필요한 장비에서만 레거시 방식이 협상되도록 구성되어 있습니다.
+`main`은 Paramiko의 호스트 키 알고리즘(`keys`)과 공개 키 인증 알고리즘
+(`pubkeys`)에서 `ssh-rsa`를 모두 비활성화합니다. 이 정책은 자격증명을 보내기 전
+호스트 키 사전점검과 실제 Netmiko 인증 연결에 동일하게 적용됩니다.
+
+따라서 `ssh-rsa`만 제공하는 장비는 지문 승인 화면까지 진행하지 않고
+`SSH_ALGORITHM_INCOMPATIBLE`로 종료되며, 암호나 사용자 이름을 전송하지 않습니다.
+강한 알고리즘을 함께 제공하는 장비는 RSA-SHA2, ECDSA 또는 Ed25519 서버 키를
+사용할 수 있습니다. 차단을 자동으로 해제하는 호환성 대체 경로는 없습니다.
 
 가능하면 장비의 ArubaOS-Switch 버전과 `show ip ssh` 결과를 확인하여 더 강한 알고리즘을 활성화하는 것이 좋습니다.
 
-공통 알고리즘이 없으면 `SSH_ALGORITHM_INCOMPATIBLE`로 종료합니다.
-
-Paramiko 4.0.0의 SHA-1 RSA 허용과 관련된 현재 예외는 [SECURITY.md](../SECURITY.md)에 기록되어 있습니다.
+Paramiko 4.0.0의 RSA/SHA-1 허용과 관련된 현재 예외, 배포 버전별 적용 범위와
+제거 조건은 [의존성 감사 예외](DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)에 기록되어
+있습니다.
 
 ## 취소 동작
 

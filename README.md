@@ -7,7 +7,7 @@
 
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
-> 현재 배포 버전은 **v0.1.8 사전릴리즈**입니다. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다.
+> 현재 배포 버전은 **v0.1.8 사전릴리즈**입니다. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다. `main`의 RSA/SHA-1 차단 보완은 v0.1.8 바이너리에 포함되지 않았으므로 [의존성 감사 예외](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)의 배포 경계를 확인하십시오.
 
 ## 포트폴리오 요약
 
@@ -135,7 +135,7 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 |---|---|
 | 단위 테스트 | ✅ 자동 검증 |
 | 가상/루프백 SSH 장비 | ✅ 자동 검증 |
-| 레거시 SSH 알고리즘 경로 | ✅ 자동 검증 |
+| RSA/SHA-1 전용 SSH 인증 전 차단 | ✅ 자동 검증 |
 | Windows 패키지 실행 점검 | ✅ 자동 검증 |
 | 릴리즈 ZIP SHA-256 검증 | ✅ 자동 검증 |
 | SBOM 생성 및 검증 | ✅ 자동 검증 |
@@ -177,7 +177,7 @@ show running-config
 - 2930F 식별이 끝난 뒤 `show running-config`를 한 번 실행합니다.
 - `(config)#`와 같은 설정 모드 프롬프트는 허용하지 않습니다.
 
-프롬프트 처리, 출력 한도, 레거시 SSH 알고리즘 등 상세 동작은 [SSH 수집 및 운영 안전](docs/SSH_AND_SAFETY.md)을 참고하십시오.
+프롬프트 처리, 출력 한도, SSH 알고리즘 차단 등 상세 동작은 [SSH 수집 및 운영 안전](docs/SSH_AND_SAFETY.md)을 참고하십시오.
 
 ## 결과 파일
 
@@ -253,7 +253,8 @@ show running-config
 |---|---|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 프로그램 구성, 수집 단계, 결과 생성 흐름 |
 | [VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md) | 자동/실장비 검증 항목, 합격 기준, 검증 기록 |
-| [SSH_AND_SAFETY.md](docs/SSH_AND_SAFETY.md) | 프롬프트, `no page`, 모델 식별, 레거시 SSH, 안전 경계 |
+| [SSH_AND_SAFETY.md](docs/SSH_AND_SAFETY.md) | 프롬프트, `no page`, 모델 식별, SSH 알고리즘, 안전 경계 |
+| [DEPENDENCY_AUDIT_EXCEPTIONS_KO.md](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md) | Paramiko 감사 예외, 보완 통제, 재검토 기한과 제거 조건 |
 | [ERROR_CODES.md](docs/ERROR_CODES.md) | 오류 코드와 1차 확인 방향 |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 현장 적용 시 점검 순서와 대표 문제 |
 | [RELEASE_POLICY.md](docs/RELEASE_POLICY.md) | 버전·릴리즈·검증 원칙 |

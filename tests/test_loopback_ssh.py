@@ -67,8 +67,8 @@ def test_production_ssh_stack_against_loopback_aruba_fixture(tmp_path) -> None:
         assert server.errors == []
 
 
-def test_production_ssh_stack_supports_legacy_2930f_algorithms(tmp_path) -> None:
-    """Keep compatibility with 2930F endpoints that only offer SHA-1 SSH algorithms."""
+def test_production_ssh_stack_blocks_sha1_rsa_before_authentication(tmp_path) -> None:
+    """A SHA-1-only endpoint must fail before any credential is transmitted."""
 
     with LoopbackArubaSSHServer(legacy_algorithms_only=True) as server:
         target = DeviceTarget("127.0.0.1", server.port)
@@ -82,20 +82,10 @@ def test_production_ssh_stack_supports_legacy_2930f_algorithms(tmp_path) -> None
         )
 
         checks = collector.probe_host_keys([target], options=options)
-        assert checks[0].state is HostKeyTrustState.UNKNOWN
+        assert checks[0].state is HostKeyTrustState.REJECTED
+        assert checks[0].error_code is ErrorCode.SSH_ALGORITHM_INCOMPATIBLE
         assert server.auth_attempts == []
-
-        collector.approve_host_keys(checks)
-        results = collector.collect_many(
-            [target],
-            Credentials(server.username, server.password),
-            options,
-        )
-
-        assert results[0].status is DeviceStatus.SUCCESS
-        assert results[0].software_version == "WC.16.11.0025"
-        assert wait_for(lambda: "show running-config" in server.commands)
-        assert len(server.auth_attempts) == 1
+        assert server.commands == []
         assert server.errors == []
 
 
