@@ -152,6 +152,21 @@ def test_release_checkout_does_not_persist_publish_credentials() -> None:
     assert "persist-credentials: false" in checkout_block
 
 
+def test_workflows_pin_node24_actions_to_reviewed_commits() -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    combined = ci + release
+
+    assert combined.count("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1") == 2
+    assert combined.count("actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97") == 2
+    assert combined.count("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a") == 3
+    assert combined.count("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c") == 1
+    assert "@11d5960a326750d5838078e36cf38b85af677262" not in combined
+    assert "@a26af69be951a213d495a4c3e4e4022e16d87065" not in combined
+    assert "@ea165f8d65b6e75b540449e92b4886f43607fa02" not in combined
+    assert "@d3f86a106a0bac45b974a628896c90dbdf5c8093" not in combined
+
+
 def test_release_workflow_cannot_mask_native_gate_failures() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     ref_step = workflow.split(
