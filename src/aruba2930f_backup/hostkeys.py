@@ -36,7 +36,7 @@ def disabled_sha1_rsa_algorithms() -> dict[str, list[str]]:
     Paramiko 4.0.0 still enables ``ssh-rsa`` for both server host keys and
     public-key authentication. Keeping this policy in one place prevents the
     unauthenticated probe and the authenticated Netmiko connection from
-    drifting apart while CVE-2026-44405 has no fixed PyPI release.
+    drifting apart until the Paramiko dependency upgrade is validated.
     """
 
     return {"keys": ["ssh-rsa"], "pubkeys": ["ssh-rsa"]}
