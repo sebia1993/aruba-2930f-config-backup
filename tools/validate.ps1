@@ -49,7 +49,7 @@ try {
     Invoke-Checked $PythonPath $pytestArguments
 
     if (-not $SkipAudit) {
-        # No fixed Paramiko release exists yet; both SSH paths block ssh-rsa fail-closed.
+        # Paramiko 5.0.0 upgrade is pending validation; both SSH paths block ssh-rsa.
         Invoke-Checked $PythonPath @(
             "-m", "pip_audit", "-r", "requirements-lock.txt", "--strict",
             "--ignore-vuln", "CVE-2026-44405"
