@@ -51,12 +51,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Editable package installation failed." }
 
       - name: Render documentation screenshots
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $fontBlobSha = 'b386890ba945e1f39448a6b59f20c5d194f58808'
           $fontApi = "https://api.github.com/repos/google/fonts/git/blobs/$fontBlobSha"
           $headers = @{
             Accept = 'application/vnd.github+json'
+            Authorization = "Bearer $env:GH_TOKEN"
             'User-Agent' = 'Aruba2930FConfigBackup-CI'
           }
           $fontBlob = Invoke-RestMethod -Uri $fontApi -Headers $headers
