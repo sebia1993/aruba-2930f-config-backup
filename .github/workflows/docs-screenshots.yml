@@ -1,30 +1,28 @@
-name: CI
+name: Documentation screenshots
 
 on:
   push:
-    branches:
-      - main
+    branches: ["codex/usage-evidence-20260908"]
+    paths:
+      - "tools/render_docs_screenshots.py"
+      - ".github/workflows/docs-screenshots.yml"
   pull_request:
+    paths:
+      - "tools/render_docs_screenshots.py"
+      - ".github/workflows/docs-screenshots.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  windows-validate-and-package:
-    name: Windows x64 validation and package
+  capture:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 15
     env:
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
       QT_QPA_PLATFORM: offscreen
-
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,10 +49,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Locked dependency installation failed." }
           python -m pip install --no-input --no-deps -e .
           if ($LASTEXITCODE -ne 0) { throw "Editable package installation failed." }
-
-      - name: Run safety, lint, typing, tests, coverage, and audit
-        shell: pwsh
-        run: ./tools/validate.ps1 -PythonPath python
 
       - name: Render documentation screenshots
         env:
@@ -86,18 +80,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Aruba2930FConfigBackup-docs-screenshots
-          path: artifacts/docs-screenshots/*.png
+          path: artifacts/docs-screenshots/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
 
-      - name: Build and verify portable package
-        shell: pwsh
-        run: ./build_windows.ps1 -PythonPath python -Version 0.1.8 -SkipValidation -UseCurrentEnvironment
-
-      - name: Upload verified CI package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: Aruba2930FConfigBackup-windows-x64-ci
-          path: artifacts/release/*
-          if-no-files-found: error
-          retention-days: 7

@@ -1,0 +1,28 @@
+{
+  "application": "Aruba 2930F Config Backup",
+  "application_version": "0.1.8",
+  "source_commit": "11db79d33f98c01cb923ef9544f9d3792d45472f",
+  "capture_os": "Windows-2025Server-10.0.26100-SP0",
+  "python": "3.14.7",
+  "method": "Actual PySide6 MainWindow and HostKeyApprovalDialog; Qt offscreen; synthetic widget state",
+  "network": "socket connection attempts blocked; no collection or device access",
+  "workflow_run": "34175884087",
+  "images": [
+    {
+      "file": "host-key-review.png",
+      "sha256": "57e0304795d3d53b678c6a9554745cccb406a2740adf3e9a0f5a8e7080c4acf9"
+    },
+    {
+      "file": "main-window.png",
+      "sha256": "e37882469f2e4d6a65c32e9ab94d0ec9a01351312e84b0e6436ad1a4e1464f05"
+    },
+    {
+      "file": "mixed-result.png",
+      "sha256": "1560f6da690697a6727efb6f7ba3dd3b01b4d8b57d31b7e35a3ec8523f5c5e84"
+    },
+    {
+      "file": "result-example.png",
+      "sha256": "bf703ca72c8bbdb5be60d89117995d251fe8e2aa478d1bec9dd2f30aee14d01c"
+    }
+  ]
+}
