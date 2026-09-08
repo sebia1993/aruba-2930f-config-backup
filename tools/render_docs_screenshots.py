@@ -6,7 +6,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
+import platform
+import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,7 +20,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics, QImage
 from PySide6.QtWidgets import QApplication, QTableWidgetItem
 
-from aruba2930f_backup.gui import MainWindow
+from aruba2930f_backup.gui import HostKeyApprovalDialog, MainWindow
+from aruba2930f_backup.models import (
+    DeviceTarget,
+    HostKeyCheck,
+    HostKeyObservation,
+    HostKeyTrustState,
+)
 
 
 def _apply_documentation_font(app: QApplication) -> None:
@@ -89,6 +100,66 @@ def _save_result_example(output: Path) -> None:
     app.processEvents()
 
 
+def _save_host_key_review(output: Path) -> None:
+    app, window = _prepare_window()
+    check = HostKeyCheck(
+        observation=HostKeyObservation(
+            DeviceTarget("192.0.2.10"),
+            "ssh-ed25519",
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ),
+        state=HostKeyTrustState.UNKNOWN,
+    )
+    dialog = HostKeyApprovalDialog([check], parent=window)
+    dialog.resize(1040, 640)
+    dialog.show()
+    app.processEvents()
+    if not dialog.grab().save(str(output / "host-key-review.png"), "PNG"):
+        raise RuntimeError("SSH 지문 확인 화면 PNG 저장에 실패했습니다.")
+    dialog.reject()
+    window.close()
+    app.processEvents()
+
+
+def _save_mixed_result(output: Path) -> None:
+    app, window = _prepare_window()
+    window.resize(1200, 880)
+    rows = (
+        ("192.0.2.10", "LAB-2930F-01", "Aruba 2930F / JL255A", "성공", "지문 1/4 · 백업 1/4", ""),
+        (
+            "192.0.2.11",
+            "LAB-OTHER-02",
+            "합성 비대상 모델",
+            "실패",
+            "지문 1/4 · 백업 1/4",
+            "MODEL_UNSUPPORTED",
+        ),
+        (
+            "192.0.2.12",
+            "LAB-2930F-03",
+            "Aruba 2930F",
+            "재시도 소진",
+            "지문 1/4 · 백업 4/4",
+            "COMMAND_TIMEOUT",
+        ),
+    )
+    window.result_table.setRowCount(len(rows))
+    for row_index, values in enumerate(rows):
+        for column_index, value in enumerate(values):
+            window.result_table.setItem(row_index, column_index, QTableWidgetItem(value))
+    window.status_label.setText("완료 — 성공 1대 / 실패 2대 · 문서용 합성 상태 (실제 수집 없음)")
+    window.progress_bar.setValue(100)
+    app.processEvents()
+    if not window.grab().save(str(output / "mixed-result.png"), "PNG"):
+        raise RuntimeError("혼합 결과 화면 PNG 저장에 실패했습니다.")
+    window.close()
+    app.processEvents()
+
+
+def _block_network(*_args: object, **_kwargs: object) -> None:
+    raise RuntimeError("Documentation capture forbids network connections")
+
+
 def _verify_image(path: Path) -> None:
     if not path.is_file():
         raise RuntimeError(f"문서 화면 파일이 생성되지 않았습니다: {path}")
@@ -113,11 +184,33 @@ def main() -> int:
 
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    socket.create_connection = _block_network
+    socket.socket.connect = _block_network
+    socket.socket.connect_ex = _block_network
     _save_main_window(output)
     _save_result_example(output)
+    _save_host_key_review(output)
+    _save_mixed_result(output)
 
-    for path in (output / "main-window.png", output / "result-example.png"):
+    for path in sorted(output.glob("*.png")):
         _verify_image(path)
+    manifest = {
+        "application": "Aruba 2930F Config Backup",
+        "application_version": "0.1.8",
+        "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "capture_os": platform.platform(),
+        "python": platform.python_version(),
+        "method": "Actual PySide6 MainWindow and HostKeyApprovalDialog; Qt offscreen; synthetic widget state",
+        "network": "socket connection attempts blocked; no collection or device access",
+        "workflow_run": os.environ.get("GITHUB_RUN_ID", "local"),
+        "images": [
+            {"file": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+            for p in sorted(output.glob("*.png"))
+        ],
+    }
+    (output / "capture-manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return 0
 
 
