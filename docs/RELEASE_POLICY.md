@@ -78,6 +78,28 @@
 
 빌드 이후 `main`이나 태그가 바뀌면 게시를 중단합니다.
 
+## GitHub 화면에서 발행
+
+1. 버전·문서 변경을 모두 포함한 PR의 CI 통과를 확인하고 `main`에 병합합니다.
+2. 병합된 `main` 커밋의 40자리 SHA를 확인합니다.
+3. Actions → **Prepare release** → **Run workflow**에서 브랜치를 `main`으로 두고
+   `release_tag`에 `v0.2.0` 같은 버전 태그, `expected_main_sha`에 확인한 SHA를 입력합니다.
+4. 준비 작업은 버전 선언과 현재 `main`·선택한 실행·checkout·입력 SHA가 모두 같은지
+   확인한 뒤 annotated tag를 생성하고, 해당 태그에서 기존 **Release**를 실행합니다.
+5. **Release**의 Windows 빌드와 게시 작업이 모두 성공하고 세 배포 파일이 등록됐는지
+   확인합니다. 준비 작업 성공만으로 배포 완료를 판단하지 않습니다.
+
+준비 작업은 기존 태그를 덮어쓰거나 삭제하지 않습니다. 동일한 커밋의 annotated tag가
+이미 있고 아직 Release가 없으면 준비 작업을 다시 실행하여 발행을 재요청할 수 있습니다.
+태그가 다른 커밋을 가리키거나 lightweight tag이면 실패합니다. 빌드 중에는 `main`을
+추가 변경하지 않습니다. 직접 annotated tag를 push하는 기존 발행 방식도 유지됩니다.
+
+태그 생성·워크플로 실행 권한은 **Prepare release** 작업에만 부여합니다. 기존 Windows
+빌드는 읽기 권한을 유지하고, 배포 파일 게시는 분리된 게시 작업에서만 수행합니다.
+`GITHUB_TOKEN`으로 생성한 태그 push는 새 워크플로를 자동 시작하지 않으므로
+[공식 이벤트 정책](https://docs.github.com/en/actions/concepts/security/github_token)에 따라
+기존 Release를 태그 ref로 명시적으로 실행합니다.
+
 ## Release Notes 구성
 
 GitHub Release 본문은 다음 순서를 기본으로 합니다.

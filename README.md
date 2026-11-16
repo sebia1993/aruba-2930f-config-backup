@@ -5,11 +5,11 @@
 
 **ArubaOS-Switch 기반 Aruba 2930F 여러 대의 `running-config`를 SSH로 일괄 수집하는 Windows용 네트워크 자동화 도구입니다.** 백업은 읽기 전용이며, 별도 **포트 제어** 창에서 단일 인터페이스의 PoE 전원과 통신을 끄고 켤 수 있습니다.
 
-> **포트 제어는 개발 중인 다음 버전의 기능입니다. 기존 v0.1.8 배포 ZIP에는 포함되지 않습니다.** [포트 제어 사용 안내](docs/PORT_CONTROL_KO.md)에서 동작과 한계를 확인하십시오.
+> **v0.2.0 사전릴리즈부터 단일 포트의 PoE 전원 OFF/ON과 포트 Down/Up을 제공합니다.** 기존 v0.1.8 배포 ZIP에는 포함되지 않습니다. [포트 제어 사용 안내](docs/PORT_CONTROL_KO.md)에서 동작과 한계를 확인하십시오.
 
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
-> 현재 배포 버전은 **v0.1.8 사전릴리즈**입니다. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다. `main`의 RSA/SHA-1 차단 보완은 v0.1.8 바이너리에 포함되지 않았으므로 [의존성 감사 예외](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)의 배포 경계를 확인하십시오.
+> 현재 버전은 **v0.2.0 사전릴리즈**입니다. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 배포 파일과 해당 버전의 검증 결과는 GitHub Releases 및 Actions에서 확인하십시오. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다. v0.2.0에는 RSA/SHA-1 차단 보완이 포함되며 Paramiko 의존성 감사 예외는 유지됩니다. [의존성 감사 예외](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)의 배포 경계를 확인하십시오.
 
 ## 포트폴리오 요약
 
@@ -18,7 +18,7 @@
 | 해결한 문제 | 여러 스위치에 반복 접속해 설정을 백업하고 결과를 수작업으로 정리하던 과정을 하나의 Windows 도구로 표준화 |
 | 담당 범위 | 문제 정의, Windows GUI, SSH 안전 경계, 장비 식별, 결과 무결성, 패키징, 테스트와 CI/CD |
 | 핵심 판단 | 빠른 수집보다 **잘못된 장비·바뀐 SSH 지문·불완전한 출력에서 멈추는 것**을 우선 |
-| 검증 증거 | v0.1.8 기준 374개 테스트 통과, Windows CI, 배포 ZIP·SHA-256·CycloneDX SBOM 독립 검증 |
+| 검증 증거 | 단위·루프백 SSH·오프라인 GUI 테스트, Windows CI, ZIP·SHA-256·CycloneDX SBOM 검증. 버전별 결과는 [개발 기록](DEVELOPMENT_LOG.md)과 GitHub Actions에서 확인 |
 | 증거의 한계 | 자동 테스트와 합성 SSH 검증 결과이며, 실제 운영 장비·업무 성과 수치로 해석하지 않음 |
 
 ## 채용 검토자를 위한 읽는 순서
@@ -35,9 +35,10 @@
 | 수집 명령 | `show running-config` |
 | 장비 변경 | 백업은 변경 없음. 별도 포트 제어에서 대상 확인 후 PoE/포트 사용 설정 변경 |
 | 사전 확인 | SSH 장비 지문, EXEC 프롬프트, `no page`, 모델/SKU |
-| 동시 처리 | 기본 10대, 최대 20대 |
-| 실패 처리 | 장비 단위 격리, 5/15/30초 지연 재시도 |
-| 결과 | 장비별 TXT, SHA-256, `result.xlsx`, 비민감 진단 로그 |
+| 백업 동시 처리 | 기본 10대, 최대 20대 |
+| 백업 실패 처리 | 장비 단위 격리, 5/15/30초 지연 재시도 |
+| 백업 결과 | 장비별 TXT, SHA-256, `result.xlsx`, 비민감 진단 로그 |
+| 포트 제어 | 단일 포트, 변경 명령 자동 재전송 없음, 대상·전후 상태를 담는 별도 작업 이력 |
 | 실행 환경 | Windows x64, Python 설치 불필요한 배포 ZIP |
 
 ## 해결하려 한 운영 문제
@@ -135,7 +136,7 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 | IPv4 | 지원 | 현재 입력 대상 |
 | Windows x64 | 지원 | 배포 ZIP 기준 |
 | 다른 Aruba 모델 | 미지원 | 2930F 외 장비는 차단 |
-| 단일 포트 PoE/통신 제어 | 다음 버전 소스에 추가 | 별도 제어 창에서 대상 확인 후 실행 |
+| 단일 포트 PoE/통신 제어 | v0.2.0부터 제공 | 별도 제어 창에서 대상 확인 후 실행 |
 | 설정 복원 및 그 밖의 구성 변경 | 미지원 | 백업 경로는 읽기 전용 |
 
 ### 검증 현황
@@ -156,12 +157,12 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 
 ## 빠른 시작
 
-1. GitHub **Releases**에서 `Aruba2930FConfigBackup_v0.1.8_windows_x64.zip`과 같은 Windows x64 ZIP을 받습니다.
+1. GitHub **Releases**에서 `Aruba2930FConfigBackup_v0.2.0_windows_x64.zip`을 받습니다.
 2. 함께 제공되는 `.sha256` 파일로 ZIP 해시를 확인합니다.
 
 ```powershell
-Get-FileHash .\Aruba2930FConfigBackup_v0.1.8_windows_x64.zip -Algorithm SHA256
-Get-Content .\Aruba2930FConfigBackup_v0.1.8_windows_x64.zip.sha256
+Get-FileHash .\Aruba2930FConfigBackup_v0.2.0_windows_x64.zip -Algorithm SHA256
+Get-Content .\Aruba2930FConfigBackup_v0.2.0_windows_x64.zip.sha256
 ```
 
 3. ZIP 전체를 쓰기 가능한 로컬 폴더에 압축 해제합니다.
@@ -249,7 +250,7 @@ show running-config
 
 세부 정책은 [SSH 수집 및 운영 안전](docs/SSH_AND_SAFETY.md)과 [SECURITY.md](SECURITY.md)를 참고하십시오.
 
-## 재시도 정책
+## 백업 재시도 정책
 
 일시적인 네트워크 오류와 명령 시간초과처럼 재시도 가능한 실패에만 적용합니다.
 
@@ -261,6 +262,8 @@ show running-config
 | 4차 | 세 번째 실패 후 30초 |
 
 인증 실패, SSH 장비 지문 변경, 미지원 모델처럼 동일 조건에서 반복해도 의미가 없는 오류는 즉시 종료합니다.
+
+별도 포트 제어의 변경 명령에는 이 재시도 정책을 적용하지 않습니다.
 
 ## 현재 범위 밖
 

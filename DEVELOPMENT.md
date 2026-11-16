@@ -55,7 +55,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\validate.ps1 `
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build_windows.ps1 `
-  -PythonPath C:\Python314\python.exe -Version 0.1.8
+  -PythonPath C:\Python314\python.exe -Version 0.2.0
 ```
 
 빌드 결과에는 다음이 포함됩니다.
