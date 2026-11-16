@@ -61,6 +61,7 @@ class Device:
         self.link_status = "Down"
         self.poe_enabled = True
         self.poe_status = "Searching"
+        self.poe_format = "legacy"
         self.sku = "JL255A"
         self.hostname = "edge-lab"
         self.fingerprint = sha256_fingerprint(b"synthetic-port-control-key")
@@ -126,6 +127,11 @@ class Session:
     def read_poe(self, interface: str) -> str:
         d = self.device
         enabled = "Yes" if d.poe_enabled else "No"
+        if d.poe_format == "configuration":
+            text = f"Status and Configuration Information for port {d.interface}\nPower Enable : {enabled}\n"
+            if d.poe_enabled:
+                text += f"PoE Port Status : {d.poe_status}\nPSE Reserved Power : 60 W\nPD Power Draw : 0 W\n"
+            return text
         text = f"Status and Counters - Port Power Status for port {d.interface}\nPower Enable : {enabled}\n"
         if d.poe_enabled:
             text += f"Detection Status : {d.poe_status}\nPower : 0 W\n"
@@ -168,10 +174,12 @@ def inspect(service: Any, device: Device) -> Any:
 
 
 @pytest.mark.parametrize("action", list(PortAction))
+@pytest.mark.parametrize("poe_format", ["legacy", "configuration"])
 def test_each_action_changes_only_its_setting_and_is_verified(
-    setup: Any, action: PortAction
+    setup: Any, action: PortAction, poe_format: str
 ) -> None:
     service, d, _ = setup
+    d.poe_format = poe_format
     if action.is_poe:
         d.poe_enabled = not action.desired_enabled
     else:
@@ -424,3 +432,83 @@ def test_prewrite_identity_or_output_failure_cannot_mutate(setup: Any, kind: str
             snapshot, PortAction.DISABLE, CREDENTIALS, confirmation=snapshot.confirmation_text
         )
     assert not d.mutations
+
+
+def documented_poe_status() -> str:
+    # Official 2930F/2930M AOS-S 16.11 Management and Configuration Guide,
+    # pp. 108-109: the 1/28 example, preserving both output columns.
+    # https://arubanetworking.hpe.com/techdocs/AOS-Switch/16.11/Aruba%202930%20M%26F%20Management%20and%20Configuration%20Guide%20for%20AOS-S%2016.11.pdf
+    return (Path(__file__).parent / "fixtures" / "poe_status_aos_s_16_11.txt").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_documented_configuration_poe_format_binds_vsf_port_and_power_draw() -> None:
+    state = parse_poe_status(documented_poe_status(), "1/28")
+    assert state.enabled is True
+    assert state.status == "Delivering"
+    assert state.watts == 3.2
+
+
+def test_configuration_format_uses_pd_draw_not_pse_reserved_or_allocated_power() -> None:
+    output = documented_poe_status().replace("for port 1/28", "for port 1")
+    output = output.replace("PSE Reserved Power : 3.2 W", "PSE Reserved Power : 57.4 W")
+    output = output.replace("PD Power Draw : 3.2 W", "PD Power Draw : 49.2 W")
+    state = parse_poe_status(output, "1")
+    assert state.watts == 49.2
+
+
+def test_configuration_format_disabled_can_omit_delivery_and_draw() -> None:
+    state = parse_poe_status(
+        "Status and Configuration Information for port 1/28\nPower Enable : No\n", "1/28"
+    )
+    assert state.enabled is False
+    assert state.watts is None
+
+
+@pytest.mark.parametrize("interface", ["28", "1", "1/2", "2/28"])
+def test_configuration_format_cannot_be_applied_to_another_port(interface: str) -> None:
+    with pytest.raises(CollectionFailure):
+        parse_poe_status(documented_poe_status(), interface)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "Status and Configuration Information for port 1/28\n",
+        "Status and Configuration Information for port 2/28\n",
+        "Status and Counters - Port Power Status for port 1/28\n",
+        "PoE Port Status : Delivering\n",
+        "PoE Port Status : Unknown\n",
+        "Detection Status : Delivering\n",
+        "PD Power Draw : 3.2 W\n",
+        "PD Power Draw : Unknown\n",
+        "Power : 3.2 W\n",
+    ],
+)
+def test_configuration_format_rejects_ambiguous_and_mixed_fields(extra: str) -> None:
+    with pytest.raises(CollectionFailure):
+        parse_poe_status(documented_poe_status() + extra, "1/28")
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("PoE Port Status : Delivering", "Detection Status : Delivering"),
+        ("PD Power Draw : 3.2 W", "Power : 3.2 W"),
+        ("PoE Port Status : Delivering", "PoE Port Status : Unknown"),
+        ("PD Power Draw : 3.2 W", "PD Power Draw : -1 W"),
+    ],
+)
+def test_configuration_format_rejects_replaced_or_invalid_fields(old: str, new: str) -> None:
+    with pytest.raises(CollectionFailure):
+        parse_poe_status(documented_poe_status().replace(old, new), "1/28")
+
+
+@pytest.mark.parametrize("extra", ["PoE Port Status : Disabled\n", "PD Power Draw : 0 W\n"])
+def test_legacy_format_rejects_configuration_format_fields(extra: str) -> None:
+    with pytest.raises(CollectionFailure):
+        parse_poe_status(
+            "Status and Counters - Port Power Status for port 24\nPower Enable : No\n" + extra,
+            "24",
+        )

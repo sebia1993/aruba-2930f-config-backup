@@ -52,6 +52,13 @@ PoE 켜짐 확인은 AP 부팅, 컨트롤러 재등록, 무선 서비스 복구�
 `Detection Status=Disabled`도 전력 부족 등에 의해 발생할 수 있으므로
 설정상 켜짐/꺼짐은 `Power Enable`로 판단합니다.
 
+PoE 출력 형식에 따라 공급 상태는 `Detection Status` 또는 `PoE Port Status`,
+소비 전력은 `Power` 또는 `PD Power Draw`에서 읽습니다. `PSE Reserved Power` 등
+예약·할당 전력은 소비 전력으로 표시하지 않습니다. 각 형식의 대상 포트와 상태 필드가
+일치해야 하며 중복·혼합·불명확한 출력에서는 변경을 중단합니다.
+두 형식의 근거는 [AOS-S 16.11 공식 관리 안내서의 PoE 출력 예제](https://arubanetworking.hpe.com/techdocs/AOS-Switch/16.11/Aruba%202930%20M%26F%20Management%20and%20Configuration%20Guide%20for%20AOS-S%2016.11.pdf#page=104)입니다.
+출력 형식 지원이 2930F 이외 장비에 대한 지원 확대를 뜻하지는 않습니다.
+
 ## 실행 결과와 복구
 
 - **설정 확인:** 요청한 관리 설정을 재조회하여 확인한 결과입니다. 실제 링크/전원 공급은 별도 표시합니다.

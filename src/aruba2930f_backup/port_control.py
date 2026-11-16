@@ -130,23 +130,47 @@ def parse_poe_status(output: str, interface: str) -> PoEState:
     """Require a port-bound Power Enable value, distinct from power delivery."""
 
     validate_interface(interface)
-    ports = re.findall(r"Port Power Status for port\s+(\S+)", output, re.IGNORECASE)
-    if ports != [interface]:
+    headers = re.findall(
+        r"(Port Power Status|Status and Configuration Information)"
+        r"[ \t]+for port[ \t]+([^\r\n]+)",
+        output,
+        re.IGNORECASE,
+    )
+    if len(headers) != 1 or headers[0][1].strip() != interface:
         raise _invalid_status("PoE 조회 결과의 대상 포트를 확인하지 못했습니다.")
+    configuration_format = headers[0][0].casefold() == "status and configuration information"
+    status_label = "PoE Port Status" if configuration_format else "Detection Status"
+    power_label = "PD Power Draw" if configuration_format else "Power"
     enabled = re.findall(r"\bPower Enable[ \t]*:[ \t]*(Yes|No)\b", output, re.IGNORECASE)
     if len(enabled) != 1 or len(re.findall(r"\bPower Enable[ \t]*:", output, re.IGNORECASE)) != 1:
         raise _invalid_status("PoE 사용 설정을 유일하게 확인하지 못했습니다.")
     active = enabled[0].casefold() == "yes"
     detection = re.findall(
-        r"\bDetection Status[ \t]*:[ \t]*(Other Fault|Searching|Delivering|Disabled|Fault)\b",
+        rf"\b{status_label}[ \t]*:[ \t]*(Other Fault|Searching|Delivering|Disabled|Fault)\b",
         output,
         re.IGNORECASE,
     )
-    powers = re.findall(r"(?:^|\n)[ \t]*Power[ \t]*:[ \t]*([\d.]+)[ \t]*W\b", output)
-    detection_fields = re.findall(r"\bDetection Status[ \t]*:", output, re.IGNORECASE)
-    power_fields = re.findall(r"(?:^|\n)[ \t]*Power[ \t]*:", output)
+    detection_fields = re.findall(
+        r"\b(Detection Status|PoE Port Status)[ \t]*:", output, re.IGNORECASE
+    )
+    # The configuration format places PD draw in the second column. Reserved
+    # PSE power is a separate field, never the measured draw or legacy Power.
+    power_output = re.sub(
+        r"\bPSE[ \t]+Reserved[ \t]+Power(?=[ \t]*:)",
+        "PSE_RESERVED_POWER",
+        output,
+        flags=re.IGNORECASE,
+    )
+    powers = re.findall(
+        rf"\b{power_label}[ \t]*:[ \t]*([\d.]+)[ \t]*W\b",
+        power_output,
+        re.IGNORECASE,
+    )
+    power_fields = re.findall(r"\b(Power|PD Power Draw)[ \t]*:", power_output, re.IGNORECASE)
     if (
-        len(detection) != len(detection_fields)
+        any(label.casefold() != status_label.casefold() for label in detection_fields)
+        or any(label.casefold() != power_label.casefold() for label in power_fields)
+        or len(detection) != len(detection_fields)
         or len(powers) != len(power_fields)
         or len(detection) > 1
         or len(powers) > 1
