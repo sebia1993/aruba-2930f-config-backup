@@ -124,6 +124,12 @@ PoE 조회와 LLDP 조회는 독립된 결과이므로 PoE 미지원 포트에�
 확인됐다고 보지 않습니다. [HPE의 2930F 전력 필드 설명][power-fields]은 실측,
 예약 전력과 LLDP 요청·할당 값을 구분하고 있습니다.
 
+LLDP의 장치 유형은 문자열 전체와 원격 장치의 역할을 확인합니다. 예를 들어
+Type2 PSE 또는 not Type2 PD를 AP의 정상 전원 협상으로 인정하지 않고 **확인 필요**로
+표시합니다. 요청·할당 원문 값은 근거로 보존합니다. [공식 LLDP 예제][lldp-roles]도
+로컬 전원 공급 장치(PSE)와 원격 전원 수전 장치(PD)를 구분합니다. 선택적 LLDP
+유형이 없다는 이유만으로 이미 확인한 스위치 측 전원 근거를 버리지는 않습니다.
+
 적용 기준은 [HPE 530 Series QuickSpecs][quickspecs] **V22, 2026-08-17**입니다.
 
 | 제조사가 명시한 전원 조건 | AP-535 동작 조건 |
@@ -170,6 +176,9 @@ AP-535 기준을 적용한 경우를 상세 화면의 모델 근거로 구분합
 관리하십시오. 다른 형식, 알 수 없는 필드, 중복 JSON 키, 잘못된 버전·타입은 거부합니다.
 저장 실패 시 기존 파일은 유지합니다.
 
+표시 이름의 잘못된 Unicode 문자도 목록 적용 전에 거부하므로 기존 입력·조회 결과가
+바뀌지 않습니다. 정상 한글과 이모지 등 유효한 Unicode 이름은 그대로 저장하고 불러옵니다.
+
 기존 JSON v1 형식과 SSH 포트·별칭을 그대로 유지하므로 이전 목록을 다시 만들
 필요가 없습니다. 고급 열을 접어도 저장된 값을 잃지 않습니다.
 
@@ -209,10 +218,12 @@ AP-535 기준을 적용한 경우를 상세 화면의 모델 근거로 구분합
 - [530 Series 설치 안내서][install-guide]
 - [2930F의 LLDP 요청·할당·실측 필드 설명][power-fields]
 - [ArubaOS-S 16.11 특정 포트 PoE 상태][port-poe]
+- [ArubaOS-S 16.11 LLDP의 로컬 PSE·원격 PD 예제][lldp-roles]
 - [AP system-status 명령 안내][ap-state]
 
 [quickspecs]: https://www.hpe.com/au/en/collaterals/collateral.a00060238enw.html
 [install-guide]: https://arubanetworking.hpe.com/techdocs/hardware/aps/ap530/ig/AP-530_Install_Guide_EN.pdf
 [power-fields]: https://support.hpe.com/hpesc/public/docDisplay?docId=sf000095897en_us&docLocale=en_US
 [port-poe]: https://arubanetworking.hpe.com/techdocs/AOS-S/16.11/MCG/WC/content/common%20files/vie-poe-sta-spe-por.htm
+[lldp-roles]: https://arubanetworking.hpe.com/techdocs/AOS-S/16.11/MCG/WC/content/common%20files/vie-lld-por-con.htm
 [ap-state]: https://arubanetworking.hpe.com/techdocs/CLI-Bank/Content/aos8/sh-ap-dbg-sys-st.htm

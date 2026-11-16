@@ -136,6 +136,7 @@ class BackupOutcome:
     results: tuple[object, ...]
     report_path: Path
     cancelled: bool = False
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,7 +290,8 @@ class CollectorBackupService:
     ) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         for result in results:
-            config_path: Path | None = None
+            # Completed batches may already have been persisted before a later round.
+            config_path = result.config_path
             if result.succeeded and result.config_text is not None:
                 try:
                     config_path = device_config_path(
@@ -343,6 +345,26 @@ class CollectorBackupService:
         if self._retry_delays_seconds is not None:
             option_args["retry_delays_seconds"] = self._retry_delays_seconds
         options = CollectionOptions(**option_args)
+        warnings: list[str] = []
+        log_lock = threading.Lock()
+
+        def log_safely(event: object | None = None, **fields: Any) -> None:
+            # Log storage is diagnostic only. Stop attempting writes after the first
+            # I/O failure, including when collection callbacks arrive concurrently.
+            with log_lock:
+                if warnings:
+                    return
+                try:
+                    logger.log(event, **fields)
+                except OSError:
+                    warning = (
+                        "진단 로그를 저장하지 못했습니다. 설정 파일과 결과 보고서는 계속 저장합니다. "
+                        "출력 경로의 권한과 여유 공간을 확인하세요."
+                    )
+                    warnings.append(warning)
+                else:
+                    return
+            callbacks.on_event({"stage": "warning", "phase": "report_storage", "message": warning})
 
         def forward_event(event: object, *, phase: str) -> None:
             if (
@@ -374,7 +396,7 @@ class CollectorBackupService:
                 "phase": phase,
             }
             callbacks.on_event(forwarded)
-            logger.log(forwarded)
+            log_safely(forwarded)
 
         def emit_host_key_event(
             target: DeviceTarget,
@@ -399,7 +421,7 @@ class CollectorBackupService:
                 "final": final,
             }
             callbacks.on_event(event)
-            logger.log(event)
+            log_safely(event)
 
         by_endpoint: dict[str, DeviceResult] = {}
         host_key_attempts: dict[str, int] = {}
@@ -560,6 +582,25 @@ class CollectorBackupService:
                 for result in collected_results:
                     result.host_key_attempts = checks_by_endpoint[result.target.endpoint].attempts
                     by_endpoint[result.target.endpoint] = result
+                # Persist each completed batch before a later preflight/store call
+                # can fail. Final reporting reuses the saved paths and digests.
+                self._save_results(run_directory, collected_results, request.filename_mode)
+                for result in collected_results:
+                    if result.error_code is ErrorCode.REPORT_WRITE_FAILED:
+                        # Correct the collector's completion event immediately:
+                        # a later fatal round may prevent the final outcome.
+                        storage_event = {
+                            "target": result.target,
+                            "stage": "failed",
+                            "attempt": result.attempts,
+                            "error_code": result.error_code,
+                            "diagnostic_code": result.diagnostic_code,
+                            "message": result.error_message,
+                            "phase": "report_storage",
+                            "final": True,
+                        }
+                        callbacks.on_event(storage_event)
+                        log_safely(storage_event)
 
             pending = [check.target for check in retryable]
             pending_errors = {check.target.endpoint: check.error_code for check in retryable}
@@ -589,7 +630,7 @@ class CollectorBackupService:
             str(record["diagnostic_code"]) for record in records if record.get("diagnostic_code")
         )
         for diagnostic_code, count in sorted(diagnostic_counts.items()):
-            logger.log(
+            log_safely(
                 phase="diagnostic",
                 stage="summary",
                 status="failed",
@@ -609,6 +650,7 @@ class CollectorBackupService:
                     started_at=started_at,
                     finished_at=finished_at,
                     cancelled=cancelled,
+                    warnings=tuple(warnings),
                 ),
             )
         except Exception as exc:
@@ -619,7 +661,7 @@ class CollectorBackupService:
                 diagnostic_detail=diagnostic_detail_for_exception(exc),
             )
             with suppress(Exception):
-                logger.log(
+                log_safely(
                     phase=DiagnosticPhase.REPORT_STORAGE,
                     stage="failed",
                     status="fatal_app",
@@ -634,6 +676,7 @@ class CollectorBackupService:
             results=tuple(records),
             report_path=report_path,
             cancelled=cancelled,
+            warnings=tuple(warnings),
         )
 
 
@@ -924,6 +967,7 @@ class TrustedKeysDialog(QDialog):
         parent: QWidget | None = None,
         *,
         developer_inspector: DeveloperInspectorController | None = None,
+        reload_callback: Callable[[], Sequence[object]] | None = None,
     ) -> None:
         super().__init__(parent)
         self.developer_inspector = developer_inspector
@@ -931,6 +975,7 @@ class TrustedKeysDialog(QDialog):
         self.resize(760, 380)
         self._entries = tuple(entries)
         self._remove_callback = remove_callback
+        self._reload_callback = reload_callback
 
         layout = QVBoxLayout(self)
         note = QLabel(
@@ -1030,7 +1075,44 @@ class TrustedKeysDialog(QDialog):
         )
         if answer is not QMessageBox.StandardButton.Yes:
             return
-        self._remove_callback(tuple(self._entries[row] for row in rows))
+        try:
+            self._remove_callback(tuple(self._entries[row] for row in rows))
+        except Exception:
+            # Removal can succeed for an earlier record before a later record fails.
+            # Re-read persisted state instead of displaying the old selection as truth.
+            try:
+                if self._reload_callback is None:
+                    raise RuntimeError("No host-key reload callback is available")
+                entries = tuple(self._reload_callback())
+            except Exception:
+                self._entries = ()
+                self.table.setRowCount(0)
+                self.remove_button.setEnabled(False)
+                message = (
+                    "SSH 장비 지문 제거를 완료하지 못했고 현재 저장소 상태를 확인할 수 없습니다. "
+                    "일부 지문은 이미 제거되었을 수 있습니다. 저장소 파일과 권한을 확인한 뒤 "
+                    "이 창을 닫고 다시 열어 목록을 확인하세요."
+                )
+            else:
+                self._entries = entries
+                self.table.setRowCount(len(entries))
+                for row, entry in enumerate(entries):
+                    values = (
+                        _first_value(entry, "target.endpoint", "endpoint", "host"),
+                        _first_value(entry, "key_type", "algorithm"),
+                        _first_value(entry, "fingerprint", "sha256"),
+                        _first_value(entry, "approved_at", "saved_at", "created_at"),
+                    )
+                    for column, value in enumerate(values):
+                        self.table.setItem(row, column, QTableWidgetItem(str(value)))
+                self.table.clearSelection()
+                message = (
+                    "SSH 장비 지문 제거를 모두 완료하지 못했습니다. 현재 저장된 목록을 다시 표시했습니다. "
+                    "일부 지문은 이미 제거되었을 수 있습니다. 저장소 파일과 권한을 확인한 뒤 "
+                    "남은 지문을 선택해 다시 시도하세요."
+                )
+            QMessageBox.warning(self, "SSH 장비 지문 제거", message)
+            return
         self.accept()
 
 
@@ -1072,6 +1154,7 @@ class MainWindow(QMainWindow):
         self.developer_inspector = developer_inspector
         self._thread: QThread | None = None
         self._worker: _ServiceWorker | None = None
+        self._worker_terminal = False
         self._cancel_thread: threading.Thread | None = None
         self._cancel_event: threading.Event | None = None
         self._result_directory: Path | None = None
@@ -1084,6 +1167,7 @@ class MainWindow(QMainWindow):
         self._pending_error: str | None = None
         self._pending_error_code: str | None = None
         self._pending_diagnostic_counts: dict[str, int] = {}
+        self._run_warnings: list[str] = []
         self._diagnostic_dialog: DiagnosticCodesDialog | None = None
         self._port_control_dialog: PortControlDialog | None = None
         self._poe_query_dialog: PoEQueryDialog | None = None
@@ -1214,6 +1298,7 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel("대기 중", central)
         self.status_label.setObjectName("statusLabel")
+        self.status_label.setWordWrap(True)
         self.progress_bar = QProgressBar(central)
         self.progress_bar.setObjectName("progressBar")
         self.progress_bar.setRange(0, 100)
@@ -1549,6 +1634,8 @@ class MainWindow(QMainWindow):
         self._pending_error = None
         self._pending_error_code = None
         self._pending_diagnostic_counts.clear()
+        self._run_warnings.clear()
+        self._worker_terminal = False
         if self._diagnostic_dialog is not None:
             self._diagnostic_dialog.close()
             self._diagnostic_dialog = None
@@ -1573,7 +1660,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _cancel_backup(self) -> None:
-        if self._thread is None or self._cancel_event is None:
+        # Handles remain live through native cleanup, but a delivered outcome
+        # cannot be cancelled or have its terminal status replaced.
+        if self._thread is None or self._cancel_event is None or self._worker_terminal:
             return
         self._cancel_event.set()
         self.cancel_button.setEnabled(False)
@@ -1652,6 +1741,12 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_collection_event(self, event: object) -> None:
+        if _first_value(event, "stage", default="") == "warning":
+            warning = str(_first_value(event, "message", default=""))
+            if warning and warning not in self._run_warnings:
+                self._run_warnings.append(warning)
+            self.status_label.setText("경고: " + " · ".join(self._run_warnings))
+            return
         target = str(_first_value(event, "target.ip", "ip", default="알 수 없음"))
         stage = str(_first_value(event, "stage", default="running"))
         stage_key = stage.lower()
@@ -1663,6 +1758,11 @@ class MainWindow(QMainWindow):
             attempt = 0
         message = _first_value(event, "message", default="")
         error_code = _first_value(event, "error_code", default="")
+        diagnostic_code = str(_first_value(event, "diagnostic_code", default="") or "")
+        if diagnostic_code:
+            self._pending_diagnostic_counts[diagnostic_code] = (
+                self._pending_diagnostic_counts.get(diagnostic_code, 0) + 1
+            )
         row = self._row_for_target(target)
         is_wait_stage = stage_key in {"retry_wait", "retrying", "retry_queued"}
         if not is_wait_stage:
@@ -1695,6 +1795,8 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_worker_success(self, outcome: object) -> None:
+        self._worker_terminal = True
+        self.cancel_button.setEnabled(False)
         self._result_directory = Path(str(_first_value(outcome, "run_directory")))
         results = cast(Iterable[object], _first_value(outcome, "results", default=()))
         exhausted_targets: list[str] = []
@@ -1749,9 +1851,18 @@ class MainWindow(QMainWindow):
             f"{prefix}: 성공 {success_count}대 · 재시도 소진 {exhausted_count}대 · "
             f"기타 실패 {other_failure_count}대"
         )
+        for warning in cast(Iterable[str], _first_value(outcome, "warnings", default=())):
+            if warning not in self._run_warnings:
+                self._run_warnings.append(warning)
+        if self._run_warnings:
+            self.status_label.setText(
+                self.status_label.text() + " · 경고: " + " · ".join(self._run_warnings)
+            )
 
     @Slot(object)
     def _on_worker_failure(self, failure: object) -> None:
+        self._worker_terminal = True
+        self.cancel_button.setEnabled(False)
         if isinstance(failure, str):
             self._pending_error = failure
             self._pending_error_code = diagnostic_code_for_exception(RuntimeError())
@@ -1761,12 +1872,19 @@ class MainWindow(QMainWindow):
                 _first_value(failure, "diagnostic_code", default="") or ""
             )
         if self._pending_error_code:
-            self._pending_diagnostic_counts = {self._pending_error_code: 1}
+            self._pending_diagnostic_counts[self._pending_error_code] = (
+                self._pending_diagnostic_counts.get(self._pending_error_code, 0) + 1
+            )
         self.status_label.setText("백업 실행을 완료하지 못했습니다.")
 
     @Slot()
     def _on_thread_finished(self) -> None:
         thread = self._thread
+        # The finished signal precedes native thread-local/deferred-delete cleanup.
+        # A bounded join keeps the GUI responsive while retaining every run handle.
+        if thread is not None and not thread.wait(100):
+            QTimer.singleShot(20, self._on_thread_finished)
+            return
         self._thread = None
         self._worker = None
         self._cancel_event = None
@@ -1802,6 +1920,10 @@ class MainWindow(QMainWindow):
         if self._pending_error:
             suffix = f" · 진단 코드 {self._pending_error_code}" if self._pending_error_code else ""
             self.status_label.setText(f"백업 처리 중 오류가 발생했습니다{suffix}")
+            if self._run_warnings:
+                self.status_label.setText(
+                    self.status_label.text() + " · 경고: " + " · ".join(self._run_warnings)
+                )
             self._pending_error = None
             self._pending_error_code = None
         if self._pending_diagnostic_counts:
@@ -1951,7 +2073,16 @@ class MainWindow(QMainWindow):
                 "저장된 SSH 장비 지문이 없습니다.",
             )
             return
-        entries = tuple(list_method())
+        try:
+            entries = tuple(list_method())
+        except Exception:
+            QMessageBox.critical(
+                self,
+                "장비 지문 관리",
+                "SSH 장비 지문 저장소를 읽지 못했습니다. 저장소 파일 형식과 권한을 확인한 뒤 "
+                "다시 시도하세요. 손상된 저장소를 초기화하거나 지문 검증을 우회하지 마십시오.",
+            )
+            return
         dialog = TrustedKeysDialog(
             entries,
             cast(
@@ -1960,6 +2091,7 @@ class MainWindow(QMainWindow):
             ),
             self,
             developer_inspector=self.developer_inspector,
+            reload_callback=list_method,
         )
         dialog.exec()
 

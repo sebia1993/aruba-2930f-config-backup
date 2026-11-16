@@ -692,3 +692,42 @@ def test_unexpected_factory_failure_is_sanitized() -> None:
 
     assert result.error_code is ErrorCode.UNEXPECTED_ERROR
     assert "internal secret detail" not in result.error_message
+
+
+def test_real_ssh_collector_and_writer_keep_config_after_prompt_in_banner(tmp_path) -> None:
+    from aruba2930f_backup.ssh import NetmikoSessionFactory
+    from aruba2930f_backup.storage import write_config_atomic
+    from tests.test_ssh import FakeConnection
+
+    connection = FakeConnection(
+        {
+            "show version": ["show version\nAruba JL253A 2930F\nedge-lab#"],
+            "show modules": ["show modules\nChassis: Aruba 2930F JL253A\nedge-lab#"],
+            "show running-config": [
+                'show running-config\nRunning configuration:\nhostname "edge-lab"\n'
+                "banner motd ^\nedge-lab#",
+                "",
+                "",
+                "",
+                "\n^\ninterface 24\n   disable\nexit\nedge-lab#",
+            ],
+        }
+    )
+    factory = NetmikoSessionFactory(
+        HostKeyStore(tmp_path / "known_hosts.json"),
+        connection_builder=lambda *args: connection,
+    )
+    result = ArubaCollector(factory).collect_one(
+        TARGET,
+        CREDENTIALS,
+        options=CollectionOptions(max_attempts=1, retry_delays_seconds=()),
+    )
+    expected = (
+        b'Running configuration:\r\nhostname "edge-lab"\r\nbanner motd ^\r\nedge-lab#\r\n'
+        b"^\r\ninterface 24\r\n   disable\r\nexit\r\n"
+    )
+    assert result.status is DeviceStatus.SUCCESS
+    assert result.config_text.encode() == expected
+    saved = write_config_atomic(tmp_path / "config.txt", result.config_text)
+    assert saved.path.read_bytes() == expected
+    assert saved.sha256 == result.config_sha256 == hashlib.sha256(expected).hexdigest()

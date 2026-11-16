@@ -545,3 +545,216 @@ def test_credentials_repr_never_contains_secrets() -> None:
     rendered = repr(credentials)
     assert "password-value" not in rendered
     assert "enable-value" not in rendered
+
+
+def test_prompt_inside_banner_waits_through_idle_reads_for_remaining_config(tmp_path) -> None:
+    connection = FakeConnection(
+        {
+            "show running-config": [
+                'show running-config\r\nRunning configuration:\r\nhostname "edge-lab"\r\n'
+                "banner motd ^\r\nedge-lab#",
+                *([""] * 12),
+                "\r\n^\r\ninterface 24\r\n   disable\r\nexit\r\nedge-",
+                "",
+                "lab#",
+            ]
+        }
+    )
+    session = make_session(tmp_path, connection, sleeper=lambda _: None)
+    session.connect()
+    prepare_session(session)
+
+    assert session.send_show("show running-config") == (
+        'Running configuration:\nhostname "edge-lab"\nbanner motd ^\nedge-lab#\n^\n'
+        "interface 24\n   disable\nexit"
+    )
+
+
+@pytest.mark.parametrize(
+    "banner", ["banner motd ^\nunfinished", 'banner motd "unfinished', "banner motd #\nunfinished"]
+)
+def test_unclosed_banner_cannot_use_tail_prompt_as_completion(tmp_path, banner) -> None:
+    now = [0.0]
+    connection = FakeConnection(
+        {"show running-config": [f'show running-config\nhostname "edge-lab"\n{banner}\nedge-lab#']}
+    )
+    session = make_session(
+        tmp_path,
+        connection,
+        options=CollectionOptions(command_timeout_seconds=0.2),
+        clock=lambda: now[0],
+        sleeper=lambda seconds: now.__setitem__(0, now[0] + seconds),
+    )
+    session.connect()
+    prepare_session(session)
+
+    with pytest.raises(CollectionFailure) as captured:
+        session.send_show("show running-config")
+    assert captured.value.code in {ErrorCode.COMMAND_TIMEOUT, ErrorCode.PROMPT_PARSE_FAILED}
+
+
+@pytest.mark.parametrize(
+    "banner",
+    [
+        'banner motd "Welcome"',
+        'banner motd "Welcome\\" operator\\nnext line"',
+        'banner motd "Welcome\nedge-lab#\nclosing text"',
+        "banner motd ^Welcome^",
+        "banner motd ^\nWelcome\n^",
+        "banner motd #Welcome#",
+        "no banner motd",
+    ],
+)
+def test_supported_banner_forms_survive_prompt_boundary_check(tmp_path, banner) -> None:
+    connection = FakeConnection(
+        {"show running-config": [f"show running-config\n{banner}\ninterface 24\nedge-", "", "lab#"]}
+    )
+    session = make_session(tmp_path, connection, sleeper=lambda _: None)
+    session.connect()
+    prepare_session(session)
+    assert session.send_show("show running-config") == f"{banner}\ninterface 24"
+
+
+def test_running_config_without_command_echo_is_not_verified(tmp_path) -> None:
+    now = [0.0]
+    session = make_session(
+        tmp_path,
+        FakeConnection({"show running-config": ['hostname "edge-lab"\nedge-lab#']}),
+        options=CollectionOptions(command_timeout_seconds=0.2),
+        clock=lambda: now[0],
+        sleeper=lambda seconds: now.__setitem__(0, now[0] + seconds),
+    )
+    session.connect()
+    prepare_session(session)
+    with pytest.raises(CollectionFailure) as captured:
+        session.send_show("show running-config")
+    assert captured.value.code in {ErrorCode.COMMAND_TIMEOUT, ErrorCode.PROMPT_PARSE_FAILED}
+
+
+def test_every_response_split_has_identical_text_saved_bytes_and_hash(tmp_path) -> None:
+    import hashlib
+
+    from aruba2930f_backup.storage import write_config_atomic
+    from aruba2930f_backup.validation import normalize_config_text
+
+    wire = 'show running-config\r\nhostname "edge-lab"\r\nbanner motd "hello"\r\ninterface 24\r\nedge-lab#\r'
+    expected = 'hostname "edge-lab"\nbanner motd "hello"\ninterface 24'
+    payload = b'hostname "edge-lab"\r\nbanner motd "hello"\r\ninterface 24\r\n'
+    for index in range(len(wire) + 1):
+        connection = FakeConnection({"show running-config": [wire[:index], "", wire[index:], ""]})
+        session = make_session(tmp_path, connection, sleeper=lambda _: None)
+        session.connect()
+        prepare_session(session)
+        output = session.send_show("show running-config")
+        assert output == expected, index
+        stored = write_config_atomic(tmp_path / "partition.txt", normalize_config_text(output))
+        assert stored.path.read_bytes() == payload, index
+        assert stored.sha256 == hashlib.sha256(payload).hexdigest(), index
+        session.close()
+
+
+def test_open_banner_remains_cancellable_without_returning_partial_config(tmp_path) -> None:
+    import threading
+
+    cancelled = threading.Event()
+    now = [0.0]
+
+    def sleeper(seconds: float) -> None:
+        now[0] += seconds
+        if now[0] >= 0.15:
+            cancelled.set()
+
+    connection = FakeConnection(
+        {
+            "show running-config": [
+                "show running-config\nbanner motd ^\nedge-lab#",
+                "",
+                "",
+                "",
+            ]
+        }
+    )
+    session = make_session(tmp_path, connection, clock=lambda: now[0], sleeper=sleeper)
+    session.connect()
+    prepare_session(session)
+    with pytest.raises(CollectionFailure) as captured:
+        session.send_show("show running-config", cancel_event=cancelled)
+    assert captured.value.code is ErrorCode.CANCELLED
+    assert connection.disconnected
+    assert now[0] < 0.3
+
+
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        [
+            "show running-config\r\nbanner motd ^\r\nWelcome\r\n"
+            "-- MORE --, next page: Space, next line: Enter, quit: Control-C\r",
+            "\n^\r\ninterface 24\r\nedge-lab#",
+        ],
+        [
+            "show running-config\nbanner motd ^\n",
+            "-- MORE --, next page: Space, next line: Enter, quit: Control-C",
+            "",
+            "",
+            "",
+            "\n^\ninterface 24\nedge-lab#",
+        ],
+    ],
+)
+def test_ambiguous_pager_inside_banner_cannot_delete_text_and_succeed(tmp_path, chunks) -> None:
+    connection = FakeConnection({"show running-config": chunks})
+    session = make_session(tmp_path, connection, sleeper=lambda _: None)
+    session.connect()
+    prepare_session(session)
+    with pytest.raises(CollectionFailure) as captured:
+        session.send_show("show running-config")
+    assert captured.value.code is ErrorCode.PROMPT_PARSE_FAILED
+    assert ("write", " ") not in connection.calls
+
+
+def test_split_ansi_backspace_and_mixed_line_endings_preserve_response(tmp_path) -> None:
+    wire = 'show running-config\r\n\x1b[0mhostname "edge-lab"\rinterface 24X\x08\nedge-lab#'
+    for index in range(len(wire) + 1):
+        connection = FakeConnection({"show running-config": [wire[:index], "", wire[index:]]})
+        session = make_session(tmp_path, connection, sleeper=lambda _: None)
+        session.connect()
+        prepare_session(session)
+        assert session.send_show("show running-config") == 'hostname "edge-lab"\ninterface 24', (
+            index
+        )
+        session.close()
+
+
+@pytest.mark.parametrize(
+    "echo", ["show running-config", "edge-lab#show running-config", "edge-lab# show running-config"]
+)
+def test_echo_after_whitespace_only_leading_lines_remains_supported(tmp_path, echo) -> None:
+    now = [0.0]
+    session = make_session(
+        tmp_path,
+        FakeConnection({"show running-config": [f"  \r\n{echo}\r\nhostname lab\r\nedge-lab#"]}),
+        options=CollectionOptions(command_timeout_seconds=0.2),
+        clock=lambda: now[0],
+        sleeper=lambda seconds: now.__setitem__(0, now[0] + seconds),
+    )
+    session.connect()
+    prepare_session(session)
+    assert session.send_show("show running-config") == "hostname lab"
+
+
+def test_residual_pager_outside_banner_keeps_pending_cr_for_next_chunk(tmp_path) -> None:
+    connection = FakeConnection(
+        {
+            "show running-config": [
+                "show running-config\r\nhostname lab\r\n"
+                "-- MORE --, next page: Space, next line: Enter, quit: Control-C\r",
+                "\ninterface 24\r\nedge-lab#",
+            ]
+        }
+    )
+    session = make_session(tmp_path, connection, sleeper=lambda _: None)
+    session.connect()
+    prepare_session(session)
+    assert session.send_show("show running-config") == "hostname lab\ninterface 24"
+    assert ("write", " ") in connection.calls

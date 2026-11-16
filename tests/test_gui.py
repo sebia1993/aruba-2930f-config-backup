@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
@@ -14,8 +16,8 @@ from openpyxl import load_workbook
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt, QThread, QTimer
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from aruba2930f_backup.collector import ArubaCollector
 from aruba2930f_backup.diagnostics import decode_diagnostic_code, diagnostic_code_for_exception
@@ -43,7 +45,8 @@ from aruba2930f_backup.models import (
     HostKeyObservation,
     HostKeyTrustState,
 )
-from aruba2930f_backup.storage import FilenameMode
+from aruba2930f_backup.reporting import SanitizedJsonlLogger
+from aruba2930f_backup.storage import FilenameMode, StoredConfig, write_config_atomic
 from tests.fakes import ScriptedFactory
 
 
@@ -1010,6 +1013,9 @@ def test_cancel_handler_does_not_block_on_slow_transport_close(app: QApplication
                 finished.set()
 
     class ThreadSentinel:
+        def wait(self, timeout: int) -> bool:
+            return True
+
         def deleteLater(self) -> None:
             pass
 
@@ -1045,3 +1051,627 @@ def test_cancel_handler_does_not_block_on_slow_transport_close(app: QApplication
     cancel_thread.join(timeout=1)
     assert not cancel_thread.is_alive()
     assert not window.isVisible()
+
+
+class RetryAfterSuccessCollector(FakeCollector):
+    """Finish one batch before a separate endpoint's second preflight round."""
+
+    fatal_second_round = False
+
+    def probe_host_keys_round(
+        self,
+        targets: Sequence[DeviceTarget],
+        *,
+        attempt: int,
+        options: CollectionOptions | None = None,
+        cancel_event: threading.Event | None = None,
+        on_event: Callable[[object], None] | None = None,
+    ) -> list[HostKeyCheck]:
+        del options, cancel_event, on_event
+        if attempt > 1 and self.fatal_second_round:
+            raise CollectionFailure(
+                ErrorCode.HOST_KEY_REJECTED,
+                "Controlled store failure with secret-password /private/store",
+                diagnostic_phase=DiagnosticPhase.HOST_KEY,
+            )
+        return [
+            HostKeyCheck(
+                HostKeyObservation(target, "ssh-ed25519", "SHA256:fixture"),
+                HostKeyTrustState.TRUSTED
+                if target.ip == "192.0.2.10"
+                else HostKeyTrustState.REJECTED,
+                attempts=attempt,
+                error_code=None if target.ip == "192.0.2.10" else ErrorCode.TCP_TIMEOUT,
+                retryable=target.ip != "192.0.2.10" and attempt == 1,
+            )
+            for target in targets
+        ]
+
+
+def _mixed_backup_request(tmp_path: Path) -> BackupRequest:
+    return BackupRequest(
+        ("192.0.2.10", "192.0.2.20"), 22, "operator", "secret-password", None, 2, tmp_path
+    )
+
+
+def test_log_permission_error_preserves_completed_batch_and_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = SanitizedJsonlLogger.log
+    failed_calls = 0
+
+    def fail_retry_log(
+        self: SanitizedJsonlLogger, event: object = None, **fields: object
+    ) -> object:
+        nonlocal failed_calls
+        assert failed_calls == 0, "Diagnostic I/O must stop after its first failure"
+        if isinstance(event, dict) and event.get("stage") == "retry_wait":
+            failed_calls += 1
+            raise PermissionError("secret-password /private/log")
+        return original(self, event, **fields)
+
+    monkeypatch.setattr(SanitizedJsonlLogger, "log", fail_retry_log)
+    collector = RetryAfterSuccessCollector()
+    events: list[object] = []
+    outcome = CollectorBackupService(collector, retry_delays_seconds=(0, 0, 0)).run(
+        _mixed_backup_request(tmp_path),
+        BackupCallbacks(events.append, lambda _: False, threading.Event()),
+    )
+    assert len(list(tmp_path.rglob("*.txt"))) == 1
+    assert outcome.report_path.exists()
+    assert len(outcome.warnings) == 1
+    assert "로그" in outcome.warnings[0]
+    assert "secret-password" not in outcome.warnings[0]
+    assert "/private" not in outcome.warnings[0]
+    assert failed_calls == 1
+    assert any(isinstance(event, dict) and event.get("stage") == "warning" for event in events)
+    saved = outcome.results[0]
+    assert saved["config_path"]
+    assert saved["config_sha256"]
+    workbook = load_workbook(outcome.report_path, data_only=True)
+    assert workbook["Devices"]["K2"].value == saved["config_path"]
+    assert workbook["Devices"]["L2"].value == saved["config_sha256"]
+    assert outcome.warnings[0] in str(list(workbook["Summary"].values))
+    workbook.close()
+
+
+def test_later_fatal_service_error_preserves_prior_config(tmp_path: Path) -> None:
+    collector = RetryAfterSuccessCollector()
+    collector.fatal_second_round = True
+    with pytest.raises(CollectionFailure) as caught:
+        CollectorBackupService(collector, retry_delays_seconds=(0, 0, 0)).run(
+            _mixed_backup_request(tmp_path),
+            BackupCallbacks(lambda _: None, lambda _: False, threading.Event()),
+        )
+    assert caught.value.code is ErrorCode.HOST_KEY_REJECTED
+    assert collector.result is not None
+    assert collector.result.config_path is not None
+    assert collector.result.config_path.read_bytes() == (
+        b"hostname fixture-edge\r\nno telnet-server\r\n"
+    )
+    assert collector.result.config_sha256
+    assert collector.result.config_text is None
+    assert not list(tmp_path.rglob("result.xlsx"))
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("fatal_second_round", [True, False])
+def test_early_txt_failure_reaches_gui_and_survives_later_failure(
+    app: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fatal_second_round: bool,
+) -> None:
+    second_round = threading.Event()
+    release_second_round = threading.Event()
+
+    class MixedStorageCollector(RetryAfterSuccessCollector):
+        saved_results: list[DeviceResult]
+
+        def probe_host_keys_round(
+            self,
+            targets: Sequence[DeviceTarget],
+            *,
+            attempt: int,
+            options: CollectionOptions | None = None,
+            cancel_event: threading.Event | None = None,
+            on_event: Callable[[object], None] | None = None,
+        ) -> list[HostKeyCheck]:
+            if attempt > 1:
+                second_round.set()
+                assert release_second_round.wait(3)
+            return super().probe_host_keys_round(
+                [target for target in targets if target.ip != "192.0.2.30"],
+                attempt=attempt,
+            ) + FakeCollector.probe_host_keys_round(
+                self,
+                [target for target in targets if target.ip == "192.0.2.30"],
+                attempt=attempt,
+            )
+
+        def collect_many(
+            self,
+            targets: Sequence[DeviceTarget],
+            credentials: object,
+            options: CollectionOptions | None = None,
+            *,
+            cancel_event: threading.Event | None = None,
+            on_event: Callable[[object], None] | None = None,
+        ) -> list[DeviceResult]:
+            self.saved_results = []
+            for target in targets:
+                results = super().collect_many([target], credentials, on_event=on_event)
+                results[0].hostname = "failed-edge" if target.ip.endswith(".10") else "saved-edge"
+                self.saved_results.extend(results)
+            return self.saved_results
+
+    def fail_one_txt(path: Path, text: str) -> StoredConfig:
+        if "failed-edge" in path.name:
+            raise PermissionError("secret-password /private/config-write")
+        return write_config_atomic(path, text)
+
+    monkeypatch.setattr("aruba2930f_backup.gui.write_config_atomic", fail_one_txt)
+    collector = MixedStorageCollector()
+    collector.fatal_second_round = fatal_second_round
+    window = MainWindow(service=CollectorBackupService(collector, retry_delays_seconds=(0, 0, 0)))
+    window.ip_input.setPlainText("192.0.2.10\n192.0.2.20\n192.0.2.30")
+    window.username_input.setText("operator")
+    window.password_input.setText("secret-password")
+    window.output_input.setText(str(tmp_path))
+    window.start_button.click()
+    try:
+        _wait_until(
+            app,
+            lambda: (
+                second_round.is_set()
+                and "192.0.2.20" in window._row_by_target
+                and window.result_table.item(window._row_by_target["192.0.2.20"], 3).data(
+                    Qt.ItemDataRole.UserRole
+                )
+                == "retry_queued"
+            ),
+        )
+        failed_row = window._row_by_target["192.0.2.10"]
+        early_status = window.result_table.item(failed_row, 3).data(Qt.ItemDataRole.UserRole)
+        early_error = window.result_table.item(failed_row, 5).text()
+        release_second_round.set()
+        _wait_until(app, lambda: window.start_button.isEnabled())
+
+        assert early_status == "failed"
+        assert "REPORT_WRITE_FAILED" in early_error
+        assert window.result_table.item(failed_row, 3).data(Qt.ItemDataRole.UserRole) == "failed"
+        assert "REPORT_WRITE_FAILED" in window.result_table.item(failed_row, 5).text()
+        dialog = window._diagnostic_dialog
+        assert dialog is not None
+        decoded = []
+        for line in dialog.copy_text.splitlines():
+            code, count = line.split(" \N{MULTIPLICATION SIGN} ")
+            assert count == "1", "Early events and final reports must not double-count failures"
+            decoded.append(decode_diagnostic_code(code))
+        assert {(item.phase, item.error_code) for item in decoded} == {
+            (DiagnosticPhase.REPORT_STORAGE, ErrorCode.REPORT_WRITE_FAILED),
+            (DiagnosticPhase.HOST_KEY, ErrorCode.TCP_TIMEOUT)
+            if not fatal_second_round
+            else (DiagnosticPhase.HOST_KEY, ErrorCode.HOST_KEY_REJECTED),
+        }
+        storage_diagnostic = next(
+            item for item in decoded if item.phase is DiagnosticPhase.REPORT_STORAGE
+        )
+        assert storage_diagnostic.detail is DiagnosticDetail.OS_ERROR
+        visible = (
+            window.status_label.text()
+            + dialog.copy_text
+            + " ".join(
+                window.result_table.item(row, column).text()
+                for row in range(window.result_table.rowCount())
+                for column in range(window.result_table.columnCount())
+            )
+        )
+        assert "secret-password" not in visible
+        assert "/private/" not in visible
+        failed, saved = collector.saved_results
+        assert failed.config_path is None
+        assert saved.config_path is not None
+        assert list(tmp_path.rglob("*.txt")) == [saved.config_path]
+        assert saved.config_path.read_bytes() == b"hostname fixture-edge\r\nno telnet-server\r\n"
+        assert saved.config_sha256 == hashlib.sha256(saved.config_path.read_bytes()).hexdigest()
+        assert failed.config_text is saved.config_text is None
+        assert window._thread is None and window._worker is None
+    finally:
+        release_second_round.set()
+        _wait_until(app, lambda: window.start_button.isEnabled())
+        if window._diagnostic_dialog is not None:
+            window._diagnostic_dialog.close()
+        window.close()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("cancel_lags", [False, True])
+def test_main_backup_retains_busy_state_until_native_cleanup_joins(
+    app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel_lags: bool
+) -> None:
+    service_release = threading.Event()
+    cleanup_entered = threading.Event()
+    cleanup_release = threading.Event()
+    cleanup_done = threading.Event()
+    cancel_entered = threading.Event()
+    cancel_release = threading.Event()
+
+    class DelayedService(FakeService):
+        def run(self, request: BackupRequest, callbacks: BackupCallbacks) -> BackupOutcome:
+            assert service_release.wait(3)
+            return super().run(request, callbacks)
+
+        def cancel(self) -> None:
+            cancel_entered.set()
+            if cancel_lags:
+                cancel_release.wait(3)
+
+    window = MainWindow(service=DelayedService(tmp_path))
+    window.ip_input.setPlainText("192.0.2.10")
+    window.username_input.setText("operator")
+    window.password_input.setText("secret-password")
+    window.output_input.setText(str(tmp_path))
+    window.show()
+    window.start_button.click()
+    thread = window._thread
+    worker = window._worker
+    assert thread is not None
+    original_delete = thread.deleteLater
+    # Avoid process abort on the unfixed implementation deleting a still-running QThread.
+    monkeypatch.setattr(thread, "deleteLater", lambda: None)
+
+    def native_cleanup() -> None:
+        cleanup_entered.set()
+        cleanup_release.wait(3)
+        cleanup_done.set()
+
+    thread.finished.connect(native_cleanup, Qt.ConnectionType.DirectConnection)
+    ticks: list[float] = []
+    timer = QTimer(window)
+    timer.setInterval(10)
+    timer.timeout.connect(lambda: ticks.append(time.monotonic()))
+    timer.start()
+    try:
+        if cancel_lags:
+            # A helper can still be closing transport after the worker delivers
+            # its terminal outcome; initiate that cancellation before completion.
+            window.cancel_button.click()
+            _wait_until(app, cancel_entered.is_set)
+        service_release.set()
+        _wait_until(app, cleanup_entered.is_set)
+        tick_count = len(ticks)
+        _wait_until(app, lambda: len(ticks) > tick_count + 1)
+        assert not cleanup_done.is_set()
+        assert window._thread is thread
+        assert window._worker is worker
+        assert not window.start_button.isEnabled()
+        assert window._cancel_event is not None
+        window.close()
+        app.processEvents()
+        assert window.isVisible()
+        cleanup_release.set()
+        if cancel_lags:
+            _wait_until(app, lambda: window._thread is None)
+            assert cancel_entered.is_set()
+            assert not window.start_button.isEnabled()
+            assert window._cancel_thread is not None
+            assert window._cancel_thread.is_alive()
+            assert window.isVisible()
+            cancel_release.set()
+        _wait_until(app, lambda: window._thread is None and not window.isVisible())
+        assert cleanup_done.is_set()
+        assert thread.wait(0)
+    finally:
+        cleanup_release.set()
+        cancel_release.set()
+        service_release.set()
+        thread.wait(3000)
+        _wait_until(app, lambda: window._thread is None)
+        window.close()
+        original_delete()
+        app.processEvents()
+
+
+@pytest.mark.gui
+def test_trust_manage_button_contains_malformed_store_error(
+    app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "known_hosts.json"
+    path.write_text("{broken", encoding="utf-8")
+    collector = FakeCollector()
+    collector.host_key_store = HostKeyStore(path)  # type: ignore[attr-defined]
+    errors: list[object] = []
+    messages: list[str] = []
+    monkeypatch.setattr(sys, "excepthook", lambda *args: errors.append(args))
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args: messages.append(str(args[2])))
+    window = MainWindow(service=CollectorBackupService(collector))
+    window.trust_keys_button.click()
+    app.processEvents()
+    assert not errors
+    assert messages and "저장소" in messages[0]
+    assert "{broken" not in messages[0]
+    assert path.read_text(encoding="utf-8") == "{broken"
+    window.close()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("partial", [False, True])
+def test_trust_remove_button_refreshes_actual_store_after_failure(
+    app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, partial: bool
+) -> None:
+    store = HostKeyStore(tmp_path / "known_hosts.json")
+    checks = [
+        HostKeyCheck(
+            HostKeyObservation(DeviceTarget(ip), "ssh-ed25519", sha256_fingerprint(ip.encode())),
+            HostKeyTrustState.UNKNOWN,
+        )
+        for ip in ("192.0.2.10", "192.0.2.20")
+    ]
+    store.approve(checks)
+    collector = FakeCollector()
+    collector.host_key_store = store  # type: ignore[attr-defined]
+    service = CollectorBackupService(collector)
+    original_remove = store.remove
+    calls = 0
+
+    def fail_removal(endpoint: object) -> None:
+        nonlocal calls
+        calls += 1
+        if partial and calls == 1:
+            original_remove(str(endpoint))
+            return
+        raise PermissionError("secret-password /private/known_hosts")
+
+    monkeypatch.setattr(store, "remove", fail_removal)
+    errors: list[object] = []
+    messages: list[str] = []
+    monkeypatch.setattr(sys, "excepthook", lambda *args: errors.append(args))
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: messages.append(str(args[2])))
+    observed: list[tuple[str, ...]] = []
+
+    def exercise_dialog(dialog: TrustedKeysDialog) -> int:
+        dialog.table.selectAll()
+        dialog.remove_button.click()
+        observed.append(
+            tuple(dialog.table.item(row, 0).text() for row in range(dialog.table.rowCount()))
+        )
+        return 0
+
+    monkeypatch.setattr(TrustedKeysDialog, "exec", exercise_dialog)
+    window = MainWindow(service=service)
+    window.trust_keys_button.click()
+    assert not errors
+    assert messages and "제거" in messages[0]
+    assert "secret-password" not in messages[0]
+    assert "/private" not in messages[0]
+    expected = ("192.0.2.20:22",) if partial else ("192.0.2.10:22", "192.0.2.20:22")
+    assert observed == [expected]
+    assert tuple(entry.endpoint for entry in store.list_approved()) == expected
+    window.close()
+
+
+@pytest.mark.parametrize("primary_storage", ["config", "workbook"])
+def test_log_failure_does_not_hide_primary_storage_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, primary_storage: str
+) -> None:
+    def fail_write(*args: object, **kwargs: object) -> None:
+        raise PermissionError("secret-password /private/output")
+
+    monkeypatch.setattr(SanitizedJsonlLogger, "log", fail_write)
+    monkeypatch.setattr(
+        "aruba2930f_backup.gui."
+        + ("write_config_atomic" if primary_storage == "config" else "write_result_workbook"),
+        fail_write,
+    )
+    service = CollectorBackupService(FakeCollector())
+    callbacks = BackupCallbacks(lambda _: None, lambda _: False, threading.Event())
+    request = _mixed_backup_request(tmp_path)
+    if primary_storage == "workbook":
+        with pytest.raises(CollectionFailure) as caught:
+            service.run(request, callbacks)
+        assert caught.value.code is ErrorCode.REPORT_WRITE_FAILED
+        assert caught.value.diagnostic_phase is DiagnosticPhase.REPORT_STORAGE
+        assert "secret-password" not in str(caught.value)
+        assert len(list(tmp_path.rglob("*.txt"))) == 1
+    else:
+        outcome = service.run(request, callbacks)
+        result = outcome.results[0]
+        assert result["status"] is DeviceStatus.FAILED
+        assert result["error_code"] is ErrorCode.REPORT_WRITE_FAILED
+        assert result["failure_phase"] is DiagnosticPhase.REPORT_STORAGE
+        assert result["config_path"] == ""
+        assert len(outcome.warnings) == 1
+        workbook = load_workbook(outcome.report_path, data_only=True)
+        assert workbook["Devices"]["D2"].value == "failed"
+        assert workbook["Devices"]["N2"].value == "REPORT_WRITE_FAILED"
+        workbook.close()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("fatal", [False, True])
+def test_backup_window_shows_log_warning_with_success_or_fatal_diagnostic(
+    app: QApplication, tmp_path: Path, fatal: bool
+) -> None:
+    warning = "진단 로그를 저장하지 못했습니다. 출력 경로를 확인하세요."
+
+    class WarningService(FakeService):
+        def run(self, request: BackupRequest, callbacks: BackupCallbacks) -> BackupOutcome:
+            callbacks.on_event({"stage": "warning", "message": warning})
+            if fatal:
+                raise CollectionFailure(
+                    ErrorCode.REPORT_WRITE_FAILED,
+                    "secret-password /private/output",
+                    diagnostic_phase=DiagnosticPhase.REPORT_STORAGE,
+                )
+            outcome = super().run(request, callbacks)
+            return BackupOutcome(
+                outcome.run_directory, outcome.results, outcome.report_path, warnings=(warning,)
+            )
+
+    window = MainWindow(service=WarningService(tmp_path))
+    window.ip_input.setPlainText("192.0.2.10")
+    window.username_input.setText("operator")
+    window.password_input.setText("secret-password")
+    window.output_input.setText(str(tmp_path))
+    window.start_button.click()
+    _wait_until(app, lambda: window.start_button.isEnabled())
+    assert warning in window.status_label.text()
+    assert window.status_label.text().count(warning) == 1
+    assert "secret-password" not in window.status_label.text()
+    if fatal:
+        assert "오류" in window.status_label.text()
+        assert "진단 코드" in window.status_label.text()
+        assert window._diagnostic_dialog is not None
+        window._diagnostic_dialog.close()
+    else:
+        assert "백업 완료" in window.status_label.text()
+        assert window.result_table.rowCount() == 1
+    window.close()
+
+
+@pytest.mark.gui
+def test_trust_remove_button_disables_unverifiable_list_after_store_corruption(
+    app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "known_hosts.json"
+    store = HostKeyStore(path)
+    store.approve(
+        [
+            HostKeyCheck(
+                HostKeyObservation(
+                    DeviceTarget("192.0.2.10"), "ssh-ed25519", sha256_fingerprint(b"fixture")
+                ),
+                HostKeyTrustState.UNKNOWN,
+            )
+        ]
+    )
+    collector = FakeCollector()
+    collector.host_key_store = store  # type: ignore[attr-defined]
+    errors: list[object] = []
+    messages: list[str] = []
+    monkeypatch.setattr(sys, "excepthook", lambda *args: errors.append(args))
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: messages.append(str(args[2])))
+
+    def exercise_dialog(dialog: TrustedKeysDialog) -> int:
+        dialog.table.selectAll()
+        path.write_text("{corrupt", encoding="utf-8")
+        dialog.remove_button.click()
+        assert dialog.table.rowCount() == 0
+        assert not dialog.remove_button.isEnabled()
+        return 0
+
+    monkeypatch.setattr(TrustedKeysDialog, "exec", exercise_dialog)
+    window = MainWindow(service=CollectorBackupService(collector))
+    window.trust_keys_button.click()
+    assert not errors
+    assert messages and "현재 저장소 상태를 확인할 수 없습니다" in messages[0]
+    assert path.read_text(encoding="utf-8") == "{corrupt"
+    window.close()
+
+
+@pytest.mark.gui
+def test_visible_log_warning_fits_existing_window_width(app: QApplication, tmp_path: Path) -> None:
+    window = MainWindow(service=FakeService(tmp_path))
+    window.resize(840, 640)
+    window.show()
+    app.processEvents()
+    initial_width = window.width()
+    warning = (
+        "진단 로그를 저장하지 못했습니다. 설정 파일과 결과 보고서는 계속 저장합니다. "
+        "출력 경로의 권한과 여유 공간을 확인하세요."
+    )
+    window._on_worker_success(
+        BackupOutcome(tmp_path, (), tmp_path / "result.xlsx", warnings=(warning,))
+    )
+    app.processEvents()
+    assert warning in window.status_label.text()
+    assert window.width() == initial_width
+    required_height = (
+        window.status_label.fontMetrics()
+        .boundingRect(
+            0,
+            0,
+            window.status_label.width(),
+            10000,
+            Qt.TextFlag.TextWordWrap,
+            window.status_label.text(),
+        )
+        .height()
+    )
+    assert window.status_label.height() >= required_height
+    window.close()
+
+
+@pytest.mark.gui
+def test_terminal_success_warning_survives_cancel_during_native_cleanup(
+    app: QApplication, tmp_path: Path
+) -> None:
+    service_release = threading.Event()
+    cleanup_entered = threading.Event()
+    cleanup_release = threading.Event()
+    cleanup_done = threading.Event()
+    warning = "진단 로그를 저장하지 못했습니다. 출력 경로를 확인하세요."
+
+    class WarningService(FakeService):
+        def run(self, request: BackupRequest, callbacks: BackupCallbacks) -> BackupOutcome:
+            assert service_release.wait(3)
+            outcome = super().run(request, callbacks)
+            return BackupOutcome(
+                outcome.run_directory, outcome.results, outcome.report_path, warnings=(warning,)
+            )
+
+    service = WarningService(tmp_path)
+    window = MainWindow(service=service)
+    window.ip_input.setPlainText("192.0.2.10")
+    window.username_input.setText("operator")
+    window.password_input.setText("secret-password")
+    window.output_input.setText(str(tmp_path))
+    window.show()
+    window.start_button.click()
+    thread = window._thread
+    assert thread is not None
+
+    def native_cleanup() -> None:
+        cleanup_entered.set()
+        cleanup_release.wait(3)
+        cleanup_done.set()
+
+    thread.finished.connect(native_cleanup, Qt.ConnectionType.DirectConnection)
+    try:
+        service_release.set()
+        _wait_until(app, lambda: cleanup_entered.is_set() and warning in window.status_label.text())
+        terminal_status = window.status_label.text()
+        assert "백업 완료" in terminal_status
+        assert not cleanup_done.is_set()
+        assert window._thread is thread
+        assert not window.start_button.isEnabled()
+        window.cancel_button.click()
+        window._cancel_backup()  # Closing also reaches this handler during cleanup.
+        assert window._cancel_event is not None
+        assert not window._cancel_event.is_set()
+        cleanup_release.set()
+        _wait_until(app, lambda: window.start_button.isEnabled())
+        assert cleanup_done.is_set()
+        assert window.status_label.text() == terminal_status
+        assert not service.cancelled
+        # A later run must become cancellable again before its terminal outcome.
+        service_release.clear()
+        window.password_input.setText("secret-password")
+        window.start_button.click()
+        window.cancel_button.click()
+        _wait_until(app, lambda: service.cancelled)
+        assert window._cancel_event is not None
+        assert window._cancel_event.is_set()
+        service_release.set()
+        _wait_until(app, lambda: window.start_button.isEnabled())
+    finally:
+        service_release.set()
+        cleanup_release.set()
+        # Process events until production has joined/deleted its thread; avoid
+        # using a QThread wrapper after deleteLater has already disposed of it.
+        _wait_until(app, lambda: window._thread is None)
+        window.close()
+        app.processEvents()

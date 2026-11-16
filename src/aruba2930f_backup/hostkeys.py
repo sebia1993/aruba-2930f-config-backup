@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from .hostkey_lock import host_key_transaction
 from .models import (
     ApprovedHostKey,
     CollectionFailure,
@@ -55,12 +56,21 @@ def default_host_key_store_path() -> Path:
 
 
 class HostKeyStore:
-    """Thread-safe JSON store that never auto-accepts unknown or changed keys."""
+    """Transactional JSON store that never auto-accepts unknown or changed keys."""
 
     _SCHEMA_VERSION = 1
 
     def __init__(self, path: Path | str | None = None) -> None:
-        self.path = Path(path) if path is not None else default_host_key_store_path()
+        requested_path = Path(path) if path is not None else default_host_key_store_path()
+        try:
+            # Keep one store identity for reads, locking, and atomic replacement;
+            # replacing a supplied file-symlink path would split its trust state.
+            self.path = requested_path.resolve()
+        except OSError as exc:
+            raise CollectionFailure(
+                ErrorCode.HOST_KEY_REJECTED,
+                "The approved host-key store path could not be resolved safely.",
+            ) from exc
         self._lock = threading.RLock()
 
     def check(self, observation: HostKeyObservation) -> HostKeyCheck:
@@ -109,7 +119,7 @@ class HostKeyStore:
         requested = tuple(checks)
         if not requested:
             return
-        with self._lock:
+        with self._lock, host_key_transaction(self.path):
             endpoints = self._read_endpoints()
             additions: dict[str, dict[str, str]] = {}
             for supplied in requested:
@@ -162,7 +172,7 @@ class HostKeyStore:
         """Explicitly forget one endpoint so a newly probed key can be reviewed."""
 
         key = endpoint.endpoint if isinstance(endpoint, DeviceTarget) else endpoint.strip()
-        with self._lock:
+        with self._lock, host_key_transaction(self.path):
             endpoints = self._read_endpoints()
             if key not in endpoints:
                 return False
@@ -232,11 +242,11 @@ class HostKeyStore:
                 suffix=".tmp",
                 delete=False,
             ) as handle:
+                temp_name = handle.name
                 json.dump(payload, handle, ensure_ascii=True, indent=2)
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
-                temp_name = handle.name
             Path(temp_name).replace(self.path)
         except OSError as exc:
             raise CollectionFailure(

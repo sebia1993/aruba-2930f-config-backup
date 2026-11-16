@@ -208,6 +208,80 @@ def test_lldp_only_valid_pair_can_establish_negotiation():
     )
 
 
+@pytest.mark.parametrize(
+    "device_type",
+    [
+        "Type2 PSE",
+        "802.3at Type2 PSE",
+        "not Type2 PD",
+        "Type2 PD trailing",
+        "prefix 802.3at",
+        "Type2 PD / Type2 PSE",
+    ],
+)
+def test_remote_device_role_or_malformed_type_cannot_prove_ap_supply(device_type):
+    neighbor = parse_lldp_neighbors(HEADER + BLOCK.replace("Type2 PD", device_type), "13")[0]
+    assert neighbor.power is not None
+    assert neighbor.power.device_type == device_type
+    assert neighbor.power.requested_watts == Decimal("25.5")
+    assert neighbor.power.allocated_watts == Decimal("25.5")
+    assert neighbor.power.issues
+    observation = LLDPObservation(LLDPStatus.OK, (neighbor,))
+    for switch_evidence in (None, good()):
+        result = assess_ap535_power(PoEState(True, "Delivering", 8.7), switch_evidence, observation)
+        assert result.status is AssessmentStatus.UNKNOWN
+
+
+@pytest.mark.parametrize("device_type", ["Type2 PSE", "not Type2 PD"])
+def test_direct_remote_evidence_cannot_bypass_device_role_validation(device_type):
+    neighbor = LLDPNeighbor(model="AP-535", power=replace(good(), device_type=device_type))
+    result = assess_ap535_power(
+        PoEState(True, "Delivering", 8.7),
+        None,
+        LLDPObservation(LLDPStatus.OK, (neighbor,)),
+    )
+    assert result.status is AssessmentStatus.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "device_type", ["Type2 PD", "Type 2 PD", "TYPE2 PD", "Type\t2\tPD", "802.3at Type2 PD"]
+)
+@pytest.mark.parametrize(
+    "allocated,status", [("25.5", AssessmentStatus.NORMAL), ("20", AssessmentStatus.WARNING)]
+)
+def test_recognized_pd_type_retains_fulfilled_and_shortfall_assessment(
+    device_type, allocated, status
+):
+    block = BLOCK.replace("Type2 PD", device_type).replace(
+        "PSE Allocated Power Value :25.5 Watts", f"PSE Allocated Power Value :{allocated} Watts"
+    )
+    neighbor = parse_lldp_neighbors(HEADER + block, "13")[0]
+    assert neighbor.power is not None and not neighbor.power.issues
+    result = assess_ap535_power(
+        PoEState(True, "Delivering", 8.7),
+        None,
+        LLDPObservation(LLDPStatus.OK, (neighbor,)),
+    )
+    assert result.status is status
+
+
+def test_missing_remote_type_does_not_discard_verified_switch_evidence():
+    neighbor = parse_lldp_neighbors(
+        HEADER + BLOCK.replace(" Poe Device Type :Type2 PD\n", ""), "13"
+    )[0]
+    assert neighbor.power is not None and neighbor.power.device_type == ""
+    assert (
+        assess(lldp=LLDPObservation(LLDPStatus.OK, (neighbor,))).status is AssessmentStatus.NORMAL
+    )
+
+
+def test_bare_bt_marker_preserves_explicit_type_four_from_verified_fields():
+    evidence = replace(
+        good(), plc_class=6, dlc_class=6, plc_type=4, dlc_type=4, device_type="802.3bt"
+    )
+    assert assess(evidence).status is AssessmentStatus.NORMAL
+
+
 def test_pair_cannot_be_combined_across_sources():
     neighbor = LLDPNeighbor(power=replace(good(), requested_watts=None))
     result = assess(

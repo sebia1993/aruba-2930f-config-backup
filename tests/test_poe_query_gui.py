@@ -451,6 +451,49 @@ def test_basic_target_columns_keep_advanced_metadata_and_endpoints(
     assert dialog._validated_targets() == before
 
 
+@pytest.mark.parametrize("label", ["bad\ud800name", "bad\udfffname"])
+def test_invalid_unicode_import_keeps_existing_targets_and_results(
+    app: QApplication, qtbot: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, label: str
+) -> None:
+    import json
+
+    dialog, service = setup_dialog(qtbot)
+    dialog.collect_button.click()
+    qtbot.waitUntil(lambda: not dialog.is_busy)
+    before = dialog._validated_targets()
+    results = dict(dialog._results)
+    first_item = dialog.result_tree.topLevelItem(0)
+    questions = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args: questions.append(args) or QMessageBox.StandardButton.Yes,
+    )
+    path = tmp_path / "invalid-unicode.json"
+    path.write_text(
+        json.dumps(
+            {
+                "format": "aruba2930f-poe-targets",
+                "version": 1,
+                "targets": [
+                    {"ip": "192.0.2.9", "ssh_port": 22, "interfaces": ["9"], "label": label}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        dialog.load_profile(path)
+    with pytest.raises(ValueError):
+        dialog.paste_targets(f"192.0.2.9\t22\t9\t{label}")
+    assert dialog._validated_targets() == before
+    assert dialog._results == results
+    assert dialog.result_tree.topLevelItem(0) is first_item
+    assert dialog.export_button.isEnabled()
+    assert questions == []
+    assert len(service.calls) == 1
+
+
 def test_inherited_nondefault_port_reveals_advanced_inputs(
     app: QApplication, qtbot: object
 ) -> None:

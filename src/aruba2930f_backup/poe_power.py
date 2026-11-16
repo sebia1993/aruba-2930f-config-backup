@@ -175,7 +175,32 @@ def _validate_output(output: str, interface: str) -> None:
         raise _failure("장비가 조회 명령을 거절했거나 정상 응답을 완료하지 못했습니다.")
 
 
-def _power_fields(output: str) -> PowerEvidence:
+def _device_type_info(value: str) -> tuple[tuple[int, ...], str] | None:
+    """Recognize a complete type/IEEE token and its optional PD/PSE role."""
+    value = value.strip()
+    if value.casefold() in ("", "dot3"):
+        # dot3 identifies the TLV format, not a negotiated power type.
+        return (), ""
+    typed = re.fullmatch(
+        r"(?:(802\.3(?:af|at|bt))[ \t]+)?Type[ \t]*([1-4])(?:[ \t]+(PD|PSE))?",
+        value,
+        re.IGNORECASE,
+    )
+    if typed:
+        ieee, supply_type, role = (typed[1] or "").casefold(), int(typed[2]), typed[3] or ""
+        compatible = {"802.3af": {1}, "802.3at": {2}, "802.3bt": {3, 4}}
+        if ieee and supply_type not in compatible[ieee]:
+            return None
+        return (supply_type,), role.casefold()
+    ieee_only = re.fullmatch(r"(802\.3(?:af|at|bt))(?:[ \t]+(PD|PSE))?", value, re.IGNORECASE)
+    if ieee_only:
+        return {"802.3af": (1,), "802.3at": (2,), "802.3bt": (3, 4)}[ieee_only[1].casefold()], (
+            ieee_only[2] or ""
+        ).casefold()
+    return None
+
+
+def _power_fields(output: str, *, remote: bool = False) -> PowerEvidence:
     fields: dict[str, list[str]] = {}
     issues: list[str] = []
     for match in _FIELD_RE.finditer(output):
@@ -240,6 +265,11 @@ def _power_fields(output: str) -> PowerEvidence:
         issues.append("PSE Actual Power Value는 할당/실측 전력과 대응이 확인되지 않은 필드입니다.")
     device_type = single("Poe Device Type")
     tlv_type = single("PD TLV Sent Type")
+    device_info = _device_type_info(device_type)
+    if device_type and (device_info is None or device_type.casefold() == "dot3"):
+        issues.append("PoE Device Type의 전체 형식을 해석할 수 없습니다.")
+    elif remote and device_info is not None and device_info[1] == "pse":
+        issues.append("LLDP 원격 장치가 PD가 아닌 PSE 역할을 보고했습니다.")
     if device_type and tlv_type and tlv_type.casefold() != "dot3":
         issues.append("PoE Device Type과 PD TLV Sent Type의 대응 확인 필요")
     return PowerEvidence(
@@ -363,7 +393,7 @@ def _neighbor(block: list[str]) -> LLDPNeighbor:
         raise _failure("LLDP 관리 주소의 Type/Address 쌍이 잘렸습니다.")
     if not fields.get("chassis_id") or not fields.get("port_id"):
         raise _failure("LLDP 이웃의 Chassis ID와 Port ID를 확인하지 못했습니다.")
-    power = _power_fields("\n".join(power_lines))
+    power = _power_fields("\n".join(power_lines), remote=True)
     has_power = power != PowerEvidence()
     return LLDPNeighbor(
         **fields,
@@ -416,20 +446,18 @@ def _valid_watts(value: Decimal | None) -> bool:
     return value is not None and value.is_finite() and value > 0
 
 
-def _mode(evidence: PowerEvidence) -> str:
+def _mode(evidence: PowerEvidence, *, remote: bool = False) -> str:
     """Return only explicit IEEE/type evidence; class alone proves no mode."""
     types = {value for value in (evidence.plc_type, evidence.dlc_type) if value is not None}
-    device = evidence.device_type.casefold()
-    types.update(int(value) for value in re.findall(r"\btype\s*([1-4])\b", device))
-    if "802.3af" in device:
-        types.add(1)
-    if "802.3at" in device:
-        types.add(2)
-    if "802.3bt" in device:
-        if types and not types.issubset({3, 4}):
+    device_info = _device_type_info(evidence.device_type)
+    if device_info is None or (remote and device_info[1] == "pse"):
+        return "conflict"
+    device_types = device_info[0]
+    if device_types:
+        if types and not types.issubset(device_types):
             return "conflict"
         if not types:
-            types.add(3)
+            types.add(min(device_types))
     if len(types) > 1:
         return "conflict"
     if not types:
@@ -463,23 +491,21 @@ def assess_ap535_power(
     neighbor = neighbors[0] if len(neighbors) == 1 else None
     model = neighbor.model if neighbor is not None and neighbor.model else (expected_model or "")
     model_source = "lldp" if neighbor is not None and neighbor.model else "configured"
-    sources = [
-        value
-        for value in (evidence, neighbor.power if neighbor is not None else None)
-        if value is not None
-    ]
+    source_modes = [(evidence, _mode(evidence))] if evidence is not None else []
+    if neighbor is not None and neighbor.power is not None:
+        source_modes.append((neighbor.power, _mode(neighbor.power, remote=True)))
+    sources = [value for value, _ in source_modes]
     paired = [
-        value
-        for value in sources
+        (value, mode)
+        for value, mode in source_modes
         if _valid_watts(value.requested_watts) and _valid_watts(value.allocated_watts)
     ]
-    eligible = [value for value in paired if _mode(value) not in ("", "conflict")]
-    chosen = (
+    eligible = [(value, mode) for value, mode in paired if mode not in ("", "conflict")]
+    chosen, negotiation = (
         eligible[0]
         if eligible
-        else (paired[0] if paired else (sources[0] if sources else PowerEvidence()))
+        else (paired[0] if paired else (source_modes[0] if source_modes else (PowerEvidence(), "")))
     )
-    negotiation = _mode(chosen)
 
     def result(status: AssessmentStatus, label: str, reason: str) -> PowerAssessment:
         provenance = "LLDP 설명에서 확인한" if model_source == "lldp" else "사용자가 지정한"
@@ -522,14 +548,14 @@ def assess_ap535_power(
         )
     if any(
         value.issues
-        or _mode(value) == "conflict"
+        or mode == "conflict"
         or value.allocation_method.strip().casefold() not in ("", "lldp")
         or any(
             watts is not None and not _valid_watts(watts)
             for watts in (value.requested_watts, value.allocated_watts)
         )
         or value.allocation_field not in ("", "PSE Allocated Power Value")
-        for value in sources
+        for value, mode in source_modes
     ):
         return result(
             AssessmentStatus.UNKNOWN,
@@ -550,7 +576,7 @@ def assess_ap535_power(
             return result(
                 AssessmentStatus.UNKNOWN, "확인 필요", "PoE와 LLDP 전원 협상 근거가 서로 다릅니다."
             )
-    modes = {_mode(value) for value in sources if _mode(value)}
+    modes = {mode for _, mode in source_modes if mode}
     if len(modes) > 1:
         return result(
             AssessmentStatus.UNKNOWN, "확인 필요", "전원 공급 방식 근거가 서로 충돌합니다."

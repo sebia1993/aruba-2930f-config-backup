@@ -136,6 +136,54 @@ def test_profile_roundtrip_stores_only_target_fields(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize("label", ["bad\ud800name", "bad\udfffname"])
+def test_unpaired_surrogate_label_is_rejected_at_all_input_boundaries(
+    tmp_path: Path, label: str
+) -> None:
+    import json
+
+    from aruba2930f_backup.poe_targets import load_target_profile
+
+    with pytest.raises(ValueError):
+        PoETarget(DeviceTarget("192.0.2.1"), ("1",), label)
+    with pytest.raises(ValueError):
+        make_target("192.0.2.1", 22, "1", label)
+    with pytest.raises(ValueError):
+        parse_pasted_targets(f"192.0.2.1\t22\t1\t{label}")
+    path = tmp_path / "invalid-label.json"
+    path.write_text(
+        json.dumps(
+            {
+                "format": "aruba2930f-poe-targets",
+                "version": 1,
+                "targets": [
+                    {"ip": "192.0.2.1", "ssh_port": 22, "interfaces": ["1"], "label": label}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        load_target_profile(path)
+
+
+def test_korean_and_non_bmp_target_names_roundtrip_without_conversion(tmp_path: Path) -> None:
+    import json
+
+    from aruba2930f_backup.poe_targets import load_target_profile, save_target_profile
+
+    label = "동관 📡 \U00020000"
+    groups = (make_target("192.0.2.1", 22, "1,2", label),)
+    assert parse_pasted_targets(f"192.0.2.1\t22\t1,2\t{label}") == groups
+    path = tmp_path / "unicode.json"
+    save_target_profile(path, groups)
+    assert load_target_profile(path) == groups
+    document = json.loads(path.read_text(encoding="utf-8"))
+    # JSON's valid escaped surrogate pair must decode into one Unicode scalar.
+    path.write_text(json.dumps(document, ensure_ascii=True), encoding="utf-8")
+    assert load_target_profile(path) == groups
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
