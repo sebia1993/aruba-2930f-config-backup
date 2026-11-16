@@ -419,17 +419,22 @@ def _valid_watts(value: Decimal | None) -> bool:
 def _mode(evidence: PowerEvidence) -> str:
     """Return only explicit IEEE/type evidence; class alone proves no mode."""
     types = {value for value in (evidence.plc_type, evidence.dlc_type) if value is not None}
-    device = evidence.device_type.casefold()
-    types.update(int(value) for value in re.findall(r"\btype\s*([1-4])\b", device))
-    if "802.3af" in device:
-        types.add(1)
-    if "802.3at" in device:
-        types.add(2)
-    if "802.3bt" in device:
-        if types and not types.issubset({3, 4}):
+    device = evidence.device_type.strip().casefold()
+    # The LLDP neighbor is a powered device (PD), not a power source (PSE).
+    # Substring matches such as "Type2 PSE" or "not Type2 PD" must never
+    # turn a numeric pair into a confirmed AP-535 supply negotiation.
+    if device not in ("", "dot3"):
+        match = re.fullmatch(
+            r"(?:802\.3(af|at|bt)\s+)?type\s*([1-4])\s+pd",
+            device,
+        )
+        if match is None:
             return "conflict"
-        if not types:
-            types.add(3)
+        protocol, number = match[1], int(match[2])
+        expected = {"af": {1}, "at": {2}, "bt": {3, 4}}
+        if protocol is not None and number not in expected[protocol]:
+            return "conflict"
+        types.add(number)
     if len(types) > 1:
         return "conflict"
     if not types:

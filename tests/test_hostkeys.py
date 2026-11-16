@@ -214,3 +214,27 @@ def test_approve_rejects_fabricated_non_unknown_review(tmp_path) -> None:
         store.approve([fabricated])
 
     assert captured.value.code is ErrorCode.HOST_KEY_REJECTED
+
+
+def test_parallel_store_instances_do_not_lose_independent_approvals(tmp_path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    path = tmp_path / "known_hosts.json"
+    first, second = HostKeyStore(path), HostKeyStore(path)
+    left = observation(b"left")
+    other_target = DeviceTarget("192.0.2.11", 22)
+    right = HostKeyObservation(other_target, "ssh-ed25519", sha256_fingerprint(b"right"))
+    checks = (first.check(left), second.check(right))
+    barrier = Barrier(2)
+
+    def approve(store, check) -> None:
+        barrier.wait(timeout=3)
+        store.approve([check])
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        tasks = [pool.submit(approve, store, check) for store, check in zip((first, second), checks)]
+        for task in tasks:
+            task.result(timeout=5)
+    approved = {key.endpoint for key in HostKeyStore(path).list_approved()}
+    assert approved == {TARGET.endpoint, other_target.endpoint}

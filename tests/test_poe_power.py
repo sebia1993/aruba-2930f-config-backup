@@ -652,3 +652,19 @@ def test_full_fixture_inert_configured_type_and_neighbor_name_defenses():
     )[0]
     assert neighbor.system_name == "error: east  PD Requested Power Value :20 W"
     assert neighbor.power.requested_watts == Decimal("25.5")
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    ["Type2 PSE", "not Type2 PD", "Type2 PD unused", "802.3af Type2 PD", "802.3bt Type2 PD"],
+)
+def test_invalid_or_pse_power_type_cannot_prove_ap535_supply(malformed: str) -> None:
+    assert assess(replace(good(), device_type=malformed)).status is AssessmentStatus.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "recognized",
+    ["Type2 PD", "802.3at Type2 PD"],
+)
+def test_explicit_pd_role_and_consistent_ieee_mode_are_accepted(recognized: str) -> None:
+    assert assess(replace(good(), device_type=recognized)).status is AssessmentStatus.NORMAL

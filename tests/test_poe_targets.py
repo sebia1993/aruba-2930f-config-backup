@@ -341,3 +341,21 @@ def test_legacy_schema_keeps_optional_alias_rows_and_nondefault_profile_roundtri
     path = tmp_path / "legacy-targets.json"
     save_target_profile(path, groups)
     assert load_target_profile(path) == groups
+
+
+def test_invalid_unicode_label_is_rejected_before_json_or_widget_mutation(tmp_path: Path) -> None:
+    from aruba2930f_backup.poe_targets import load_target_profile
+
+    with pytest.raises(ValueError, match="유니코드"):
+        make_target("192.0.2.1", 22, "24", "\ud800")
+    path = tmp_path / "invalid-utf8-label.json"
+    path.write_text(
+        '{"format":"aruba2930f-poe-targets","version":1,'
+        '"targets":[{"ip":"192.0.2.1","ssh_port":22,'
+        '"interfaces":["24"],"label":"\\ud800"}]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="유니코드"):
+        load_target_profile(path)
+    assert "ud800" in path.read_text(encoding="utf-8")
+    assert make_target("192.0.2.1", 22, "24", "AP-회의실-🙂").label == "AP-회의실-🙂"

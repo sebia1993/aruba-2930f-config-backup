@@ -9,8 +9,9 @@ import os
 import socket
 import tempfile
 import threading
+import time
 from collections.abc import Iterable
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -54,6 +55,72 @@ def default_host_key_store_path() -> Path:
     return base / "Aruba2930FConfigBackup" / "known_hosts.json"
 
 
+@contextmanager
+def _locked_host_key_file(path: Path):
+    """Serialize the complete read/modify/replace transaction across processes.
+
+    An in-process RLock cannot prevent two Windows EXE instances from losing
+    each other's approved fingerprints. A persistent sidecar lock file is used
+    instead of locking the JSON file, which is replaced atomically on writes.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = path.open("a+b")
+    except OSError as exc:
+        raise CollectionFailure(
+            ErrorCode.HOST_KEY_REJECTED, "The host-key lock file is not accessible."
+        ) from exc
+    with handle:
+        deadline = time.monotonic() + 10.0
+        locked = False
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0, os.SEEK_END)
+                if handle.tell() == 0:
+                    handle.write(b"0")
+                    handle.flush()
+                handle.seek(0)
+                while not locked:
+                    try:
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                        locked = True
+                    except OSError as exc:
+                        if time.monotonic() >= deadline:
+                            raise CollectionFailure(
+                                ErrorCode.HOST_KEY_REJECTED,
+                                "Timed out waiting for the approved host-key store lock.",
+                            ) from exc
+                        time.sleep(0.05)
+            else:
+                import fcntl
+
+                while not locked:
+                    try:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        locked = True
+                    except BlockingIOError as exc:
+                        if time.monotonic() >= deadline:
+                            raise CollectionFailure(
+                                ErrorCode.HOST_KEY_REJECTED,
+                                "Timed out waiting for the approved host-key store lock.",
+                            ) from exc
+                        time.sleep(0.05)
+            yield
+        finally:
+            if locked:
+                if os.name == "nt":
+                    import msvcrt
+
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 class HostKeyStore:
     """Thread-safe JSON store that never auto-accepts unknown or changed keys."""
 
@@ -62,9 +129,10 @@ class HostKeyStore:
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path) if path is not None else default_host_key_store_path()
         self._lock = threading.RLock()
+        self._lock_path = self.path.with_name(self.path.name + ".lock")
 
     def check(self, observation: HostKeyObservation) -> HostKeyCheck:
-        with self._lock:
+        with self._lock, _locked_host_key_file(self._lock_path):
             endpoints = self._read_endpoints()
             record = endpoints.get(observation.target.endpoint)
             if record is None:
@@ -109,7 +177,7 @@ class HostKeyStore:
         requested = tuple(checks)
         if not requested:
             return
-        with self._lock:
+        with self._lock, _locked_host_key_file(self._lock_path):
             endpoints = self._read_endpoints()
             additions: dict[str, dict[str, str]] = {}
             for supplied in requested:
@@ -144,7 +212,7 @@ class HostKeyStore:
             self._write_endpoints(endpoints)
 
     def list_approved(self) -> tuple[ApprovedHostKey, ...]:
-        with self._lock:
+        with self._lock, _locked_host_key_file(self._lock_path):
             endpoints = self._read_endpoints()
             approved: list[ApprovedHostKey] = []
             for endpoint, record in sorted(endpoints.items()):
@@ -162,7 +230,7 @@ class HostKeyStore:
         """Explicitly forget one endpoint so a newly probed key can be reviewed."""
 
         key = endpoint.endpoint if isinstance(endpoint, DeviceTarget) else endpoint.strip()
-        with self._lock:
+        with self._lock, _locked_host_key_file(self._lock_path):
             endpoints = self._read_endpoints()
             if key not in endpoints:
                 return False

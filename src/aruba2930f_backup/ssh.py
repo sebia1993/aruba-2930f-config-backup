@@ -226,6 +226,7 @@ class NetmikoSSHSession:
             raw = self._read_until_prompt(
                 prompt,
                 cancel_event=cancel_event,
+                command=normalized_command,
             )
             output = _strip_command_and_prompt(raw, normalized_command, prompt)
             validate_cli_response(normalized_command, output)
@@ -274,11 +275,21 @@ class NetmikoSSHSession:
         prompt: str,
         *,
         cancel_event: CancellationSignal | None,
+        command: str = "",
     ) -> str:
+        """Wait for a verified tail prompt while retaining raw chunk boundaries.
+
+        A running-config banner may contain a line exactly equal to the switch
+        prompt. It must not be mistaken for the end of the command. A bounded
+        quiet interval is also required for running-config, as a single idle
+        poll does not mean the device finished transmitting its configuration.
+        """
         connection = self._require_connection()
         deadline = self._clock() + self._options.command_timeout_seconds
-        output = ""
+        raw_output = ""
         pager_advances = 0
+        candidate_since: float | None = None
+        config_read = command == "show running-config"
 
         while self._clock() < deadline:
             if cancel_event is not None and cancel_event.is_set():
@@ -286,22 +297,18 @@ class NetmikoSSHSession:
                 raise CollectionFailure(ErrorCode.CANCELLED, "Collection was cancelled.")
             chunk = connection.read_channel()
             if chunk:
-                output += chunk
+                raw_output += chunk
                 _enforce_output_bounds(
-                    output,
+                    raw_output,
                     max_bytes=self._options.max_output_bytes,
                     max_lines=self._options.max_output_lines,
                 )
-                output = (
-                    _remove_backspaces(_strip_ansi(output))
-                    .replace("\r\n", "\n")
-                    .replace("\r", "\n")
-                )
-            elif output:
-                # Confirm one channel-idle read before interpreting a tail token.
-                # This avoids treating a legitimate line at a TCP chunk boundary
-                # as either the final prompt or the device pager.
-                clean_tail = output.rstrip()
+                candidate_since = None
+            elif raw_output:
+                # Normalize only for inspection, never mutate the raw stream
+                # while it is still receiving CR/LF fragments.
+                clean = _clean_channel_text(raw_output)
+                clean_tail = clean.rstrip()
                 pager_match = _tail_pager_match(clean_tail)
                 if pager_match is not None:
                     pager_advances += 1
@@ -310,18 +317,32 @@ class NetmikoSSHSession:
                             ErrorCode.OUTPUT_LIMIT_EXCEEDED,
                             "The residual pager exceeded its safety limit.",
                         )
+                    # Preserve semantics of the completed pager line while
+                    # discarding only its control marker from the collected text.
                     prefix = clean_tail[: pager_match.start()]
                     if prefix.endswith("\n"):
                         prefix = prefix[:-1]
-                    output = prefix + output[len(clean_tail) :]
+                    raw_output = prefix + clean[len(clean_tail):]
+                    candidate_since = None
                     connection.write_channel(" ")
-                elif _ends_with_prompt(output, prompt):
-                    return output
+                elif _ends_with_prompt(clean, prompt):
+                    if config_read and _running_config_has_open_banner(clean):
+                        candidate_since = None
+                    elif not config_read:
+                        return clean
+                    else:
+                        now = self._clock()
+                        if candidate_since is None:
+                            candidate_since = now
+                        elif now - candidate_since >= 0.35:
+                            return clean
+                else:
+                    candidate_since = None
             self._sleep(0.05)
 
         raise CollectionFailure(
             ErrorCode.COMMAND_TIMEOUT,
-            "The command did not return to the prompt before the timeout.",
+            "The command did not return to a confirmed prompt before the timeout.",
             transient=True,
         )
 
@@ -538,6 +559,28 @@ def _ends_with_prompt(output: str, prompt: str) -> bool:
     if not clean_tail:
         return False
     return clean_tail.rsplit("\n", maxsplit=1)[-1].strip() == prompt
+
+
+def _running_config_has_open_banner(output: str) -> bool:
+    """Treat prompt-shaped text in an unclosed AOS-S multiline banner as data.
+
+    Unknown/unfinished banner delimiters fail closed (command timeout), rather
+    than returning a successful but truncated running configuration.
+    """
+    delimiter: str | None = None
+    for line in output.splitlines():
+        if delimiter is not None:
+            if line.strip() == delimiter:
+                delimiter = None
+            continue
+        match = re.fullmatch(
+            r"[ \t]*banner[ \t]+(?:motd|exec)[ \t]+([^\s]{1})[ \t]*",
+            line,
+            re.IGNORECASE,
+        )
+        if match is not None and match[1] not in ('"', "'"):
+            delimiter = match[1]
+    return delimiter is not None
 
 
 def _tail_pager_match(output: str) -> re.Match[str] | None:

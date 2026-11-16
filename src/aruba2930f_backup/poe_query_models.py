@@ -41,6 +41,10 @@ class PoETarget:
             raise ValueError("스위치당 인터페이스는 최대 384개입니다.")
         if not isinstance(self.label, str) or len(self.label) > MAX_LABEL_LENGTH:
             raise ValueError("이름은 80자 이하로 입력하세요.")
+        try:
+            self.label.encode("utf-8", errors="strict")
+        except UnicodeEncodeError as exc:
+            raise ValueError("이름에 잘못된 유니코드 문자가 포함돼 있습니다.") from exc
         object.__setattr__(self, "interfaces", ports)
 
 

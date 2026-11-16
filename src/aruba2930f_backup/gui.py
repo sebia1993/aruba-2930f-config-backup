@@ -136,6 +136,7 @@ class BackupOutcome:
     results: tuple[object, ...]
     report_path: Path
     cancelled: bool = False
+    log_warning: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,6 +331,19 @@ class CollectorBackupService:
                 request.enable_password or "",
             ),
         )
+        log_write_failed = False
+
+        def safe_log(*args: Any, **kwargs: Any) -> None:
+            nonlocal log_write_failed
+            if log_write_failed:
+                return
+            try:
+                logger.log(*args, **kwargs)
+            except OSError:
+                # Operational telemetry is best-effort. A full/read-only log
+                # destination must not discard successfully collected configs.
+                log_write_failed = True
+
         targets = [DeviceTarget(ip, request.port) for ip in request.targets]
         credentials = Credentials(
             username=request.username,
@@ -374,7 +388,7 @@ class CollectorBackupService:
                 "phase": phase,
             }
             callbacks.on_event(forwarded)
-            logger.log(forwarded)
+            safe_log(forwarded)
 
         def emit_host_key_event(
             target: DeviceTarget,
@@ -399,7 +413,7 @@ class CollectorBackupService:
                 "final": final,
             }
             callbacks.on_event(event)
-            logger.log(event)
+            safe_log(event)
 
         by_endpoint: dict[str, DeviceResult] = {}
         host_key_attempts: dict[str, int] = {}
@@ -589,7 +603,7 @@ class CollectorBackupService:
             str(record["diagnostic_code"]) for record in records if record.get("diagnostic_code")
         )
         for diagnostic_code, count in sorted(diagnostic_counts.items()):
-            logger.log(
+            safe_log(
                 phase="diagnostic",
                 stage="summary",
                 status="failed",
@@ -619,7 +633,7 @@ class CollectorBackupService:
                 diagnostic_detail=diagnostic_detail_for_exception(exc),
             )
             with suppress(Exception):
-                logger.log(
+                safe_log(
                     phase=DiagnosticPhase.REPORT_STORAGE,
                     stage="failed",
                     status="fatal_app",
@@ -634,6 +648,7 @@ class CollectorBackupService:
             results=tuple(records),
             report_path=report_path,
             cancelled=cancelled,
+            log_warning=log_write_failed,
         )
 
 
@@ -1030,7 +1045,15 @@ class TrustedKeysDialog(QDialog):
         )
         if answer is not QMessageBox.StandardButton.Yes:
             return
-        self._remove_callback(tuple(self._entries[row] for row in rows))
+        try:
+            self._remove_callback(tuple(self._entries[row] for row in rows))
+        except (CollectionFailure, OSError, ValueError):
+            QMessageBox.warning(
+                self,
+                "SSH 장비 지문 제거 실패",
+                "승인 지문을 안전하게 갱신하지 못했습니다. 저장소 파일을 확인하고 다시 시도하세요.",
+            )
+            return
         self.accept()
 
 
@@ -1745,9 +1768,14 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(100)
         cancelled = bool(_first_value(outcome, "cancelled", default=False))
         prefix = "취소된 실행 결과 저장" if cancelled else "백업 완료"
+        warning = (
+            " · 주의: 작업 로그 기록 실패 (설정/결과 파일은 별도 저장됨)"
+            if bool(_first_value(outcome, "log_warning", default=False))
+            else ""
+        )
         self.status_label.setText(
             f"{prefix}: 성공 {success_count}대 · 재시도 소진 {exhausted_count}대 · "
-            f"기타 실패 {other_failure_count}대"
+            f"기타 실패 {other_failure_count}대{warning}"
         )
 
     @Slot(object)
@@ -1767,6 +1795,12 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_thread_finished(self) -> None:
         thread = self._thread
+        if thread is not None and not thread.wait(0):
+            # finished can be emitted before native thread cleanup completes.
+            # Keep the worker and busy state alive without blocking Qt events.
+            self._run_finalize_pending = True
+            QTimer.singleShot(30, self._on_thread_finished)
+            return
         self._thread = None
         self._worker = None
         self._cancel_event = None
@@ -1951,7 +1985,17 @@ class MainWindow(QMainWindow):
                 "저장된 SSH 장비 지문이 없습니다.",
             )
             return
-        entries = tuple(list_method())
+        try:
+            entries = tuple(list_method())
+        except (CollectionFailure, OSError, ValueError):
+            QMessageBox.warning(
+                self,
+                "SSH 장비 지문 조회 실패",
+                "승인 지문 파일을 읽지 못했습니다. 파일 손상·접근 권한을 확인하세요."
+                " 오류를 무시하고 지문을 승인하지 않습니다.",
+            )
+            self.status_label.setText("SSH 지문 저장소 오류 · 승인 상태를 확인할 수 없습니다.")
+            return
         dialog = TrustedKeysDialog(
             entries,
             cast(

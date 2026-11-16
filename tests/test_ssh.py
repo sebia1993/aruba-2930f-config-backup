@@ -545,3 +545,54 @@ def test_credentials_repr_never_contains_secrets() -> None:
     rendered = repr(credentials)
     assert "password-value" not in rendered
     assert "enable-value" not in rendered
+
+
+def test_running_config_banner_containing_prompt_waits_for_closing_delimiter(tmp_path: Path) -> None:
+    connection = FakeConnection(
+        {"show running-config": [
+            "show running-config\nbanner motd ^\nedge-lab#",
+            "",
+            "\n^\ninterface 24\n   name AP-uplink\n",
+            "edge-lab#",
+        ]}
+    )
+    session = make_session(tmp_path, connection)
+    session.connect()
+    prepare_session(session)
+    output = session.send_show("show running-config")
+    assert "banner motd ^\nedge-lab#\n^" in output
+    assert "interface 24\n   name AP-uplink" in output
+
+
+def test_running_config_unclosed_banner_fails_instead_of_truncated_success(tmp_path: Path) -> None:
+    connection = FakeConnection(
+        {"show running-config": ["show running-config\nbanner motd ^\nedge-lab#"]}
+    )
+    session = make_session(
+        tmp_path,
+        connection,
+        options=CollectionOptions(command_timeout_seconds=0.2),
+    )
+    session.connect()
+    prepare_session(session)
+    with pytest.raises(CollectionFailure) as caught:
+        session.send_show("show running-config")
+    assert caught.value.code == ErrorCode.COMMAND_TIMEOUT
+
+
+def test_crlf_split_between_ssh_chunks_produces_identical_config_and_sha(tmp_path: Path) -> None:
+    import hashlib
+
+    raw = "show running-config\r\nhostname edge-lab\r\ninterface 24\r\nedge-lab#"
+    chunks = [
+        ["show running-config\r", "\nhostname edge-lab\r", "\ninterface 24\r", "\nedge-lab#"],
+        [raw],
+    ]
+    texts = []
+    for parts in chunks:
+        session = make_session(tmp_path, FakeConnection({"show running-config": parts}))
+        session.connect()
+        prepare_session(session)
+        texts.append(session.send_show("show running-config"))
+    assert texts == ["hostname edge-lab\ninterface 24"] * 2
+    assert len({hashlib.sha256(value.encode("utf-8")).hexdigest() for value in texts}) == 1

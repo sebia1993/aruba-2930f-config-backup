@@ -1045,3 +1045,143 @@ def test_cancel_handler_does_not_block_on_slow_transport_close(app: QApplication
     cancel_thread.join(timeout=1)
     assert not cancel_thread.is_alive()
     assert not window.isVisible()
+
+
+def test_log_write_failure_does_not_discard_collected_config_or_workbook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, app: QApplication
+) -> None:
+    from aruba2930f_backup.reporting import SanitizedJsonlLogger
+
+    def log_unavailable(self: object, *args: object, **kwargs: object) -> None:
+        del self, args, kwargs
+        raise OSError("disk is unavailable")
+
+    monkeypatch.setattr(SanitizedJsonlLogger, "log", log_unavailable)
+    collector = FakeCollector()
+    outcome = CollectorBackupService(collector).run(
+        BackupRequest(
+            targets=("192.0.2.10",),
+            port=22,
+            username="operator",
+            password="test-password",
+            enable_password=None,
+            concurrency=1,
+            output_directory=tmp_path,
+        ),
+        BackupCallbacks(
+            on_event=lambda event: None,
+            request_host_key_approval=lambda checks: False,
+            cancel_event=threading.Event(),
+        ),
+    )
+    assert outcome.log_warning
+    assert collector.result is not None
+    assert collector.result.config_path is not None
+    assert collector.result.config_path.is_file()
+    assert outcome.report_path.is_file()
+    window = MainWindow(service=FakeService(tmp_path))
+    window._on_worker_success(outcome)
+    assert "작업 로그 기록 실패" in window.status_label.text()
+    window.close()
+
+
+@pytest.mark.gui
+def test_corrupt_hostkey_store_shows_operator_warning(
+    app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    class BrokenKeys(FakeService):
+        def list_trusted_host_keys(self) -> tuple[object, ...]:
+            raise CollectionFailure(ErrorCode.HOST_KEY_REJECTED, "private error")
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning",
+        lambda parent, title, message, *args: warnings.append(title) or QMessageBox.StandardButton.Ok,
+    )
+    window = MainWindow(service=BrokenKeys(tmp_path))
+    window._manage_trusted_keys()
+    assert warnings == ["SSH 장비 지문 조회 실패"]
+    assert "지문 저장소 오류" in window.status_label.text()
+    window.close()
+
+
+@pytest.mark.gui
+def test_hostkey_remove_failure_preserves_dialog_and_explains_error(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes
+    )
+    monkeypatch.setattr(
+        QMessageBox, "warning",
+        lambda parent, title, message, *args: warnings.append(title) or QMessageBox.StandardButton.Ok,
+    )
+
+    def fail_remove(entries: Sequence[object]) -> None:
+        del entries
+        raise CollectionFailure(ErrorCode.HOST_KEY_REJECTED, "corrupt store")
+
+    dialog = TrustedKeysDialog(({"endpoint": "192.0.2.10:22"},), fail_remove)
+    dialog.show()
+    dialog.table.selectRow(0)
+    dialog.remove_button.click()
+    assert warnings == ["SSH 장비 지문 제거 실패"]
+    assert dialog.isVisible()
+    assert dialog.table.rowCount() == 1
+    dialog.close()
+
+
+@pytest.mark.gui
+def test_main_backup_keeps_qthread_alive_until_native_cleanup(
+    app: QApplication, tmp_path: Path
+) -> None:
+    from PySide6.QtCore import Qt
+
+    ready = threading.Event()
+    release_service = threading.Event()
+    cleanup_entered = threading.Event()
+    release_cleanup = threading.Event()
+
+    class HeldBackup(FakeService):
+        def run(self, request: BackupRequest, callbacks: BackupCallbacks) -> BackupOutcome:
+            ready.set()
+            assert release_service.wait(3)
+            return super().run(request, callbacks)
+
+    window = MainWindow(service=HeldBackup(tmp_path))
+    window.show()
+    window.ip_input.setPlainText("192.0.2.10")
+    window.username_input.setText("operator")
+    window.password_input.setText("test-password")
+    window.output_input.setText(str(tmp_path))
+    window.start_button.click()
+    assert ready.wait(2)
+    thread = window._thread
+    worker = window._worker
+    assert thread is not None and worker is not None
+
+    def delay_native_teardown() -> None:
+        cleanup_entered.set()
+        assert release_cleanup.wait(3)
+
+    thread.finished.connect(delay_native_teardown, Qt.ConnectionType.DirectConnection)
+    release_service.set()
+    try:
+        _wait_until(app, cleanup_entered.is_set)
+        time.sleep(0.05)
+        app.processEvents()
+        assert window._thread is thread
+        assert window._worker is worker
+        assert not window.start_button.isEnabled()
+        assert window.isVisible()
+    finally:
+        release_cleanup.set()
+    _wait_until(app, lambda: window._thread is None)
+    assert window.start_button.isEnabled()
+    assert window.progress_bar.value() == 100
+    window.close()
