@@ -16,7 +16,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QThread
 from PySide6.QtWidgets import QApplication
-from tests.fakes import ScriptedFactory
 
 from aruba2930f_backup.collector import ArubaCollector
 from aruba2930f_backup.diagnostics import decode_diagnostic_code, diagnostic_code_for_exception
@@ -45,6 +44,7 @@ from aruba2930f_backup.models import (
     HostKeyTrustState,
 )
 from aruba2930f_backup.storage import FilenameMode
+from tests.fakes import ScriptedFactory
 
 
 @pytest.fixture(scope="module")

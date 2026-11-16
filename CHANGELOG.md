@@ -5,17 +5,34 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
+### 추가
+
+- SW IPv4와 단일 인터페이스로 PoE 전원 OFF/ON 및 포트 Down/Up을 실행하는 별도 제어 창
+- 실제 포트 상태 조회, 120초 조회 유효기간, 대상 문자열 확인, 실행 직전 재확인과 변경 후 상태 확인
+- 포트 관리 설정/물리 링크/PoE 관리 설정/실제 전원 공급 상태를 구분하는 표시와 작업 이력
+- 기존 백업 명령 허용 목록을 유지하는 별도 변경 어댑터와 변경 명령 자동 재전송 방지
+
+### 수정
+
+- AOS-S 16.11 문서의 추가 PoE 출력 형식을 해석하고 실제 소비 전력을 예약 전력과 구분
+- 포트 조회·변경 중 메인 창을 닫아 작업이 중단되지 않도록 종료를 차단
+- 의존성의 동명 `tests` 패키지가 로컬 테스트 헬퍼를 가리지 않도록 테스트 패키지 명시
+
 ### 보안
 
 - `CVE-2026-44405` 보완 통제로 호스트 키 사전점검과 인증 연결 모두에서
   RSA/SHA-1 서명 방식인 `ssh-rsa`를 비활성화하고 두 경로의 정책을 단일 함수로 고정
 - RSA/SHA-1 전용 루프백 서버가 자격증명을 받기 전에
   `SSH_ALGORITHM_INCOMPATIBLE`로 차단되는 회귀 테스트 추가
-- 수정된 Paramiko PyPI 버전이 나올 때까지 유지할 정확히 한 건의 감사 예외,
+- Paramiko 업그레이드 검증 완료 전까지 유지할 정확히 한 건의 감사 예외,
   배포 경계, 재검토 기한과 제거 조건을 별도 문서로 공개
 
 ### 변경
 
+- 버전과 검토한 `main` 커밋을 지정하면 annotated tag를 만들고 기존 검증을 거쳐
+  사전릴리즈를 발행하는 GitHub Actions 수동 실행 경로 추가
 - CI와 릴리스의 checkout, Python 설정, artifact 업로드·다운로드 Actions를
   Node.js 24 기반 최신 major의 검증된 commit SHA로 고정
 
@@ -211,7 +228,8 @@
 - 자격증명과 장비 목록을 세션에만 유지하고 운영 로그에서 민감정보 제거
 - 실제 2930F 미검증 및 미서명 바이너리임을 사전릴리즈에 명시
 
-[Unreleased]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.5...v0.1.6

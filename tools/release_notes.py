@@ -58,6 +58,36 @@ def _render(version: str, body: str) -> str:
     if not highlights_text:
         highlights_text = "- 세부 변경 내용은 아래 버전 변경 내역을 확인하십시오."
 
+    has_port_control = tuple(int(part) for part in version.split(".")) >= (0, 2, 0)
+    operation_scope = (
+        "- 백업은 **읽기 전용 설정 수집**이며 설정 모드에 진입하지 않습니다.\n"
+        "- 별도 **포트 제어** 창은 SW IP와 단일 인터페이스를 확인한 뒤 "
+        "PoE OFF/ON 또는 포트 Down/Up으로 `running-config`를 변경합니다.\n"
+        "- 현재 상태 조회와 대상 문자열 확인 후 실행하며, 변경 명령은 자동 재전송하지 않습니다. "
+        "연결 단절 등으로 결과 확인 불가 상태가 되면 현재 상태를 다시 조회하십시오.\n"
+        "- `write memory`를 실행하지 않습니다. 재부팅 뒤 상태는 저장된 startup-config에 따르며, "
+        "다른 운영자가 전체 설정을 저장하면 포트 변경도 포함될 수 있습니다.\n"
+        "- PoE 켜짐 확인은 AP 부팅·컨트롤러 재등록·무선 서비스 복구 확인과 별개입니다."
+        if has_port_control
+        else "- 장비 측 기본 동작은 **읽기 전용 설정 수집**입니다.\n"
+        "- 설정 모드에 진입하거나 장비 구성을 변경하는 명령은 실행하지 않습니다."
+    )
+    configuration_limit = (
+        "- 설정 복원 및 포트 제어 이외의 장비 구성 변경 기능은 제공하지 않습니다.\n"
+        "- 포트 제어는 한 번에 한 포트만 지원합니다. 자동 PoE 재시작과 일괄 제어는 제공하지 않습니다.\n"
+        "- 포트 제어는 `edge-lab#`와 같은 일반적인 관리자 EXEC 프롬프트를 지원하며, "
+        "래퍼 등 특수 형식의 프롬프트는 변경 전에 거부합니다.\n"
+        "- 관리 경로나 상단 연결 포트를 내리면 SSH 연결과 서비스가 끊길 수 있습니다.\n"
+        "- 포트 작업 이력에는 대상 IP·포트·장비명이 포함되므로 공개 자료에 원문을 올리지 마십시오."
+        if has_port_control
+        else "- 설정 복원 및 장비 구성 변경 기능은 제공하지 않습니다."
+    )
+    port_control_document = (
+        "\n- [단일 포트 전원·통신 제어](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/PORT_CONTROL_KO.md)"
+        if has_port_control
+        else ""
+    )
+
     return f"""# Aruba 2930F 설정 백업 v{version}
 
 > **배포 상태: 사전릴리즈**
@@ -75,8 +105,7 @@ def _render(version: str, body: str) -> str:
 
 ## 운영 영향
 
-- 장비 측 기본 동작은 **읽기 전용 설정 수집**입니다.
-- 설정 모드에 진입하거나 장비 구성을 변경하는 명령은 실행하지 않습니다.
+{operation_scope}
 - 새 버전은 기존 실행 폴더에 덮어쓰기보다 별도 폴더에 압축 해제하는 방식을 권장합니다.
 - 입출력 형식이나 동작 변경이 있는 경우 아래 **버전 변경 내역**을 우선 확인하십시오.
 
@@ -127,7 +156,7 @@ Aruba2930FConfigBackup_v{version}_sbom.cdx.json
 
 - 실제 Aruba 2930F 운영 장비에 대한 검증은 자동 테스트와 별개입니다.
 - Aruba 2930F 이외 모델은 지원 범위가 아닙니다.
-- 설정 복원 및 장비 구성 변경 기능은 제공하지 않습니다.
+{configuration_limit}
 - 예약 실행, 서비스/에이전트 모드는 현재 범위 밖입니다.
 
 ## v{version} 변경 내역
@@ -136,7 +165,7 @@ Aruba2930FConfigBackup_v{version}_sbom.cdx.json
 
 ## 상세 문서
 
-- [README](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/README.md)
+- [README](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/README.md){port_control_document}
 - [프로그램 구조](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/ARCHITECTURE.md)
 - [SSH 수집 및 운영 안전](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/SSH_AND_SAFETY.md)
 - [오류 코드](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/ERROR_CODES.md)

@@ -1,0 +1,20 @@
+switch(config)$ show pow 1/28
+Status and Configuration Information for port 1/28
+Power Enable : Yes PoE Port Status : Delivering
+PLC Class/Type : 5/4 Priority Config : critical
+DLC Class/Type : 5/4 Pre-std Detect : on
+Alloc By Config : usage Configured Type :
+Alloc By Actual : lldp PoE Value Config : n/a
+PoE Counter Information
+Over Current Cnt : 284 MPS Absent Cnt : 5
+Power Denied Cnt : 0 Short Cnt : 0
+LLDP Information
+PSE Allocated Power Value : 0.0 W PSE TLV Configured : dot3, MED
+PD Requested Power Value : 0.0 W PSE TLV Sent Type : dot3
+MED LLDP Detect : Enabled PD TLV Sent Type : dot3
+LLDP Dual Signature Information
+PSE Allocated Power Value A : 20.0 W PSE Allocated Power Value B : 20.0 W
+PD Requested Power Value A : 20.0 W PD Requested Power Value B : 20.0 W
+Power Information
+PSE Voltage : 54.0 V PSE Reserved Power : 3.2 W
+PD Amperage Draw : 57 mA PD Power Draw : 3.2 W

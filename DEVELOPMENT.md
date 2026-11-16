@@ -55,7 +55,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\validate.ps1 `
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build_windows.ps1 `
-  -PythonPath C:\Python314\python.exe -Version 0.1.8
+  -PythonPath C:\Python314\python.exe -Version 0.2.0
 ```
 
 빌드 결과에는 다음이 포함됩니다.
@@ -96,12 +96,25 @@ powershell -ExecutionPolicy Bypass -File .\build_windows.ps1 `
 
 `no page`가 정상 적용되지 않으면 이후 `show` 명령을 보내지 않습니다.
 
-### 읽기 전용 원칙
+### 백업 경로의 읽기 전용 원칙
 
 - 설정 모드 진입 금지
 - 구성 변경 명령 추가 금지
 - 실제 장비를 대상으로 한 자동 변경 테스트 금지
 - 모델 확인 전에 `show running-config` 실행 금지
+
+### 별도 포트 제어 경로
+
+사용자가 요청한 단일 포트 제어는 `port_control.py`, `port_control_ssh.py`,
+`port_control_gui.py`로 분리합니다. 위 백업용 명령 허용 목록에는 변경 명령을
+추가하지 않습니다. 별도 어댑터만 `interface <port> disable/enable`과
+`[no] interface <port> power-over-ethernet`을 허용합니다.
+
+대상 지문·모델·포트 조회, 명시적 대상 확인, 120초 조회 유효기간, 실행 직전 재확인,
+변경 후 재조회, 단일 작업 잠금을 유지합니다. 변경 명령은 재시도하지 않으며
+전송 이후 확인 실패는 결과 확인 불가로 기록합니다. `write memory` 및 자동
+전원 재시작은 구현 범위 밖입니다. 실제 장비를 대상으로 한 자동 변경 테스트는
+계속 금지하고 합성 응답과 오프라인 GUI로 검증합니다.
 
 ## 테스트 설계 원칙
 

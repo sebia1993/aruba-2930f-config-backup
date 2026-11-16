@@ -20,6 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics, QImage
 from PySide6.QtWidgets import QApplication, QTableWidgetItem
 
+from aruba2930f_backup import __version__
 from aruba2930f_backup.gui import HostKeyApprovalDialog, MainWindow
 from aruba2930f_backup.models import (
     DeviceTarget,
@@ -196,7 +197,7 @@ def main() -> int:
         _verify_image(path)
     manifest = {
         "application": "Aruba 2930F Config Backup",
-        "application_version": "0.1.8",
+        "application_version": __version__,
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "capture_os": platform.platform(),
         "python": platform.python_version(),
