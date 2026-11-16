@@ -1,28 +1,32 @@
 {
   "application": "Aruba 2930F Config Backup",
-  "application_version": "0.1.8",
-  "source_commit": "11db79d33f98c01cb923ef9544f9d3792d45472f",
-  "capture_os": "Windows-2025Server-10.0.26100-SP0",
-  "python": "3.14.7",
-  "method": "Actual PySide6 MainWindow and HostKeyApprovalDialog; Qt offscreen; synthetic widget state",
+  "application_version": "0.3.0",
+  "source_commit": "c434d7bbb5c4da799d5f3567cf1ecb13b87c260d",
+  "capture_os": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python": "3.14.10",
+  "method": "Actual PySide6 MainWindow, HostKeyApprovalDialog and PoEQueryDialog; Qt offscreen; synthetic widget state",
   "network": "socket connection attempts blocked; no collection or device access",
-  "workflow_run": "34175884087",
+  "workflow_run": "local",
   "images": [
     {
       "file": "host-key-review.png",
-      "sha256": "57e0304795d3d53b678c6a9554745cccb406a2740adf3e9a0f5a8e7080c4acf9"
+      "sha256": "e37e0bee9af6e0e9a2cb0acfebf0105b5ad5504bbd2b33ba8e690e7e1b775d85"
     },
     {
       "file": "main-window.png",
-      "sha256": "e37882469f2e4d6a65c32e9ab94d0ec9a01351312e84b0e6436ad1a4e1464f05"
+      "sha256": "20d2ab77d49cd2c8eb6c5a7736bf331cc57dc463c52f08e443dff7b93f62fc25"
     },
     {
       "file": "mixed-result.png",
-      "sha256": "1560f6da690697a6727efb6f7ba3dd3b01b4d8b57d31b7e35a3ec8523f5c5e84"
+      "sha256": "2f0f40f929529c87eb32687cf5912385fdd8809c9e5adf07bd460f8123d1dc7c"
+    },
+    {
+      "file": "poe-query.png",
+      "sha256": "1c680b6a634ff323869a3fb9af170c2775100bb8325bf5e1daafa43562db4f0c"
     },
     {
       "file": "result-example.png",
-      "sha256": "bf703ca72c8bbdb5be60d89117995d251fe8e2aa478d1bec9dd2f30aee14d01c"
+      "sha256": "0fc05a116b15a8b1ec5990a56cf4d5c1328350ae50c757921ad576a36d9d3530"
     }
   ]
 }

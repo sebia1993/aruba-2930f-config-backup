@@ -85,7 +85,7 @@
 **Files:** User guide `docs/POE_QUERY_KO.md`, README, CHANGELOG, DEVELOPMENT_LOG, validation guide, screenshot renderer/package docs, version declarations/CI/build references and release notes as required for v0.3.0.
 
 - [x] Review task reports and integration contracts; run one full suite with branch coverage, lint/format, mypy, version/secret/package checks required by repository CI. Fix concrete failures with regression evidence.
-- [ ] Render and inspect actual Qt widgets using fictional data; document explicit list/paste format, profile security, grouped failures, measurement time, cancellation and CSV meaning.
-- [ ] Fresh independent whole-change review covering spec, safe collection, thread lifecycle and profile/export behavior; address material findings and rerun relevant gates.
+- [x] Render and inspect actual Qt widgets using fictional data; document explicit list/paste format, profile security, grouped failures, measurement time, cancellation and CSV meaning.
+- [x] Fresh independent whole-change review covering spec, safe collection, thread lifecycle and profile/export behavior; address material findings and rerun relevant gates.
 - [ ] Upload exact verified tree on feature branch, create PR, wait for Windows/CodeQL/screenshots gates. Complete normal merge/release process consistent with earlier authorization; never bypass protection.
 - [ ] Publish v0.3.0 prerelease, download final ZIP/SHA/SBOM and verify version/commit/provenance. Report completion separately from user onsite validation.
