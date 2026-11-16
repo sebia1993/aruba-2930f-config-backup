@@ -1,7 +1,7 @@
 {
   "application": "Aruba 2930F Config Backup",
   "application_version": "0.3.0",
-  "source_commit": "61e86f0bc9dfe3d3691b97cfd498b8d07ea75310",
+  "source_commit": "34d274cd082f8e98908fd77d5de0d09208f0f3ce",
   "capture_os": "Linux-6.18.57-x86_64-with-glibc2.41",
   "python": "3.14.10",
   "method": "Actual PySide6 MainWindow, HostKeyApprovalDialog and PoEQueryDialog; Qt offscreen; synthetic widget state",
