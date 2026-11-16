@@ -209,3 +209,72 @@ def test_inherited_backup_allowlist_does_not_expand(tmp_path: Path) -> None:
         with pytest.raises(ValueError):
             session.send_show(command)
     assert connection.writes == []
+
+
+def test_lldp_read_uses_exact_validated_readonly_command(tmp_path: Path) -> None:
+    command = "show lldp info remote-device 1/24"
+    connection = PortConnection(
+        {command: [f"{command}\nLLDP Remote Device Information Detail\nedge-lab#"]}
+    )
+    session = make_port_session(tmp_path, connection)
+    assert session.read_lldp("1/24") == "LLDP Remote Device Information Detail"
+    assert connection.writes == [command]
+    with pytest.raises(ValueError):
+        session.send_show(command)
+
+
+@pytest.mark.parametrize("port", ["0", "01", "1-4", "1,2", "1/1/1", "1\nreload", " 1", "1;reload"])
+def test_lldp_rejects_invalid_port_before_channel(tmp_path: Path, port: str) -> None:
+    connection = PortConnection()
+    session = make_port_session(tmp_path, connection)
+    with pytest.raises(ValueError):
+        session.read_lldp(port)
+    assert connection.writes == []
+
+
+def test_lldp_timeout_closes_bounded_session(tmp_path: Path) -> None:
+    connection = PortConnection({"show lldp info remote-device 24": []})
+    session = make_port_session(tmp_path, connection)
+    with pytest.raises(CollectionFailure) as caught:
+        session.read_lldp("24")
+    assert caught.value.code is ErrorCode.COMMAND_TIMEOUT
+    assert connection.disconnected
+
+
+def test_lldp_preparation_required_before_channel(tmp_path: Path) -> None:
+    connection = PortConnection()
+    session = make_port_session(tmp_path, connection)
+    session.enter_enable()
+    with pytest.raises(CollectionFailure):
+        session.read_lldp("24")
+    assert connection.writes == []
+
+
+@pytest.mark.parametrize("bound", ["bytes", "lines"])
+def test_lldp_output_limits_close_session(tmp_path: Path, bound: str) -> None:
+    command = "show lldp info remote-device 24"
+    output = "x" * 256 if bound == "bytes" else "x\n" * 11
+    connection = PortConnection({command: [output]})
+    options = {"max_output_bytes": 128} if bound == "bytes" else {"max_output_lines": 10}
+    session = make_port_session(tmp_path, connection, **options)
+    with pytest.raises(CollectionFailure) as caught:
+        session.read_lldp("24")
+    assert caught.value.code is ErrorCode.OUTPUT_LIMIT_EXCEEDED
+    assert connection.disconnected
+
+
+def test_lldp_cli_rejection_keeps_verified_session_for_next_port(tmp_path: Path) -> None:
+    first, second = "show lldp info remote-device 1", "show lldp info remote-device 2"
+    connection = PortConnection(
+        {
+            first: [f"{first}\nPermission denied\nedge-lab#"],
+            second: [f"{second}\nLLDP Remote Device Information Detail\nedge-lab#"],
+        }
+    )
+    session = make_port_session(tmp_path, connection)
+    with pytest.raises(CollectionFailure) as caught:
+        session.read_lldp("1")
+    assert caught.value.code is ErrorCode.COMMAND_REJECTED
+    assert not connection.disconnected
+    assert session.read_lldp("2") == "LLDP Remote Device Information Detail"
+    assert connection.writes == [first, second]

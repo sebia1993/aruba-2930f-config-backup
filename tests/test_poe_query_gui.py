@@ -57,12 +57,17 @@ class FakeService:
                     0.0 if interface == "1" else None,
                     observed_at="2026-11-16T10:00:00+00:00",
                 )
+                from aruba2930f_backup.poe_power import LLDPNeighbor, LLDPObservation, LLDPStatus
+
                 result = PoEQueryResult(
                     group,
                     interface,
                     QueryStatus.CANCELLED if cancelled else QueryStatus.OK,
                     None if cancelled else snapshot,
                     finished_at="2026-11-16T10:00:01+00:00",
+                    lldp=LLDPObservation(
+                        LLDPStatus.OK, (LLDPNeighbor(system_name="AP-" + interface),)
+                    ),
                 )
                 results.append(result)
                 if on_result:
@@ -97,10 +102,10 @@ def test_target_pairing_merge_group_results_and_edit_invalidation(
     assert dialog.result_tree.topLevelItemCount() == 2
     group = dialog.result_tree.topLevelItem(0)
     assert "lab-sw" in group.text(0)
-    assert "3/3" in group.text(1)
-    assert group.child(0).text(4) == "0 W"
-    assert group.child(1).text(4) == "확인 안 됨"
-    assert group.child(0).text(5)
+    assert "3/3" in group.text(5)
+    assert group.child(0).text(2) == "0 W"
+    assert group.child(1).text(2) == "확인 안 됨"
+    assert group.child(0).text(4)
     dialog.targets_table.item(0, 2).setText("5")
     assert dialog.result_tree.topLevelItemCount() == 0
     assert not dialog.export_button.isEnabled()
@@ -115,6 +120,7 @@ def test_refresh_clears_only_selected_stale_values(
     qtbot.waitUntil(lambda: not dialog.is_busy)
     first = dialog.result_tree.topLevelItem(0)
     dialog.result_tree.setCurrentItem(first.child(0) if scope == "port" else first)
+    assert first.child(0).text(1) == "AP-1"
     service.release = threading.Event()
     button = {
         "all": dialog.collect_button,
@@ -123,12 +129,18 @@ def test_refresh_clears_only_selected_stale_values(
     }[scope]
     button.click()
     try:
-        assert first.child(0).text(4) == ""
-        assert first.child(0).text(6) == "대기"
+        assert first.child(0).text(1) == ""
+        assert first.child(0).toolTip(3) == ""
+        assert first.child(0).toolTip(5) == ""
+        assert first.child(0).text(2) == ""
+        assert ("192.0.2.1:22", "1") not in dialog._results
+        assert first.child(0).text(5) == "대기"
         if scope == "port":
-            assert first.child(1).text(4) == "확인 안 됨"
+            assert first.child(1).text(1) == "AP-2"
+            assert first.child(1).text(2) == "확인 안 됨"
         if scope != "all":
-            assert dialog.result_tree.topLevelItem(1).child(0).text(4) == "확인 안 됨"
+            assert dialog.result_tree.topLevelItem(1).child(0).text(1) == "AP-3"
+            assert dialog.result_tree.topLevelItem(1).child(0).text(2) == "확인 안 됨"
         dialog.reject()
         assert dialog.is_busy
     finally:
@@ -235,8 +247,8 @@ def test_failure_rows_and_same_ip_different_ssh_port_stay_separate(
     dialog._on_result(result)
     assert dialog.result_tree.topLevelItemCount() == 2
     failed = dialog.result_tree.topLevelItem(1).child(0)
-    assert failed.text(4) == "확인 안 됨"
-    assert failed.text(6) == "실패"
+    assert failed.text(2) == "확인 안 됨"
+    assert failed.text(5) == "실패"
     dialog.result_tree.setCurrentItem(failed)
     assert "인증 실패" in dialog.details_label.text()
     path = tmp_path / "results.csv"
@@ -267,7 +279,7 @@ def test_stop_keeps_dialog_open_and_blocks_duplicate_collect(
     qtbot.waitUntil(lambda: not dialog.is_busy)
     assert len(service.calls) == 1
     assert dialog.isVisible()
-    assert "취소" in dialog.result_tree.topLevelItem(0).child(0).text(6)
+    assert "취소" in dialog.result_tree.topLevelItem(0).child(0).text(5)
 
 
 def test_parent_close_waits_for_query_thread(app: QApplication, qtbot: object) -> None:
@@ -406,3 +418,384 @@ def test_busy_state_waits_for_native_thread_cleanup_before_close(
         cleanup_release.set()
     qtbot.waitUntil(lambda: not dialog.is_busy)
     qtbot.waitUntil(lambda: not dialog.isVisible())
+
+
+def test_basic_target_columns_keep_advanced_metadata_and_endpoints(
+    app: QApplication, qtbot: object, tmp_path: Path
+) -> None:
+    dialog = PoEQueryDialog(service=FakeService())
+    qtbot.addWidget(dialog)
+    assert dialog.targets_table.isColumnHidden(1)
+    assert dialog.targets_table.isColumnHidden(3)
+    assert not dialog.targets_table.isColumnHidden(0)
+    assert not dialog.targets_table.isColumnHidden(2)
+    dialog.paste_targets("IP\tinterfaces\n192.0.2.1\t1,2")
+    assert dialog._validated_targets()[0].target.port == 22
+    dialog.paste_targets("192.0.2.1\t2222\t24\t별도")
+    assert dialog.advanced_toggle.isChecked()
+    assert not dialog.targets_table.isColumnHidden(1)
+    assert [g.target.port for g in dialog._validated_targets()] == [22, 2222]
+    dialog.advanced_toggle.setChecked(False)
+    dialog.targets_table.item(1, 2).setText("24,1/24")
+    path = tmp_path / "advanced.json"
+    dialog.save_profile(path)
+    from aruba2930f_backup.poe_targets import load_target_profile
+
+    stored = load_target_profile(path)
+    assert stored[1].target.port == 2222
+    assert stored[1].label == "별도"
+    assert stored[1].interfaces == ("24", "1/24")
+    before = dialog._validated_targets()
+    with pytest.raises(ValueError):
+        dialog.paste_targets("192.0.2.9\t1\ninvalid\t2")
+    assert dialog._validated_targets() == before
+
+
+def test_inherited_nondefault_port_reveals_advanced_inputs(
+    app: QApplication, qtbot: object
+) -> None:
+    dialog = PoEQueryDialog(initial_ips=("192.0.2.1",), ssh_port=2222)
+    qtbot.addWidget(dialog)
+    assert not dialog.targets_table.isColumnHidden(1)
+    assert dialog.advanced_toggle.isChecked()
+
+
+def phase_result(group: PoETarget, *, complete: bool = True) -> PoEQueryResult:
+    from decimal import Decimal
+
+    from aruba2930f_backup.models import DeviceIdentity
+    from aruba2930f_backup.poe_power import (
+        AssessmentStatus,
+        LLDPNeighbor,
+        LLDPObservation,
+        LLDPStatus,
+        PowerAssessment,
+        PowerEvidence,
+    )
+
+    return PoEQueryResult(
+        group,
+        group.interfaces[0],
+        QueryStatus.OK,
+        PortSnapshot(
+            group.target,
+            group.interfaces[0],
+            "real-sw",
+            "Aruba 2930F",
+            True,
+            "Up",
+            True,
+            "Delivering",
+            8.7,
+            observed_at="2026-11-16T10:00:00+00:00",
+        ),
+        identity=DeviceIdentity("real-sw", "Aruba 2930F", None),
+        power_evidence=PowerEvidence(
+            requested_watts=Decimal("25.5"), allocated_watts=Decimal("25.5"), plc_class=4
+        ),
+        lldp=LLDPObservation(
+            LLDPStatus.OK if complete else LLDPStatus.PENDING,
+            (
+                LLDPNeighbor(
+                    system_name="<b>AP-east</b>",
+                    model="AP-535",
+                    system_description="Aruba AP-535",
+                    chassis_id="aa:bb",
+                    port_id="eth0",
+                    port_description="uplink",
+                    management_addresses=("192.0.2.44",),
+                ),
+            )
+            if complete
+            else (),
+            observed_at="2026-11-16T10:00:02+00:00" if complete else "",
+        ),
+        assessment=PowerAssessment(
+            AssessmentStatus.NORMAL if complete else AssessmentStatus.UNKNOWN,
+            "공급·협상 정상" if complete else "확인 필요",
+            "유효 요청·할당 충족",
+            model_source="lldp" if complete else "configured",
+            requested_watts=Decimal("25.5"),
+            allocated_watts=Decimal("25.5"),
+            negotiation="802.3at Class 4",
+        ),
+        poe_finished_at="2026-11-16T10:00:01+00:00",
+        finished_at="2026-11-16T10:00:03+00:00" if complete else "",
+        complete=complete,
+    )
+
+
+def test_lldp_columns_details_and_incremental_completion_are_idempotent(
+    app: QApplication, qtbot: object
+) -> None:
+    from PySide6.QtCore import Qt
+
+    dialog, _service = setup_dialog(qtbot)
+    groups = dialog._validated_targets()
+    dialog._build_results(groups)
+    key = (groups[0].target.endpoint, "1")
+    dialog._pending = {key}
+    dialog._run_total = 1
+    partial = phase_result(groups[0], complete=False)
+    dialog._on_result(partial)
+    dialog._on_result(partial)
+    item = dialog._items[key]
+    assert key in dialog._pending
+    assert dialog.progress_bar.value() == 0
+    assert item.text(1) == "조회 중"
+    assert item.text(2) == "8.7 W"
+    assert "LLDP" in item.text(5)
+    final = phase_result(groups[0])
+    dialog._on_result(final)
+    dialog._on_result(final)
+    dialog._on_result(partial)  # A delayed intermediate callback cannot undo completion.
+    assert dialog.progress_bar.value() == 100
+    assert not dialog._pending
+    assert item.text(1) == "<b>AP-east</b>"
+    assert item.text(3) == "공급·협상 정상"
+    assert "충족" in item.toolTip(3)
+    assert item.text(4)
+    dialog.result_tree.setCurrentItem(item)
+    details = dialog.details_label.text()
+    for fact in (
+        "Up",
+        "Delivering",
+        "lldp",
+        "25.5",
+        "Class 4",
+        "AP-535",
+        "aa:bb",
+        "eth0",
+        "uplink",
+        "192.0.2.44",
+        "HPE-530-QuickSpecs-V22-2026-08-17",
+    ):
+        assert fact in details
+    from aruba2930f_backup.poe_query_gui import _local_time
+
+    assert _local_time(final.poe_finished_at) in details
+    assert _local_time(final.lldp.observed_at) in details
+    assert dialog.details_label.textFormat() == Qt.TextFormat.PlainText
+    parent = item.parent()
+    assert parent.text(0) == "192.0.2.1 · real-sw"
+    assert "A" in parent.toolTip(0)
+    assert all(" W" not in parent.text(column) for column in range(6))
+    assert [dialog.result_tree.headerItem().text(i) for i in range(6)] == [
+        "스위치 / 포트",
+        "AP 이름 (LLDP)",
+        "현재 전력",
+        "PoE 판정",
+        "조회 시각 (로컬)",
+        "조회 상태",
+    ]
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [
+        ("empty", "없음"),
+        ("unnamed", "없음"),
+        ("failed", "조회 실패"),
+        ("cancelled", "조회 취소"),
+        ("multiple", "AP-one / AP-two"),
+    ],
+)
+def test_lldp_empty_and_error_remain_distinct(
+    app: QApplication, qtbot: object, kind: str, expected: str
+) -> None:
+    from dataclasses import replace
+
+    from aruba2930f_backup.poe_power import LLDPNeighbor, LLDPObservation, LLDPStatus
+
+    dialog, _service = setup_dialog(qtbot)
+    groups = dialog._validated_targets()
+    dialog._build_results(groups)
+    status = (
+        LLDPStatus.FAILED
+        if kind == "failed"
+        else (LLDPStatus.CANCELLED if kind == "cancelled" else LLDPStatus.OK)
+    )
+    neighbors = (
+        (LLDPNeighbor(),)
+        if kind == "unnamed"
+        else (
+            (LLDPNeighbor(system_name="AP-one"), LLDPNeighbor(system_name="AP-two"))
+            if kind == "multiple"
+            else ()
+        )
+    )
+    result = replace(
+        phase_result(groups[0]), lldp=LLDPObservation(status, neighbors, message="LLDP detail")
+    )
+    dialog._on_result(result)
+    item = dialog._items[(groups[0].target.endpoint, "1")]
+    assert item.text(1) == expected
+    dialog.result_tree.setCurrentItem(item)
+    assert "LLDP detail" in dialog.details_label.text()
+
+
+def test_hostname_survives_all_port_failures(app: QApplication, qtbot: object) -> None:
+    from aruba2930f_backup.models import DeviceIdentity
+
+    dialog, _service = setup_dialog(qtbot)
+    groups = dialog._validated_targets()
+    dialog._build_results(groups)
+    for interface in groups[0].interfaces:
+        dialog._on_result(
+            PoEQueryResult(
+                groups[0],
+                interface,
+                QueryStatus.FAILED,
+                message="port failed",
+                identity=DeviceIdentity("real-sw", "Aruba 2930F", None),
+            )
+        )
+    assert dialog._parents[groups[0].target.endpoint].text(0) == "192.0.2.1 · real-sw"
+
+
+def test_worker_fallback_preserves_partial_poe_and_identity(
+    app: QApplication, qtbot: object
+) -> None:
+    from aruba2930f_backup.poe_power import LLDPStatus
+
+    dialog, _service = setup_dialog(qtbot)
+    groups = dialog._validated_targets()
+    dialog._build_results(groups)
+    partial = phase_result(groups[0], complete=False)
+    key = (groups[0].target.endpoint, "1")
+    dialog._pending = {key}
+    dialog._run_total = 1
+    dialog._on_result(partial)
+    dialog._thread_finished()
+    result = dialog._results[key]
+    assert result.complete
+    assert result.status == QueryStatus.OK
+    assert result.snapshot == partial.snapshot
+    assert result.identity == partial.identity
+    assert result.power_evidence == partial.power_evidence
+    assert result.poe_finished_at == partial.poe_finished_at
+    assert result.lldp.status == LLDPStatus.FAILED
+    assert result.finished_at
+    assert dialog._items[key].text(2) == "8.7 W"
+    assert dialog.progress_bar.value() == 100
+
+
+def test_long_details_remain_scrollable_without_crowding_results(
+    app: QApplication, qtbot: object
+) -> None:
+    from PySide6.QtWidgets import QScrollArea
+
+    dialog, _service = setup_dialog(qtbot)
+    groups = dialog._validated_targets()
+    dialog._build_results(groups)
+    dialog._on_result(phase_result(groups[0]))
+    dialog.result_tree.setCurrentItem(dialog._items[(groups[0].target.endpoint, "1")])
+    scroll = dialog.findChild(QScrollArea, "poeDetailsScroll")
+    assert scroll is not None
+    dialog.show()
+    qtbot.wait(10)
+    assert scroll.height() <= 180
+    assert dialog.result_tree.height() >= 160
+    assert scroll.verticalScrollBar().maximum() > 0
+
+
+def test_device_text_is_inert_in_group_and_status_tooltips(
+    app: QApplication, qtbot: object
+) -> None:
+    from dataclasses import replace
+
+    from aruba2930f_backup.models import DeviceIdentity
+
+    dialog, _service = setup_dialog(qtbot)
+    groups = dialog._validated_targets()
+    dialog._build_results(groups)
+    result = replace(
+        phase_result(groups[0]),
+        identity=DeviceIdentity("<b>sw</b>", "Aruba 2930F", None),
+        message='<img src="x">',
+    )
+    dialog._on_result(result)
+    item = dialog._items[(groups[0].target.endpoint, "1")]
+    assert "<b>sw</b>" in item.parent().text(0)
+    assert "<b>sw</b>" not in item.parent().toolTip(0)
+    assert "&lt;b&gt;sw&lt;/b&gt;" in item.parent().toolTip(0)
+    assert "<img" not in item.toolTip(5)
+    assert "&lt;img" in item.toolTip(5)
+
+
+def test_cancelled_worker_retains_poe_phase_until_native_cleanup(
+    app: QApplication, qtbot: object
+) -> None:
+    from aruba2930f_backup.poe_power import LLDPStatus
+
+    dialog, service = setup_dialog(qtbot)
+    release = threading.Event()
+
+    def collect_partial(
+        groups: Sequence[PoETarget],
+        credentials: Credentials,
+        *,
+        on_result: Callable[[PoEQueryResult], None] | None = None,
+        **kwargs: object,
+    ) -> tuple[PoEQueryResult, ...]:
+        del credentials, kwargs
+        assert on_result is not None
+        on_result(phase_result(groups[0], complete=False))
+        assert release.wait(3)
+        raise RuntimeError("LLDP transport failed")
+
+    service.collect = collect_partial
+    dialog.collect_button.click()
+    try:
+        key = ("192.0.2.1:22", "1")
+        qtbot.waitUntil(lambda: key in dialog._results)
+        assert dialog.progress_bar.value() == 0
+        dialog.stop()
+        assert dialog.is_busy
+        assert dialog._results[key].snapshot.watts == 8.7
+    finally:
+        release.set()
+    qtbot.waitUntil(lambda: not dialog.is_busy)
+    result = dialog._results[key]
+    assert result.complete
+    assert result.status == QueryStatus.OK
+    assert result.lldp.status == LLDPStatus.CANCELLED
+    assert result.identity.hostname == "real-sw"
+    assert result.snapshot.watts == 8.7
+    assert dialog._items[key].text(1) == "조회 취소"
+    assert dialog.progress_bar.value() == 100
+
+
+@pytest.mark.parametrize("delimiter", [",", "\t"], ids=["csv", "tsv"])
+@pytest.mark.parametrize(
+    "rows",
+    [
+        (("ip", "ssh_port", "interfaces"), ("192.0.2.9", "22")),
+        (("ip", "interfaces"), ("192.0.2.9", "24"), ("192.0.2.10", "24", "12")),
+        (("192.0.2.9", "24"), ("192.0.2.10", "2222", "12")),
+        (("192.0.2.9", "2222", "24", "별도"), ("192.0.2.10", "12")),
+    ],
+)
+def test_cross_schema_paste_keeps_existing_targets_atomic(
+    app: QApplication,
+    qtbot: object,
+    delimiter: str,
+    rows: tuple[tuple[str, ...], ...],
+) -> None:
+    dialog, service = setup_dialog(qtbot)
+    before = dialog._validated_targets()
+    before_cells = tuple(
+        tuple(dialog._cell_text(row, column) for column in range(4))
+        for row in range(dialog.targets_table.rowCount())
+    )
+    with pytest.raises(ValueError):
+        dialog.paste_targets("\n".join(delimiter.join(row) for row in rows))
+    assert dialog._validated_targets() == before
+    assert (
+        tuple(
+            tuple(dialog._cell_text(row, column) for column in range(4))
+            for row in range(dialog.targets_table.rowCount())
+        )
+        == before_cells
+    )
+    assert service.calls == []

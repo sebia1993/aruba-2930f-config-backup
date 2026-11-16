@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
+from decimal import Decimal
+from html import escape
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -13,6 +15,7 @@ from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -25,6 +28,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QTreeWidget,
@@ -34,6 +38,12 @@ from PySide6.QtWidgets import (
 )
 
 from .models import Credentials, HostKeyCheck
+from .poe_power import (
+    AP535_REFERENCE_URL,
+    LLDPObservation,
+    LLDPStatus,
+    PowerEvidence,
+)
 from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from .poe_query_report import write_query_csv
 from .poe_targets import (
@@ -136,6 +146,25 @@ def _local_time(value: str) -> str:
         return "확인 안 됨"
 
 
+def _watts(value: Decimal | None) -> str:
+    return "확인 안 됨" if value is None else f"{value:g} W"
+
+
+def _tooltip(value: str) -> str:
+    # Qt tooltips auto-detect rich text; escape every device-derived string.
+    return "<qt>" + escape(value).replace("\n", "<br>") + "</qt>"
+
+
+def _power_details(power: PowerEvidence) -> str:
+    return (
+        f"요청 {_watts(power.requested_watts)} · 할당 {_watts(power.allocated_watts)}"
+        f" · Class {power.power_class} · PLC {power.plc_class}/{power.plc_type}"
+        f" · DLC {power.dlc_class}/{power.dlc_type} · 할당 방식 {power.allocation_method}"
+        f" · 장치 유형 {power.device_type} · 할당 필드 {power.allocation_field}"
+        f" · 해석 문제 {', '.join(power.issues) or '없음'}"
+    )
+
+
 class PoEQueryDialog(QDialog):
     def __init__(
         self,
@@ -178,7 +207,13 @@ class PoEQueryDialog(QDialog):
         self.targets_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.targets_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.targets_table.setMinimumHeight(130)
+        self.targets_table.setMaximumHeight(150)
         layout.addWidget(self.targets_table)
+        self.advanced_toggle = QCheckBox("고급 설정 · SSH 포트 / 별칭", self)
+        self.advanced_toggle.setObjectName("poeAdvancedTargets")
+        self.advanced_toggle.toggled.connect(self._show_advanced)
+        self._show_advanced(False)
+        layout.addWidget(self.advanced_toggle)
         actions = QHBoxLayout()
         self.add_button = self._button("스위치 추가", "poeAddTarget", self._add_row, actions)
         self.remove_button = self._button("행 삭제", "poeRemoveTarget", self._remove_rows, actions)
@@ -191,7 +226,7 @@ class PoEQueryDialog(QDialog):
         )
         layout.addLayout(actions)
         note = QLabel(
-            "포트는 쉼표로 구분: 24,1/24 · 범위/all 제외 · 표는 IP / SSH 포트 / 포트 목록 / 이름 순서로 Ctrl+C 후 붙여넣기",
+            "포트는 쉼표로 구분: 24,1/24 · 범위/all 제외 · IP / 포트 목록 두 열 붙여넣기 (SSH 22). 기존 3~4열과 고급 설정도 지원합니다.",
             self,
         )
         note.setWordWrap(True)
@@ -225,17 +260,20 @@ class PoEQueryDialog(QDialog):
         self.result_tree.setHeaderLabels(
             [
                 "스위치 / 포트",
-                "링크 / 처리",
-                "PoE 설정",
-                "공급 상태",
-                "실제 전력",
+                "AP 이름 (LLDP)",
+                "현재 전력",
+                "PoE 판정",
                 "조회 시각 (로컬)",
-                "결과",
+                "조회 상태",
             ]
         )
-        self.result_tree.setColumnWidth(0, 260)
-        self.result_tree.setColumnWidth(5, 185)
+        self.result_tree.setColumnWidth(0, 230)
+        self.result_tree.setColumnWidth(1, 180)
+        self.result_tree.setColumnWidth(2, 95)
+        self.result_tree.setColumnWidth(3, 135)
+        self.result_tree.setColumnWidth(4, 185)
         self.result_tree.setAlternatingRowColors(True)
+        self.result_tree.setMinimumHeight(160)
         self.result_tree.currentItemChanged.connect(self._selection_changed)
         layout.addWidget(self.result_tree, 2)
         self.details_label = QLabel(
@@ -245,7 +283,13 @@ class PoEQueryDialog(QDialog):
         self.details_label.setTextFormat(Qt.TextFormat.PlainText)
         self.details_label.setWordWrap(True)
         self.details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.details_label)
+        details_scroll = QScrollArea(self)
+        details_scroll.setObjectName("poeDetailsScroll")
+        details_scroll.setWidgetResizable(True)
+        details_scroll.setMinimumHeight(70)
+        details_scroll.setMaximumHeight(140)
+        details_scroll.setWidget(self.details_label)
+        layout.addWidget(details_scroll)
         self.progress_bar = QProgressBar(self)
         self.progress_bar.setObjectName("poeProgress")
         layout.addWidget(self.progress_bar)
@@ -287,7 +331,14 @@ class PoEQueryDialog(QDialog):
             for column, value in enumerate(cells):
                 self.targets_table.setItem(row, column, QTableWidgetItem(value))
         self.targets_table.blockSignals(False)
+        if any(len(cells) > 1 and cells[1].strip() not in ("", "22") for cells in rows):
+            self.advanced_toggle.setChecked(True)
         self._invalidate()
+
+    @Slot(bool)
+    def _show_advanced(self, visible: bool) -> None:
+        for column in (1, 3):
+            self.targets_table.setColumnHidden(column, not visible)
 
     def _replace_targets(self, groups: Sequence[PoETarget]) -> None:
         self._replace_targets_rows(
@@ -366,7 +417,7 @@ class PoEQueryDialog(QDialog):
         layout = QVBoxLayout(dialog)
         layout.addWidget(
             QLabel(
-                "IP, SSH 포트, 인터페이스 목록, 이름(선택) 순서의 표를 Ctrl+C 하고 아래에 붙여넣으세요.\n탭 구분 또는 CSV를 받습니다. 쉼표가 있는 CSV 포트 목록은 큰따옴표로 감싸세요.",
+                "IP / 인터페이스 목록 두 열의 표를 붙여넣으세요 (SSH 22).\n기존 IP / SSH 포트 / 인터페이스 목록 / 이름(선택) 3~4열도 지원합니다.\n탭 구분 또는 CSV를 받습니다. 쉼표가 있는 CSV 포트 목록은 큰따옴표로 감싸세요.",
                 dialog,
             )
         )
@@ -526,9 +577,10 @@ class PoEQueryDialog(QDialog):
         for key in self._pending:
             self._results.pop(key, None)
             item = self._items[key]
-            for column in range(1, 7):
+            for column in range(1, 6):
                 item.setText(column, "")
-            item.setText(6, "대기")
+                item.setToolTip(column, "")
+            item.setText(5, "대기")
         for group in self._groups:
             self._update_group(group)
         self.details_label.setText("조회 중입니다. 이전 측정값은 재조회 대상에서 지웠습니다.")
@@ -581,36 +633,50 @@ class PoEQueryDialog(QDialog):
         key = (result.group.target.endpoint, result.interface)
         if key not in self._items:
             return
+        previous = self._results.get(key)
+        if previous is not None and previous.complete and not result.complete:
+            return
         self._results[key] = result
-        self._pending.discard(key)
+        if result.complete:
+            self._pending.discard(key)
         item = self._items[key]
         snapshot = result.snapshot
-        if snapshot:
-            item.setText(1, snapshot.link_status)
-            item.setText(
-                2,
-                "확인 안 됨"
-                if snapshot.poe_enabled is None
-                else "켜짐"
-                if snapshot.poe_enabled
-                else "꺼짐",
-            )
-            item.setText(3, snapshot.poe_status or "확인 안 됨")
-            item.setText(4, "확인 안 됨" if snapshot.watts is None else f"{snapshot.watts:g} W")
-            item.setText(5, _local_time(snapshot.observed_at))
+        lldp = result.lldp
+        if lldp is None:
+            ap_name = "확인 안 됨" if result.complete else "조회 중"
+        elif lldp.status == LLDPStatus.OK:
+            ap_name = " / ".join(n.system_name or "없음" for n in lldp.neighbors) or "없음"
         else:
-            item.setText(4, "확인 안 됨")
-            item.setText(5, _local_time(result.finished_at))
+            ap_name = {
+                LLDPStatus.PENDING: "조회 중",
+                LLDPStatus.FAILED: "조회 실패",
+                LLDPStatus.CANCELLED: "조회 취소",
+            }[lldp.status]
+        item.setText(1, ap_name)
         item.setText(
-            6,
-            {
-                QueryStatus.OK: "완료",
-                QueryStatus.UNSUPPORTED: "미지원",
-                QueryStatus.FAILED: "실패",
-                QueryStatus.CANCELLED: "취소",
-            }[result.status],
+            2,
+            "확인 안 됨" if snapshot is None or snapshot.watts is None else f"{snapshot.watts:g} W",
         )
-        item.setToolTip(6, result.message)
+        assessment = result.assessment
+        item.setText(3, assessment.label if assessment else "확인 필요")
+        item.setToolTip(
+            3, _tooltip(assessment.reason if assessment else "전력 판정 근거를 받지 못했습니다.")
+        )
+        item.setText(4, _local_time(snapshot.observed_at if snapshot else result.finished_at))
+        status = {
+            QueryStatus.OK: "완료",
+            QueryStatus.UNSUPPORTED: "미지원",
+            QueryStatus.FAILED: "실패",
+            QueryStatus.CANCELLED: "취소",
+        }[result.status]
+        if not result.complete:
+            status = "PoE 수집 · LLDP 조회 중"
+        elif lldp is not None and lldp.status in (LLDPStatus.FAILED, LLDPStatus.CANCELLED):
+            status += " · LLDP " + ("실패" if lldp.status == LLDPStatus.FAILED else "취소")
+        item.setText(5, status)
+        item.setToolTip(
+            5, _tooltip(" · ".join(filter(None, (result.message, lldp.message if lldp else ""))))
+        )
         for group in self._groups:
             if group.target.endpoint == key[0]:
                 self._update_group(group)
@@ -627,17 +693,30 @@ class PoEQueryDialog(QDialog):
             for p in group.interfaces
             if (group.target.endpoint, p) in self._results
         ]
-        hostname = next((r.snapshot.hostname for r in results if r.snapshot), "")
-        name = " · ".join(filter(None, (group.label, hostname, group.target.endpoint)))
+        hostname = next(
+            (r.identity.hostname for r in results if r.identity and r.identity.hostname),
+            next((r.snapshot.hostname for r in results if r.snapshot), ""),
+        )
+        name = " · ".join(filter(None, (group.target.ip, hostname)))
         item = self._parents[group.target.endpoint]
         item.setText(0, name)
+        completed = sum(r.complete for r in results)
         failures = sum(
-            r.status in (QueryStatus.FAILED, QueryStatus.UNSUPPORTED, QueryStatus.CANCELLED)
+            r.complete
+            and (
+                r.status in (QueryStatus.FAILED, QueryStatus.UNSUPPORTED, QueryStatus.CANCELLED)
+                or (
+                    r.lldp is not None
+                    and r.lldp.status in (LLDPStatus.FAILED, LLDPStatus.CANCELLED)
+                )
+            )
             for r in results
         )
-        item.setText(1, f"처리 {len(results)}/{len(group.interfaces)} · 실패/취소 {failures}")
-        item.setToolTip(0, name)
-        item.setToolTip(1, item.text(1))
+        item.setText(5, f"처리 {completed}/{len(group.interfaces)} · 실패/취소 {failures}")
+        item.setToolTip(
+            0, _tooltip(f"{name}\nSSH: {group.target.endpoint}\n별칭: {group.label or '없음'}")
+        )
+        item.setToolTip(5, item.text(5))
 
     @Slot()
     def _selection_changed(self) -> None:
@@ -646,11 +725,40 @@ class PoEQueryDialog(QDialog):
         if result:
             snapshot = result.snapshot
             details = f"{result.group.target.endpoint} / {result.interface} · {result.message}"
+            details += f"\n별칭: {result.group.label or '없음'}"
+            identity = result.identity
+            if identity:
+                details += f"\n장비명: {identity.hostname or '확인 안 됨'} · 스위치 모델: {identity.model} · SKU: {identity.sku or '확인 안 됨'} · 소프트웨어: {identity.software_version or '확인 안 됨'}"
             if snapshot:
-                details += f"\n장비명: {snapshot.hostname} · 모델: {snapshot.model} · 관리 설정: {'켜짐' if snapshot.enabled else '꺼짐'}"
-                details += f"\n측정: {_local_time(snapshot.observed_at)} · 완료: {_local_time(result.finished_at)}"
+                poe_setting = (
+                    "확인 안 됨"
+                    if snapshot.poe_enabled is None
+                    else ("켜짐" if snapshot.poe_enabled else "꺼짐")
+                )
+                details += f"\n장비명: {snapshot.hostname} · 스위치 모델: {snapshot.model} · 관리 설정: {'켜짐' if snapshot.enabled else '꺼짐'}"
+                details += f"\n링크: {snapshot.link_status} · PoE 설정: {poe_setting} · 공급 상태: {snapshot.poe_status}"
+                details += f"\n실측 전력: {'확인 안 됨' if snapshot.watts is None else f'{snapshot.watts:g} W'} · 측정: {_local_time(snapshot.observed_at)}"
+            details += f"\nPoE 수집 시각: {_local_time(result.poe_finished_at) or '확인 안 됨'} · 레코드 완료: {_local_time(result.finished_at) or '대기'}"
+            assessment = result.assessment
+            if assessment:
+                details += f"\nPoE 판정: {assessment.label} · {assessment.reason}"
+                details += f"\n판정 모델: {assessment.model} · 모델 출처: {assessment.model_source}"
+                details += f"\n판정 요청: {_watts(assessment.requested_watts)} · 할당: {_watts(assessment.allocated_watts)} · 협상: {assessment.negotiation or '확인 안 됨'}"
+                details += f"\n규칙 기준: {assessment.reference_id} · {AP535_REFERENCE_URL}"
+            if result.power_evidence:
+                details += "\nPoE 협상 근거: " + _power_details(result.power_evidence)
+            lldp = result.lldp
+            if lldp:
+                details += f"\nLLDP: {lldp.status.value} · {lldp.message} · 관측 시각: {_local_time(lldp.observed_at) or '확인 안 됨'}"
+                if lldp.error_code:
+                    details += f" · 오류: {lldp.error_code.value}"
+                for index, neighbor in enumerate(lldp.neighbors, 1):
+                    details += f"\n이웃 {index}: 이름 {neighbor.system_name or '없음'} · 모델 {neighbor.model or '확인 안 됨'} · 설명 {neighbor.system_description}"
+                    details += f"\nChassis: {neighbor.chassis_type} / {neighbor.chassis_id} · 상대 포트: {neighbor.port_type} / {neighbor.port_id} · 포트 설명: {neighbor.port_description} · 관리 주소: {', '.join(neighbor.management_addresses) or '없음'}"
+                    if neighbor.power:
+                        details += "\nLLDP 협상 근거: " + _power_details(neighbor.power)
             if result.error_code:
-                details += f"\n오류: {result.error_code.value}"
+                details += f"\nPoE 오류: {result.error_code.value}"
             self.details_label.setText(details)
         elif key:
             self.details_label.setText("선택한 대상의 새 조회 결과를 기다리는 중입니다.")
@@ -684,17 +792,41 @@ class PoEQueryDialog(QDialog):
         # A broken service must never leave pending rows looking measured.
         for endpoint, interface in tuple(self._pending):
             group = next(g for g in self._groups if g.target.endpoint == endpoint)
-            self._on_result(
-                PoEQueryResult(
+            now = datetime.now().astimezone().isoformat()
+            message = "조회가 중지되었습니다." if cancelled else "조회 결과를 받지 못했습니다."
+            previous = self._results.get((endpoint, interface))
+            if previous is not None:
+                from .poe_power import assess_ap535_power
+                from .port_control import PoEState
+
+                lldp = LLDPObservation(
+                    LLDPStatus.CANCELLED if cancelled else LLDPStatus.FAILED,
+                    message=message,
+                    observed_at=now,
+                )
+                snapshot = previous.snapshot
+                poe = (
+                    PoEState(snapshot.poe_enabled, snapshot.poe_status, snapshot.watts)
+                    if snapshot
+                    else None
+                )
+                result = replace(
+                    previous,
+                    lldp=lldp,
+                    complete=True,
+                    finished_at=now,
+                    assessment=assess_ap535_power(poe, previous.power_evidence, lldp),
+                )
+            else:
+                result = PoEQueryResult(
                     group,
                     interface,
                     QueryStatus.CANCELLED if cancelled else QueryStatus.FAILED,
-                    message="조회가 중지되었습니다."
-                    if cancelled
-                    else "조회 결과를 받지 못했습니다.",
-                    finished_at=datetime.now().astimezone().isoformat(),
+                    message=message,
+                    finished_at=now,
                 )
-            )
+            self._on_result(result)
+
         self._thread = None
         self._worker = None
         if thread is not None:
@@ -709,6 +841,7 @@ class PoEQueryDialog(QDialog):
     def _set_busy(self, busy: bool) -> None:
         for widget in (
             self.targets_table,
+            self.advanced_toggle,
             self.add_button,
             self.remove_button,
             self.paste_button,

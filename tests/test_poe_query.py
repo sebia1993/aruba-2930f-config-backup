@@ -57,6 +57,14 @@ class QueryConnection(FakeConnection):
                 f"Power Enable : Yes\nPoE Port Status : Delivering\n"
                 f"PD Power Draw : {watts} W\nedge-lab#"
             ]
+            responses[f"show lldp info remote-device {port}"] = [
+                f"show lldp info remote-device {port}\n"
+                "LLDP Remote Device Information Detail\n"
+                f"Local Port : {port}\nChassisType : mac-address\n"
+                "ChassisId : 00 00 00 00 00 01\nPortType : interface-name\n"
+                f"PortId : eth0\nSysName : fictional-ap-{port}\n"
+                "System Descr : ArubaOS (MODEL:535), Version Aruba AP\nedge-lab#"
+            ]
         responses.update(network.responses.get(endpoint, {}))
         super().__init__(responses)
         self.network = network
@@ -151,13 +159,16 @@ def test_requested_pairs_use_one_session_and_fresh_status_per_port(tmp_path: Pat
         (a, "1/3", "ok", 4.2),
         (b, "7", "ok", 8.5),
     ]
-    assert set(id(r) for r in delivered) == set(id(r) for r in rows)
+    assert set(id(r) for r in delivered if r.complete) == set(id(r) for r in rows)
     assert len(network.connections) == 2
     for connection in network.connections:
         assert connection.disconnected
         expected = ["show version", "show modules"]
         for port in network.ports[connection.endpoint]:
             expected += ["show interfaces brief", f"show power-over-ethernet {port}"]
+        expected += [
+            f"show lldp info remote-device {p}" for p in network.ports[connection.endpoint]
+        ]
         assert connection.writes == expected
         setup = [c[1] for c in connection.calls if isinstance(c, tuple) and c[0] == "setup"]
         assert setup == ["no page", "terminal width 511"]
@@ -294,7 +305,7 @@ def test_group_failure_does_not_erase_other_groups_or_reuse_uncertain_session(
         on_result=delivered.append,
     )
     assert [r.status.value for r in rows] == ["failed", "failed", "ok"]
-    assert len(delivered) == 3
+    assert len([r for r in delivered if r.complete]) == 3
     expected = {
         "auth": "AUTH_FAILED",
         "identity": "MODEL_UNSUPPORTED",
@@ -421,7 +432,7 @@ def test_cancel_after_incremental_result_keeps_completed_row_and_cancels_queued_
         cancel_event=cancel,
     )
     assert [r.status.value for r in rows] == ["ok", "cancelled", "cancelled"]
-    assert len(delivered) == 3 and len(network.connections) == 1
+    assert len([r for r in delivered if r.complete]) == 3 and len(network.connections) == 1
     assert "show power-over-ethernet 2" not in network.connections[0].writes
 
 
@@ -559,3 +570,158 @@ def test_host_key_approval_is_serialized_and_callbacks_deliver_as_ready(tmp_path
 def test_worker_count_cannot_exceed_policy(tmp_path: Path, workers: int) -> None:
     with pytest.raises(ValueError):
         Network({}).service(tmp_path, max_workers=workers)
+
+
+def test_poe_first_progressive_updates_then_lldp_in_same_session(tmp_path: Path) -> None:
+    a = DeviceTarget("192.0.2.1")
+    network = Network({a: {"1": 8.7, "2": 2}})
+    delivered: list[Any] = []
+    rows = network.service(tmp_path).collect(
+        [target(a.ip, "1,2")],
+        CREDENTIALS,
+        approve_host_key=lambda check: True,
+        on_result=delivered.append,
+    )
+    assert len(delivered) == 4
+    assert [(r.interface, r.complete) for r in delivered] == [
+        ("1", False),
+        ("2", False),
+        ("1", True),
+        ("2", True),
+    ]
+    assert all(r.lldp.status.value == "pending" and not r.finished_at for r in delivered[:2])
+    assert all(r.complete and r.lldp.status.value == "ok" for r in rows)
+    assert all(r.identity.hostname == "edge-lab" for r in delivered)
+    assert rows[0].snapshot is delivered[0].snapshot
+    assert rows[0].poe_finished_at == delivered[0].poe_finished_at
+    assert rows[0].lldp.neighbors[0].system_name == "fictional-ap-1"
+    assert len(network.connections) == 1
+    writes = network.connections[0].writes
+    assert writes.index("show power-over-ethernet 2") < writes.index(
+        "show lldp info remote-device 1"
+    )
+    assert writes[-2:] == ["show lldp info remote-device 1", "show lldp info remote-device 2"]
+
+
+@pytest.mark.parametrize("kind", ["cli", "malformed", "timeout", "cancel"])
+def test_lldp_failure_preserves_all_poe_rows_and_identity(tmp_path: Path, kind: str) -> None:
+    a = DeviceTarget("192.0.2.1")
+    network = Network({a: {"1": 8.7, "2": 2, "3": 3}})
+    cancel = threading.Event()
+    command = "show lldp info remote-device 1"
+    if kind == "cli":
+        network.responses[a] = {command: [f"{command}\nPermission denied\nedge-lab#"]}
+    elif kind == "malformed":
+        network.responses[a] = {command: [f"{command}\nnot lldp\nedge-lab#"]}
+    elif kind == "timeout":
+        network.responses[a] = {command: []}
+    else:
+        network.on_write = lambda connection, text: cancel.set() if text == command else None
+    delivered: list[Any] = []
+    rows = network.service(tmp_path).collect(
+        [target(a.ip, "1,2,3")],
+        CREDENTIALS,
+        approve_host_key=lambda check: True,
+        on_result=delivered.append,
+        cancel_event=cancel,
+    )
+    assert [r.interface for r in rows] == ["1", "2", "3"]
+    assert [r.snapshot.watts for r in rows] == [8.7, 2, 3]
+    assert all(r.status.value == "ok" and r.complete for r in rows)
+    assert all(r.identity.hostname == "edge-lab" and r.poe_finished_at for r in rows)
+    assert all(rows[i].snapshot is delivered[i].snapshot for i in range(3))
+    assert rows[0].lldp.status.value == ("cancelled" if kind == "cancel" else "failed")
+    if kind in {"cli", "malformed"}:
+        assert [r.lldp.status.value for r in rows[1:]] == ["ok", "ok"]
+    else:
+        assert all(r.lldp.status == rows[0].lldp.status for r in rows)
+        assert "show lldp info remote-device 2" not in network.connections[0].writes
+    assert network.connections[0].disconnected
+
+
+def test_all_poe_rejections_keep_identity_and_still_query_lldp(tmp_path: Path) -> None:
+    a = DeviceTarget("192.0.2.1")
+    network = Network({a: {"1": 1, "2": 2}})
+    network.responses[a] = {
+        f"show power-over-ethernet {p}": [
+            f"show power-over-ethernet {p}\nPermission denied\nedge-lab#"
+        ]
+        for p in ("1", "2")
+    }
+    rows = network.service(tmp_path).collect(
+        [target(a.ip, "1,2")],
+        CREDENTIALS,
+        approve_host_key=lambda check: True,
+    )
+    assert all(r.status.value == "failed" and r.snapshot is None for r in rows)
+    assert all(r.identity.hostname == "edge-lab" and r.complete for r in rows)
+    assert all(r.lldp.status.value == "ok" and len(r.lldp.neighbors) == 1 for r in rows)
+
+
+def test_unsupported_poe_still_reads_lldp(tmp_path: Path) -> None:
+    a = DeviceTarget("192.0.2.1")
+    network = Network({a: {"1": 1}})
+    network.responses[a] = {
+        "show version": ["show version\nAruba JL253A 2930F\nedge-lab#"],
+        "show modules": ["show modules\nChassis: Aruba 2930F JL253A\nedge-lab#"],
+    }
+    (row,) = network.service(tmp_path).collect(
+        [target(a.ip, "1")],
+        CREDENTIALS,
+        approve_host_key=lambda check: True,
+    )
+    assert row.status.value == "unsupported"
+    assert row.lldp.status.value == "ok"
+    assert row.lldp.neighbors[0].system_name == "fictional-ap-1"
+
+
+def test_transport_loss_in_later_poe_preserves_earlier_measurement(tmp_path: Path) -> None:
+    a = DeviceTarget("192.0.2.1")
+    network = Network({a: {"1": 8.7, "2": 2, "3": 3}})
+    network.responses[a] = {"show power-over-ethernet 2": []}
+    delivered: list[Any] = []
+    rows = network.service(tmp_path).collect(
+        [target(a.ip, "1,2,3")],
+        CREDENTIALS,
+        approve_host_key=lambda check: True,
+        on_result=delivered.append,
+    )
+    assert [r.status.value for r in rows] == ["ok", "failed", "failed"]
+    assert all(r.complete and r.identity.hostname == "edge-lab" for r in rows)
+    assert rows[0].snapshot is delivered[0].snapshot
+    assert rows[0].snapshot.watts == 8.7
+    assert all(r.lldp.status.value == "failed" for r in rows)
+    assert not any("lldp" in cmd for cmd in network.connections[0].writes)
+    assert "show power-over-ethernet 3" not in network.connections[0].writes
+
+
+def test_power_evidence_uses_single_poe_read_and_survives_lldp_rejection(tmp_path: Path) -> None:
+    from decimal import Decimal
+
+    a = DeviceTarget("192.0.2.1")
+    network = Network({a: {"1": 8.7}})
+    command = "show power-over-ethernet 1"
+    network.responses[a] = {
+        command: [
+            f"{command}\nStatus and Configuration Information for port 1\n"
+            "Power Enable : Yes\nPoE Port Status : Delivering\n"
+            "PLC Class/Type : 4/2\nDLC Class/Type : 4/2\nAlloc By Actual : lldp\n"
+            "PD Requested Power Value : 25.5 W\nPSE Allocated Power Value : 25.5 W\n"
+            "PD Power Draw : 8.7 W\nedge-lab#"
+        ],
+        "show lldp info remote-device 1": [
+            "show lldp info remote-device 1\nPermission denied\nedge-lab#"
+        ],
+    }
+    (row,) = network.service(tmp_path).collect(
+        [target(a.ip, "1")],
+        CREDENTIALS,
+        approve_host_key=lambda check: True,
+    )
+    assert row.power_evidence.requested_watts == Decimal("25.5")
+    assert row.power_evidence.allocated_watts == Decimal("25.5")
+    assert row.snapshot.watts == 8.7
+    assert row.lldp.status.value == "failed"
+    assert row.status.value == "ok" and row.complete
+    assert row.assessment is not None
+    assert network.connections[0].writes.count(command) == 1

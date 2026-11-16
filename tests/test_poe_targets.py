@@ -252,3 +252,92 @@ def test_profile_validation_failure_preserves_existing_file(tmp_path: Path) -> N
             path, [make_target("192.0.2.1", 22, "1", "a"), make_target("192.0.2.1", 22, "2", "b")]
         )
     assert path.read_bytes() == b"original"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "192.0.2.1\t24,1/24\n192.0.2.2\t2",
+        "IP\tinterfaces\n192.0.2.1\t24,1/24\n192.0.2.2\t2",
+        'SW IP,인터페이스 목록\r\n192.0.2.1,"24,1/24"\r\n192.0.2.2,2',
+    ],
+)
+def test_two_column_paste_defaults_to_ssh22(text: str) -> None:
+    groups = parse_pasted_targets(text)
+    assert [(g.target.endpoint, g.interfaces, g.label) for g in groups] == [
+        ("192.0.2.1:22", ("24", "1/24"), ""),
+        ("192.0.2.2:22", ("2",), ""),
+    ]
+
+
+def test_two_column_paste_rejects_whole_invalid_block() -> None:
+    with pytest.raises(ValueError):
+        parse_pasted_targets("192.0.2.1\t1\n192.0.2.2\tall")
+
+
+@pytest.mark.parametrize("delimiter", [",", "\t"], ids=["csv", "tsv"])
+@pytest.mark.parametrize("valid_first", [False, True], ids=["immediate", "after-valid-row"])
+@pytest.mark.parametrize(
+    "header,valid_row,wrong_row",
+    [
+        (("ip", "ssh_port", "interfaces"), ("192.0.2.9", "2222", "1"), ("192.0.2.1", "22")),
+        (
+            ("SW IP", "SSH port", "ports", "label"),
+            ("192.0.2.9", "2222", "1", "A"),
+            ("192.0.2.1", "22"),
+        ),
+        (
+            ("IP 주소", "SSH 포트", "인터페이스 목록", "이름(선택)"),
+            ("192.0.2.9", "2222", "1", "A"),
+            ("192.0.2.1", "22"),
+        ),
+        (("ip", "interfaces"), ("192.0.2.9", "1"), ("192.0.2.1", "24", "12")),
+        (("Switch IP", "interface list"), ("192.0.2.9", "1"), ("192.0.2.1", "24", "12")),
+        (("IP 주소", "인터페이스"), ("192.0.2.9", "1"), ("192.0.2.1", "24", "12", "A")),
+    ],
+)
+def test_declared_header_schema_rejects_rows_from_other_family(
+    delimiter: str,
+    valid_first: bool,
+    header: tuple[str, ...],
+    valid_row: tuple[str, ...],
+    wrong_row: tuple[str, ...],
+) -> None:
+    rows = [header, *([valid_row] if valid_first else []), wrong_row]
+    text = "\n".join(delimiter.join(row) for row in rows)
+    with pytest.raises(ValueError):
+        parse_pasted_targets(text)
+
+
+@pytest.mark.parametrize("delimiter", [",", "\t"], ids=["csv", "tsv"])
+@pytest.mark.parametrize("legacy_first", [False, True])
+def test_headerless_block_cannot_mix_two_column_and_legacy_families(
+    delimiter: str, legacy_first: bool
+) -> None:
+    basic = ("192.0.2.1", "24")
+    legacy = ("192.0.2.2", "2222", "12", "B")
+    rows = (legacy, basic) if legacy_first else (basic, legacy)
+    with pytest.raises(ValueError):
+        parse_pasted_targets("\n".join(delimiter.join(row) for row in rows))
+
+
+@pytest.mark.parametrize("delimiter", [",", "\t"], ids=["csv", "tsv"])
+@pytest.mark.parametrize("header_columns", [0, 3, 4])
+def test_legacy_schema_keeps_optional_alias_rows_and_nondefault_profile_roundtrip(
+    tmp_path: Path, delimiter: str, header_columns: int
+) -> None:
+    from aruba2930f_backup.poe_targets import load_target_profile, save_target_profile
+
+    header = ("ip", "ssh_port", "interfaces", "label")[:header_columns]
+    rows = ([header] if header else []) + [
+        ("192.0.2.1", "2222", "24", "별도"),
+        ("192.0.2.1", "22", "12"),
+    ]
+    groups = parse_pasted_targets("\n".join(delimiter.join(row) for row in rows))
+    assert [(g.target.endpoint, g.interfaces, g.label) for g in groups] == [
+        ("192.0.2.1:2222", ("24",), "별도"),
+        ("192.0.2.1:22", ("12",), ""),
+    ]
+    path = tmp_path / "legacy-targets.json"
+    save_target_profile(path, groups)
+    assert load_target_profile(path) == groups

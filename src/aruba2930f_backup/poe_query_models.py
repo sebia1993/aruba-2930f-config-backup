@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
-from .models import DeviceTarget, ErrorCode
+from .models import DeviceIdentity, DeviceTarget, ErrorCode
 from .port_control import PortSnapshot, validate_interface
+
+if TYPE_CHECKING:
+    from .poe_power import LLDPObservation, PowerAssessment, PowerEvidence
 
 MAX_TARGETS = 100
 MAX_INTERFACES_PER_TARGET = 384
@@ -49,3 +53,9 @@ class PoEQueryResult:
     error_code: ErrorCode | None = None
     message: str = ""
     finished_at: str = ""
+    identity: DeviceIdentity | None = None
+    power_evidence: PowerEvidence | None = None
+    lldp: LLDPObservation | None = None
+    assessment: PowerAssessment | None = None
+    poe_finished_at: str = ""
+    complete: bool = True

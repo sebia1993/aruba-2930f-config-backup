@@ -5,11 +5,11 @@
 
 **ArubaOS-Switch 기반 Aruba 2930F 여러 대의 `running-config`를 SSH로 일괄 수집하는 Windows용 네트워크 자동화 도구입니다.** 백업은 읽기 전용이며, 별도 **포트 제어** 창에서 단일 인터페이스의 PoE 전원과 통신을 끄고 켤 수 있습니다.
 
-> **v0.3.0 사전릴리즈부터 여러 스위치·포트의 전력을 스위치별로 묶어 조회하고, 대상 목록을 저장·불러오기 할 수 있습니다.** [전력 조회 안내](docs/POE_QUERY_KO.md)에서 표 붙여넣기와 CSV 저장을 확인하십시오. v0.2.0의 [단일 포트 제어](docs/PORT_CONTROL_KO.md)도 계속 제공합니다.
+> **v0.3.0에서는 스위치 IP·포트 목록을 입력해 포트별 전력, LLDP AP 이름, AP-535 공급 판정을 함께 조회합니다.** 결과는 IP·실제 호스트네임으로 묶고 대상 목록을 저장·불러오기 할 수 있습니다. [전력·LLDP 조회 안내](docs/POE_QUERY_KO.md)에서 판정 근거와 사용법을 확인하십시오. v0.2.0의 [단일 포트 제어](docs/PORT_CONTROL_KO.md)도 계속 제공합니다.
 
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
-> 현재 버전은 **v0.3.0 사전릴리즈**입니다. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 배포 파일과 해당 버전의 검증 결과는 GitHub Releases 및 Actions에서 확인하십시오. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다. v0.2.0의 RSA/SHA-1 차단 보완을 유지하며 Paramiko 의존성 감사 예외도 유지됩니다. [의존성 감사 예외](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)의 배포 경계를 확인하십시오.
+> 현재 개발 버전은 **v0.3.0**입니다. 사전릴리즈 게시 여부와 다운로드는 GitHub Releases에서, 병합 전 Windows 빌드와 해당 커밋의 검증 결과는 Actions에서 확인하십시오. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다. v0.2.0의 RSA/SHA-1 차단 보완과 Paramiko 의존성 감사 예외를 유지합니다. [의존성 감사 예외](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)의 배포 경계를 확인하십시오.
 
 ## 포트폴리오 요약
 
@@ -39,6 +39,7 @@
 | 백업 실패 처리 | 장비 단위 격리, 5/15/30초 지연 재시도 |
 | 백업 결과 | 장비별 TXT, SHA-256, `result.xlsx`, 비민감 진단 로그 |
 | 포트 제어 | 단일 포트, 변경 명령 자동 재전송 없음, 대상·전후 상태를 담는 별도 작업 이력 |
+| 포트 전력·LLDP 조회 | 스위치별 묶음, 포트별 W와 AP 이름, AP-535 공급·협상 근거, 최대 3대 동시 접속 |
 | 실행 환경 | Windows x64, Python 설치 불필요한 배포 ZIP |
 
 ## 해결하려 한 운영 문제
@@ -137,7 +138,7 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 | Windows x64 | 지원 | 배포 ZIP 기준 |
 | 다른 Aruba 모델 | 미지원 | 2930F 외 장비는 차단 |
 | 단일 포트 PoE/통신 제어 | v0.2.0부터 제공 | 별도 제어 창에서 대상 확인 후 실행 |
-| 다중 스위치·포트 전력 조회 | v0.3.0부터 제공 | 지정 포트 조회·묶음 표시·대상 목록 재사용·CSV |
+| 다중 스위치·포트 전력 조회 | v0.3.0 구현 | 지정 포트 W·LLDP·AP-535 공급 판정·대상 목록 재사용·CSV |
 | 설정 복원 및 그 밖의 구성 변경 | 미지원 | 백업 경로는 읽기 전용 |
 
 ### 검증 현황
@@ -158,7 +159,9 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 
 ## 빠른 시작
 
-1. GitHub **Releases**에서 `Aruba2930FConfigBackup_v0.3.0_windows_x64.zip`을 받습니다.
+1. GitHub **Releases**에서 게시된 `Aruba2930FConfigBackup_v0.3.0_windows_x64.zip`을 받습니다.
+   아직 게시되지 않은 개발 버전은 해당 PR의 성공한 Windows CI 실행에서
+   `Aruba2930FConfigBackup-windows-x64-ci` 아티팩트를 내려받습니다.
 2. 함께 제공되는 `.sha256` 파일로 ZIP 해시를 확인합니다.
 
 ```powershell
@@ -176,19 +179,27 @@ Get-Content .\Aruba2930FConfigBackup_v0.3.0_windows_x64.zip.sha256
 
 ## 여러 스위치·포트의 전력 조회
 
-메인 화면의 **포트 전력 조회…**에서 IP·SSH 포트·인터페이스 목록을 한 행씩 등록합니다.
+메인 화면의 **포트 전력 조회…**에서 **스위치 IP·인터페이스 목록 두 칸**을 입력합니다.
 예를 들어 A 스위치에는 `12,24`, B 스위치에는 `3,7,10`을 지정하면 각 스위치에서
-등록된 포트만 조회합니다. 같은 IP의 다른 SSH 접속 포트는 별도 묶음입니다.
+등록된 포트만 조회합니다. SSH는 기본 22이며 고급 설정에서 비기본 포트와 별칭을
+다룹니다. 기존 목록의 값은 유지하고 같은 IP의 다른 SSH 접속 포트는 별도 묶음으로 구분합니다.
 
 1. **스위치 추가** 또는 **엑셀 붙여넣기**로 대상을 등록합니다.
 2. 공통 SSH 계정·암호와 필요한 Enable 암호를 입력합니다.
 3. **전체 조회**를 누르고 처음 접속하는 스위치의 SSH 지문을 확인합니다.
-4. 스위치별 묶음을 펼쳐 포트의 현재 W, 링크·PoE 상태와 조회 시각을 확인합니다.
+4. **IP · 실제 호스트네임** 묶음을 펼쳐 포트의 현재 W, LLDP AP 이름과 공급 판정을 확인합니다.
+   포트 행을 선택하면 요청·할당 전력, 모델 확인 근거와 PoE·LLDP 각각의 시각을 볼 수 있습니다.
 5. **목록 저장 / 목록 불러오기**로 IP·포트 구성을 재사용하고 **CSV 저장**으로 결과를 남깁니다.
 
 목록 파일에는 계정·암호를 저장하지 않습니다. 최대 3대 동시 접속, 한 스위치 안에서는
-순차 조회이며 값 누락·미지원·실패를 실제 0 W와 구분합니다. 수동 재조회와 중지를
-지원합니다. 자세한 입력 형식과 제한은 [POE_QUERY_KO.md](docs/POE_QUERY_KO.md)에 있습니다.
+순차 조회입니다. 먼저 PoE 값을 표시하고 같은 연결에서 LLDP를 추가합니다. LLDP가
+실패해도 이미 얻은 전력값은 유지합니다. 전력 합계는 표시하지 않으며 값 누락·미지원·
+실패를 실제 0 W와 구분합니다. 수동 재조회와 중지를 지원합니다.
+
+AP-535 판정은 제조사의 지원 전원 조건과 유효한 요청·할당 근거를 사용합니다.
+낮은 실제 W만으로 전력 부족을 판정하지 않습니다. `공급·협상 정상`은 해당 포트의
+전원 협상 결과이며 AP 전체 서비스 정상이라는 뜻은 아닙니다. 공식 자료와 상세
+입력 형식은 [POE_QUERY_KO.md](docs/POE_QUERY_KO.md)에 있습니다.
 
 ## 포트 제어
 
@@ -300,7 +311,7 @@ show running-config
 |---|---|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 프로그램 구성, 수집 단계, 결과 생성 흐름 |
 | [PORT_CONTROL_KO.md](docs/PORT_CONTROL_KO.md) | 단일 포트 PoE/통신 제어, 실행 확인, 결과와 이력 |
-| [POE_QUERY_KO.md](docs/POE_QUERY_KO.md) | 다중 스위치·포트 묶음 조회, 대상 목록 저장, CSV |
+| [POE_QUERY_KO.md](docs/POE_QUERY_KO.md) | 다중 스위치·포트 W·LLDP 조회, AP-535 판정 기준, 대상 목록·CSV |
 | [VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md) | 자동/실장비 검증 항목, 합격 기준, 검증 기록 |
 | [SSH_AND_SAFETY.md](docs/SSH_AND_SAFETY.md) | 프롬프트, `no page`, 모델 식별, SSH 알고리즘, 안전 경계 |
 | [DEPENDENCY_AUDIT_EXCEPTIONS_KO.md](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md) | Paramiko 감사 예외, 보완 통제, 재검토 기한과 제거 조건 |

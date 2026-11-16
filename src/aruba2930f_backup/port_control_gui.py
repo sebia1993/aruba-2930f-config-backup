@@ -6,7 +6,7 @@ import threading
 from collections.abc import Callable
 from typing import Protocol, cast
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QDialog,
@@ -369,9 +369,8 @@ class PortControlDialog(QDialog):
         worker.failed.connect(self._on_failed)
         worker.approval_requested.connect(self._approve_key)
         worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(worker.deleteLater)
         thread.finished.connect(self._thread_finished)
-        thread.finished.connect(thread.deleteLater)
         self._thread, self._worker = thread, worker
         self._set_busy(True)
         self.status_label.setText(
@@ -437,9 +436,17 @@ class PortControlDialog(QDialog):
 
     @Slot()
     def _thread_finished(self) -> None:
+        # finished is emitted before native/deferred-delete cleanup completes.
+        # Retain both wrappers and keep the dialog busy until that cleanup joins.
+        thread = self._thread
+        if thread is not None and not thread.wait(100):
+            QTimer.singleShot(20, self._thread_finished)
+            return
         self._thread = None
         self._worker = None
         self._action = None
+        if thread is not None:
+            thread.deleteLater()
         self._set_busy(False)
 
     def reject(self) -> None:

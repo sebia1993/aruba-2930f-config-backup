@@ -105,7 +105,8 @@ def _is_header(row: list[str]) -> bool:
         {"interfaces", "interface", "interface list", "ports", "인터페이스", "인터페이스 목록"},
         {"label", "name", "이름", "이름(선택)"},
     )
-    return all(cell.strip().casefold() in names for cell, names in zip(row, aliases, strict=False))
+    selected = (aliases[0], aliases[2]) if len(row) == 2 else aliases[: len(row)]
+    return all(cell.strip().casefold() in names for cell, names in zip(row, selected, strict=True))
 
 
 def _parse_table(text: str, delimiter: str) -> tuple[PoETarget, ...]:
@@ -118,14 +119,29 @@ def _parse_table(text: str, delimiter: str) -> tuple[PoETarget, ...]:
         ]
     except csv.Error as exc:
         raise ValueError("붙여넣은 표 형식이 올바르지 않습니다.") from exc
-    if not rows or any(len(row) not in (3, 4) for row in rows):
-        raise ValueError("표는 IP, SSH 포트, 인터페이스 목록, 선택적 이름의 3~4열이어야 합니다.")
+    if not rows or any(len(row) not in (2, 3, 4) for row in rows):
+        raise ValueError(
+            "표는 IP / 인터페이스 목록의 2열 또는 기존 SSH 포트를 포함한 3~4열이어야 합니다."
+        )
+    # A header declares column meaning for the whole block. Without a header,
+    # the first row establishes the same schema; never reinterpret later rows.
+    basic_schema = len(rows[0]) == 2
     if _is_header(rows[0]):
         rows = rows[1:]
     if not rows:
         raise ValueError("조회할 대상을 입력하세요.")
+    allowed_widths = (2,) if basic_schema else (3, 4)
+    if any(len(row) not in allowed_widths for row in rows):
+        raise ValueError(
+            "한 표에는 IP / 인터페이스 2열과 SSH 포트를 포함한 3~4열을 섞을 수 없습니다."
+        )
     return merge_targets(
-        [make_target(row[0], row[1], row[2], row[3] if len(row) == 4 else "") for row in rows]
+        [
+            make_target(row[0], 22, row[1])
+            if basic_schema
+            else make_target(row[0], row[1], row[2], row[3] if len(row) == 4 else "")
+            for row in rows
+        ]
     )
 
 

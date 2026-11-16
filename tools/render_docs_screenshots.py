@@ -13,6 +13,7 @@ import platform
 import socket
 import subprocess
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import QApplication, QTableWidgetItem
 from aruba2930f_backup import __version__
 from aruba2930f_backup.gui import HostKeyApprovalDialog, MainWindow
 from aruba2930f_backup.models import (
+    DeviceIdentity,
     DeviceTarget,
     ErrorCode,
     HostKeyCheck,
@@ -163,29 +165,66 @@ def _block_network(*_args: object, **_kwargs: object) -> None:
 
 
 def _save_poe_query(output: Path) -> None:
+    from aruba2930f_backup.poe_power import (
+        LLDPNeighbor,
+        LLDPObservation,
+        LLDPStatus,
+        PowerEvidence,
+        assess_ap535_power,
+    )
     from aruba2930f_backup.poe_query_gui import PoEQueryDialog
     from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
-    from aruba2930f_backup.port_control import PortSnapshot
+    from aruba2930f_backup.port_control import PoEState, PortSnapshot
 
     app, window = _prepare_window()
     groups = (
-        PoETarget(DeviceTarget("192.0.2.10"), ("12", "24"), "점검 A"),
-        PoETarget(DeviceTarget("192.0.2.20", 2222), ("3", "7"), "점검 B"),
+        PoETarget(DeviceTarget("192.0.2.10"), ("12", "24")),
+        PoETarget(DeviceTarget("192.0.2.20"), ("3", "7")),
     )
     dialog = PoEQueryDialog(window, username="netops-demo")
     dialog.resize(1240, 900)
     dialog._replace_targets(groups)
     dialog._build_results(groups)
-    examples = (
-        (groups[0], "12", "Up", "Delivering", 14.8, "2026-11-16T12:30:01+00:00"),
-        (groups[0], "24", "Down", "Searching", 0.0, "2026-11-16T12:30:02+00:00"),
-        (groups[1], "3", "Up", "Delivering", 17.2, "2026-11-16T12:30:01+00:00"),
+    satisfied = PowerEvidence(
+        requested_watts=Decimal("25.5"),
+        allocated_watts=Decimal("25.5"),
+        plc_class=4,
+        plc_type=2,
+        dlc_class=4,
+        dlc_type=2,
+        allocation_method="lldp",
+        device_type="Type2 PD",
+        allocation_field="PSE Allocated Power Value",
     )
-    for group, interface, link, supply, watts, observed in examples:
+    insufficient = PowerEvidence(
+        requested_watts=Decimal("25.5"),
+        allocated_watts=Decimal("20.0"),
+        plc_class=4,
+        plc_type=2,
+        dlc_class=4,
+        dlc_type=2,
+        allocation_method="lldp",
+        device_type="Type2 PD",
+        allocation_field="PSE Allocated Power Value",
+    )
+    examples = (
+        (groups[0], "12", "Up", "Delivering", 8.7, "AP-1F-LOBBY", satisfied, LLDPStatus.OK),
+        (groups[0], "24", "Down", "Searching", 0.0, "", None, LLDPStatus.OK),
+        (groups[1], "3", "Up", "Delivering", 8.1, "AP-2F-MEETING", insufficient, LLDPStatus.OK),
+        (groups[1], "7", "Up", "Delivering", 13.0, "", None, LLDPStatus.FAILED),
+    )
+    for index, (group, interface, link, supply, watts, name, evidence, lldp_status) in enumerate(
+        examples
+    ):
+        observed = f"2026-11-17T01:30:0{index + 1}+00:00"
+        lldp_at = f"2026-11-17T01:30:2{index + 1}+00:00"
+        identity = DeviceIdentity(
+            f"LAB-2930F-{group.target.ip.rsplit('.', 1)[1]}", "Aruba 2930F", "JL256A"
+        )
         snapshot = PortSnapshot(
             group.target,
             interface,
-            f"LAB-2930F-{group.target.ip.rsplit('.', 1)[1]}",
+            identity.hostname or "",
             "Aruba 2930F",
             True,
             link,
@@ -194,25 +233,39 @@ def _save_poe_query(output: Path) -> None:
             watts,
             observed_at=observed,
         )
+        lldp = LLDPObservation(
+            status=lldp_status,
+            neighbors=(
+                LLDPNeighbor(
+                    system_name=name,
+                    system_description="ArubaOS (MODEL:535), documentation fixture",
+                    model="AP-535",
+                    port_id="eth0",
+                    power=evidence,
+                ),
+            )
+            if name
+            else (),
+            error_code=ErrorCode.COMMAND_TIMEOUT if lldp_status is LLDPStatus.FAILED else None,
+            message="문서용 LLDP 시간 초과 — PoE 13 W는 보존됨"
+            if lldp_status is LLDPStatus.FAILED
+            else "",
+            observed_at=lldp_at,
+        )
         dialog._on_result(
             PoEQueryResult(
                 group,
                 interface,
                 QueryStatus.OK,
                 snapshot=snapshot,
-                finished_at=observed,
+                identity=identity,
+                power_evidence=evidence,
+                lldp=lldp,
+                assessment=assess_ap535_power(PoEState(True, supply, watts), evidence, lldp),
+                poe_finished_at=observed,
+                finished_at=lldp_at,
             )
         )
-    dialog._on_result(
-        PoEQueryResult(
-            groups[1],
-            "7",
-            QueryStatus.FAILED,
-            error_code=ErrorCode.COMMAND_TIMEOUT,
-            message="문서용 가상 시간 초과 — 실제 장비 조회 없음",
-            finished_at="2026-11-16T12:30:22+00:00",
-        )
-    )
     dialog.result_tree.setCurrentItem(dialog.result_tree.topLevelItem(0).child(0))
     dialog.progress_bar.setValue(100)
     dialog.status_label.setText("문서용 가상 결과 · 스위치 2대 / 포트 4개 · 실제 장비 접속 없음")

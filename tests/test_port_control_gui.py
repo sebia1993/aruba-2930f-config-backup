@@ -237,3 +237,86 @@ def test_parent_close_waits_for_active_modal_port_operation(
     parent._open_port_control()
     assert close_results == [False]
     assert parent.isVisible()
+
+
+@pytest.mark.parametrize("changing", [False, True])
+def test_native_cleanup_keeps_wrappers_busy_and_blocks_close(
+    app: QApplication, qtbot: object, monkeypatch: pytest.MonkeyPatch, changing: bool
+) -> None:
+    from PySide6.QtCore import Qt, QThread
+
+    from aruba2930f_backup import port_control_gui
+    from aruba2930f_backup.port_control import PortAction
+
+    deletion_requests: list[QThread] = []
+
+    class ObservedThread(QThread):
+        def deleteLater(self) -> None:
+            # Observe scheduling without destroying an unfinished native thread on
+            # the known-bad implementation. The finally block performs real cleanup.
+            deletion_requests.append(self)
+
+    monkeypatch.setattr(port_control_gui, "QThread", ObservedThread)
+    dialog, service = dialog_with_inputs(app, qtbot)
+    operation_release = threading.Event()
+    cleanup_entered = threading.Event()
+    cleanup_release = threading.Event()
+    action = PortAction.DISABLE if changing else None
+    if changing:
+        from aruba2930f_backup.models import DeviceTarget
+
+        snapshot = service.inspect(DeviceTarget("192.0.2.10"), "1/24", object())
+        dialog._snapshot = snapshot
+        original_apply = service.apply
+
+        def blocked_apply(*args: object, **kwargs: object) -> object:
+            assert operation_release.wait(3)
+            return original_apply(*args, **kwargs)
+
+        monkeypatch.setattr(service, "apply", blocked_apply)
+    else:
+        service.wait = operation_release
+    dialog.show()
+    dialog._start(action, dialog._snapshot.confirmation_text if changing else "")
+    thread, worker = dialog._thread, dialog._worker
+    assert thread is not None and worker is not None
+
+    def hold_native_cleanup() -> None:
+        cleanup_entered.set()
+        assert cleanup_release.wait(3)
+
+    # A direct finished slot runs on the worker thread before native teardown.
+    # Local wrapper references keep this regression deterministic instead of
+    # relying on the allocator race that produced the reported native crash.
+    thread.finished.connect(hold_native_cleanup, Qt.ConnectionType.DirectConnection)
+    operation_release.set()
+    try:
+        qtbot.waitUntil(cleanup_entered.is_set)
+        qtbot.wait(130)
+        assert not thread.wait(0)
+        assert dialog.is_busy
+        assert dialog._thread is thread
+        assert dialog._worker is worker
+        assert dialog._action == action
+        assert not deletion_requests
+        assert worker.credentials is None
+        assert not dialog.inspect_button.isEnabled()
+        assert not any(button.isEnabled() for button in dialog.action_buttons.values())
+        assert not dialog.close()
+        dialog.reject()
+        assert dialog.isVisible()
+        assert dialog.password_input.text() == "test-password"
+    finally:
+        cleanup_release.set()
+        assert thread.wait(2000)
+        qtbot.waitUntil(lambda: not dialog.is_busy)
+        # Run the actual deferred deletion only after the OS thread has exited.
+        QThread.deleteLater(thread)
+    assert deletion_requests == [thread]
+    assert dialog._worker is None
+    assert dialog._action is None
+    assert dialog.isVisible()
+    assert bool(service.applied) == changing
+    dialog.reject()
+    assert dialog.password_input.text() == ""
+    assert dialog.enable_password_input.text() == ""

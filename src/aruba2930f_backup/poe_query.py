@@ -7,7 +7,10 @@ import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from dataclasses import replace
 from datetime import UTC, datetime
+from functools import partial
+from typing import Protocol
 
 from .hostkeys import HostKeyProbe, HostKeyStore, ParamikoHostKeyProbe
 from .models import (
@@ -20,6 +23,14 @@ from .models import (
     HostKeyCheck,
     HostKeyObservation,
     HostKeyTrustState,
+)
+from .poe_power import (
+    LLDPObservation,
+    LLDPStatus,
+    PowerEvidence,
+    assess_ap535_power,
+    parse_lldp_neighbors,
+    parse_power_evidence,
 )
 from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from .poe_targets import merge_targets
@@ -34,7 +45,16 @@ from .port_control import (
 from .port_control_ssh import PortControlSSHSession
 from .validation import ARUBA_2930F_MODELS, hostname_from_prompt, validate_device_identity
 
-SessionFactory = Callable[[DeviceTarget, Credentials, CollectionOptions, HostKeyStore], PortSession]
+
+class QuerySession(PortSession, Protocol):
+    """Query-only read surface; existing mutation and backup permissions stay fixed."""
+
+    def read_lldp(self, interface: str) -> str: ...
+
+
+SessionFactory = Callable[
+    [DeviceTarget, Credentials, CollectionOptions, HostKeyStore], QuerySession
+]
 
 
 def _check_cancel(cancel: threading.Event) -> None:
@@ -57,14 +77,47 @@ def _unexpected_failure() -> CollectionFailure:
     )
 
 
-def _terminal(group: PoETarget, interface: str, failure: CollectionFailure) -> PoEQueryResult:
+def _terminal(
+    group: PoETarget,
+    interface: str,
+    failure: CollectionFailure,
+    identity: DeviceIdentity | None = None,
+) -> PoEQueryResult:
     return PoEQueryResult(
         group,
         interface,
         QueryStatus.CANCELLED if failure.code is ErrorCode.CANCELLED else QueryStatus.FAILED,
         error_code=failure.code,
         message=failure.safe_message,
+        identity=identity,
+        poe_finished_at=datetime.now(UTC).isoformat(),
+        complete=False,
+        lldp=LLDPObservation(),
+    )
+
+
+def _finish(row: PoEQueryResult, lldp: LLDPObservation) -> PoEQueryResult:
+    snapshot = row.snapshot
+    poe = (
+        PoEState(snapshot.poe_enabled, snapshot.poe_status, snapshot.watts)
+        if snapshot is not None
+        else None
+    )
+    return replace(
+        row,
+        lldp=lldp,
+        assessment=assess_ap535_power(poe, row.power_evidence, lldp),
         finished_at=datetime.now(UTC).isoformat(),
+        complete=True,
+    )
+
+
+def _lldp_failure(failure: CollectionFailure) -> LLDPObservation:
+    return LLDPObservation(
+        status=LLDPStatus.CANCELLED if failure.code is ErrorCode.CANCELLED else LLDPStatus.FAILED,
+        error_code=failure.code,
+        message=failure.safe_message,
+        observed_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -169,19 +222,19 @@ class PoEQueryService:
         identity: DeviceIdentity,
         port: InterfaceState,
         cancel: threading.Event,
-    ) -> PoEState:
+    ) -> tuple[PoEState, PowerEvidence | None]:
         known_model = ARUBA_2930F_MODELS.get(identity.sku or "")
         if (
             known_model is not None and "PoE" not in known_model
         ) or "SFP" in port.port_type.upper():
-            return PoEState(None, "PoE 미지원", None)
+            return PoEState(None, "PoE 미지원", None), None
         output = _bounded(cancel, lambda: session.read_poe(interface))
         if re.search(
             r"(?:not a PoE port|does not support PoE|no PoE ports)", output, re.IGNORECASE
         ):
-            return PoEState(None, "PoE 미지원", None)
+            return PoEState(None, "PoE 미지원", None), None
         # A normal CLI rejection is a failed query, never evidence of no PoE.
-        return parse_poe_status(output, interface)
+        return parse_poe_status(output, interface), parse_power_evidence(output, interface)
 
     def _collect_group(
         self,
@@ -191,9 +244,10 @@ class PoEQueryService:
         on_result: Callable[[PoEQueryResult], None] | None,
         cancel: threading.Event,
     ) -> tuple[PoEQueryResult, ...]:
-        session: PortSession | None = None
+        session: QuerySession | None = None
         rows: list[PoEQueryResult] = []
         fatal: CollectionFailure | None = None
+        identity: DeviceIdentity | None = None
         try:
             observation = self._trusted_key(group.target, approve, cancel)
             _check_cancel(cancel)
@@ -213,7 +267,7 @@ class PoEQueryService:
                 try:
                     output = _bounded(cancel, session.read_interfaces)
                     port = parse_interface_status(output, interface)
-                    poe = self._read_poe(session, interface, identity, port, cancel)
+                    poe, evidence = self._read_poe(session, interface, identity, port, cancel)
                     _check_cancel(cancel)
                     snapshot = PortSnapshot(
                         group.target,
@@ -233,19 +287,49 @@ class PoEQueryService:
                         interface,
                         QueryStatus.UNSUPPORTED if poe.enabled is None else QueryStatus.OK,
                         snapshot=snapshot,
-                        finished_at=datetime.now(UTC).isoformat(),
+                        identity=identity,
+                        power_evidence=evidence,
+                        lldp=LLDPObservation(),
+                        assessment=assess_ap535_power(poe, evidence, LLDPObservation()),
+                        poe_finished_at=datetime.now(UTC).isoformat(),
+                        complete=False,
                     )
                 except CollectionFailure as exc:
-                    row = _terminal(group, interface, exc)
+                    row = _terminal(group, interface, exc, identity)
                     if exc.code is not ErrorCode.COMMAND_REJECTED:
                         fatal = exc
                 except Exception:
                     fatal = _unexpected_failure()
-                    row = _terminal(group, interface, fatal)
+                    row = _terminal(group, interface, fatal, identity)
                 rows.append(row)
                 _deliver(row, on_result)
                 if fatal is not None:
                     break
+
+            # Every selected port's PoE outcome is published before LLDP starts.
+            # CLI errors are local; an uncertain transport cannot be reused.
+            for index, row in enumerate(rows):
+                if fatal is not None:
+                    break
+                try:
+                    output = _bounded(cancel, partial(session.read_lldp, row.interface))
+                    neighbors = parse_lldp_neighbors(output, row.interface)
+                    _check_cancel(cancel)
+                    lldp = LLDPObservation(
+                        status=LLDPStatus.OK,
+                        neighbors=neighbors,
+                        observed_at=datetime.now(UTC).isoformat(),
+                    )
+                except CollectionFailure as exc:
+                    lldp = _lldp_failure(exc)
+                    if exc.code is not ErrorCode.COMMAND_REJECTED:
+                        fatal = exc
+                except Exception:
+                    fatal = _unexpected_failure()
+                    lldp = _lldp_failure(fatal)
+                finished = _finish(row, lldp)
+                rows[index] = finished
+                _deliver(finished, on_result)
         except CollectionFailure as exc:
             fatal = exc
         except Exception:
@@ -254,11 +338,16 @@ class PoEQueryService:
             if session is not None:
                 with suppress(Exception):
                     session.close()
+        failure = fatal or _unexpected_failure()
+        if cancel.is_set():
+            failure = CollectionFailure(ErrorCode.CANCELLED, "포트 전력 조회를 중지했습니다.")
+        for index, row in enumerate(rows):
+            if not row.complete:
+                finished = _finish(row, _lldp_failure(failure))
+                rows[index] = finished
+                _deliver(finished, on_result)
         for interface in group.interfaces[len(rows) :]:
-            failure = fatal or _unexpected_failure()
-            if cancel.is_set():
-                failure = CollectionFailure(ErrorCode.CANCELLED, "포트 전력 조회를 중지했습니다.")
-            row = _terminal(group, interface, failure)
+            row = _finish(_terminal(group, interface, failure, identity), _lldp_failure(failure))
             rows.append(row)
             _deliver(row, on_result)
         return tuple(rows)

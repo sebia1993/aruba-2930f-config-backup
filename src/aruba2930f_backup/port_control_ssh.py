@@ -41,6 +41,10 @@ class PortControlSSHSession(NetmikoSSHSession):
         port = validate_port_identifier(interface)
         return self._read_port_command(f"show power-over-ethernet {port}")
 
+    def read_lldp(self, interface: str) -> str:
+        port = validate_port_identifier(interface)
+        return self._read_port_command(f"show lldp info remote-device {port}")
+
     def change_port(self, interface: str, action: str) -> None:
         """Send a single generated change once, then return to the same EXEC prompt.
 
