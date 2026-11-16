@@ -3,7 +3,9 @@
 [![CI](https://github.com/sebia1993/aruba-2930f-config-backup/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sebia1993/aruba-2930f-config-backup/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**ArubaOS-Switch 기반 Aruba 2930F 여러 대의 `running-config`를 SSH로 일괄 수집하는 Windows용 읽기 전용 네트워크 자동화 도구입니다.**
+**ArubaOS-Switch 기반 Aruba 2930F 여러 대의 `running-config`를 SSH로 일괄 수집하는 Windows용 네트워크 자동화 도구입니다.** 백업은 읽기 전용이며, 별도 **포트 제어** 창에서 단일 인터페이스의 PoE 전원과 통신을 끄고 켤 수 있습니다.
+
+> **포트 제어는 개발 중인 다음 버전의 기능입니다. 기존 v0.1.8 배포 ZIP에는 포함되지 않습니다.** [포트 제어 사용 안내](docs/PORT_CONTROL_KO.md)에서 동작과 한계를 확인하십시오.
 
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
@@ -31,7 +33,7 @@
 | 네트워크 OS | ArubaOS-Switch |
 | 접속 방식 | SSH, 기본 TCP 22 |
 | 수집 명령 | `show running-config` |
-| 장비 변경 | **없음 — 설정 모드에 진입하지 않음** |
+| 장비 변경 | 백업은 변경 없음. 별도 포트 제어에서 대상 확인 후 PoE/포트 사용 설정 변경 |
 | 사전 확인 | SSH 장비 지문, EXEC 프롬프트, `no page`, 모델/SKU |
 | 동시 처리 | 기본 10대, 최대 20대 |
 | 실패 처리 | 장비 단위 격리, 5/15/30초 지연 재시도 |
@@ -62,7 +64,7 @@
 | 일시적인 통신 장애 | 즉시 반복 대신 5초 → 15초 → 30초 지연 재시도 |
 | 인증/모델 오류 같은 영구 실패 | 동일 조건을 반복하지 않고 즉시 종료 |
 | 백업 파일의 무결성 확인 | 장비별 설정 파일 저장 후 SHA-256 계산 |
-| 운영망 변경 위험 | 설정 모드와 구성 변경 명령을 허용하지 않는 읽기 전용 흐름 유지 |
+| 운영망 변경 위험 | 백업의 읽기 전용 흐름 유지. 포트 제어는 단일 대상 확인·별도 세션·변경 후 재조회 |
 | 문제 재현 시 민감정보 노출 위험 | IP·계정·암호·설정 원문을 포함하지 않는 오류 분류와 오프라인 진단 코드 사용 |
 
 설계 배경과 구성요소별 책임은 [프로그램 구조](docs/ARCHITECTURE.md)에 더 자세히 정리되어 있습니다.
@@ -133,7 +135,8 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 | IPv4 | 지원 | 현재 입력 대상 |
 | Windows x64 | 지원 | 배포 ZIP 기준 |
 | 다른 Aruba 모델 | 미지원 | 2930F 외 장비는 차단 |
-| 설정 복원/변경 | 미지원 | 의도적으로 읽기 전용 |
+| 단일 포트 PoE/통신 제어 | 다음 버전 소스에 추가 | 별도 제어 창에서 대상 확인 후 실행 |
+| 설정 복원 및 그 밖의 구성 변경 | 미지원 | 백업 경로는 읽기 전용 |
 
 ### 검증 현황
 
@@ -169,7 +172,25 @@ Get-Content .\Aruba2930FConfigBackup_v0.1.8_windows_x64.zip.sha256
 
 > EXE만 ZIP에서 따로 꺼내 실행하지 마십시오. 현재 사전릴리즈는 Authenticode 서명이 없어 Windows SmartScreen 경고가 표시될 수 있습니다.
 
-## 장비에서 실행되는 핵심 명령
+## 포트 제어
+
+메인 화면의 **포트 제어…**를 누르고 SW IP와 인터페이스 번호를 입력합니다.
+일반 스위치는 `24`, VSF는 `1/24`처럼 장비가 사용하는 번호를 그대로 입력합니다.
+
+| 버튼 | 동작 |
+|---|---|
+| PoE 전원 끄기 / 켜기 | 해당 포트에서 연결 기기에 공급하는 PoE 전원 제어 |
+| 포트 내리기 / 올리기 | 해당 포트의 데이터 통신 사용 설정 제어 |
+
+**현재 상태 조회 → 대상 문자열 확인 → 실행 → 변경 후 재조회** 순서로 동작합니다.
+전원 끄기는 꺼진 상태를 유지하며, 다시 조회한 뒤 전원 켜기를 실행해 복구합니다.
+PoE가 아닌 별도 전원으로 작동하는 기기는 PoE를 꺼도 전원이 유지될 수 있습니다.
+실행 중 연결이 끊기면 결과를 확인하지 못한 것으로 표시하고 변경 명령을 자동 재전송하지 않습니다.
+포트 제어는 `write memory`를 실행하지 않습니다.
+
+자세한 사용법과 작업 이력은 [PORT_CONTROL_KO.md](docs/PORT_CONTROL_KO.md)를 참고하십시오.
+
+## 백업 중 장비에서 실행되는 핵심 명령
 
 ```text
 no page
@@ -215,7 +236,7 @@ show running-config
 
 백업 TXT에는 실제 장비 설정이 포함되므로 조직의 설정 파일 보관 정책에 따라 보호해야 합니다.
 
-## 운영 안전 원칙
+## 백업의 운영 안전 원칙
 
 - 장비 설정을 변경하지 않음
 - 설정 모드에 진입하지 않음
@@ -250,7 +271,7 @@ show running-config
 - IPv6 및 DNS 호스트명 입력
 - 설정 비교 및 변경 탐지
 - 설정 복원
-- 장비 설정 변경
+- 포트 제어 이외의 장비 설정 변경
 - Aruba 2930F 이외 모델
 
 ## 상세 문서
@@ -258,6 +279,7 @@ show running-config
 | 문서 | 내용 |
 |---|---|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 프로그램 구성, 수집 단계, 결과 생성 흐름 |
+| [PORT_CONTROL_KO.md](docs/PORT_CONTROL_KO.md) | 단일 포트 PoE/통신 제어, 실행 확인, 결과와 이력 |
 | [VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md) | 자동/실장비 검증 항목, 합격 기준, 검증 기록 |
 | [SSH_AND_SAFETY.md](docs/SSH_AND_SAFETY.md) | 프롬프트, `no page`, 모델 식별, SSH 알고리즘, 안전 경계 |
 | [DEPENDENCY_AUDIT_EXCEPTIONS_KO.md](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md) | Paramiko 감사 예외, 보완 통제, 재검토 기한과 제거 조건 |

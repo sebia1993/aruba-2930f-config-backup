@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QBrush, QCloseEvent, QColor, QDesktopServices
@@ -74,6 +74,9 @@ from .storage import (
 )
 
 _GUI_SOURCE_PATH = "src/aruba2930f_backup/gui.py"
+
+if TYPE_CHECKING:
+    from .port_control_gui import PortControlDialog
 
 
 def _ui_metadata(
@@ -1081,6 +1084,7 @@ class MainWindow(QMainWindow):
         self._pending_error_code: str | None = None
         self._pending_diagnostic_counts: dict[str, int] = {}
         self._diagnostic_dialog: DiagnosticCodesDialog | None = None
+        self._port_control_dialog: PortControlDialog | None = None
         self._closing_after_cancel = False
         self._close_retry_scheduled = False
         self._run_finalize_pending = False
@@ -1174,6 +1178,10 @@ class MainWindow(QMainWindow):
         self.trust_keys_button.setObjectName("trustKeysButton")
         self.trust_keys_button.clicked.connect(self._manage_trusted_keys)
         options_layout.addWidget(self.trust_keys_button, 0, 2)
+        self.port_control_button = QPushButton("포트 제어…", options_group)
+        self.port_control_button.setObjectName("portControlButton")
+        self.port_control_button.clicked.connect(self._open_port_control)
+        options_layout.addWidget(self.port_control_button, 1, 2)
         options_layout.setColumnStretch(1, 1)
         outer.addWidget(options_group)
 
@@ -1338,6 +1346,13 @@ class MainWindow(QMainWindow):
                 "HOSTKEY-MANAGEMENT",
                 "메인 화면 > 실행 옵션",
                 "승인해 저장한 SSH 장비 지문 관리 창을 엽니다.",
+            ),
+            (
+                self.port_control_button,
+                "포트 제어 버튼",
+                "PORT-CONTROL-OPEN",
+                "메인 화면 > 실행 옵션",
+                "단일 스위치 포트의 PoE 전원과 통신 사용 설정을 제어하는 창을 엽니다.",
             ),
             (
                 self.start_button,
@@ -1825,6 +1840,7 @@ class MainWindow(QMainWindow):
             self.output_input,
             self.browse_button,
             self.trust_keys_button,
+            self.port_control_button,
         ):
             widget.setEnabled(not running)
         self.start_button.setEnabled(not running)
@@ -1837,6 +1853,28 @@ class MainWindow(QMainWindow):
         if self._result_directory is None:
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._result_directory)))
+
+    @Slot()
+    def _open_port_control(self) -> None:
+        if self._thread is not None or self._port_control_dialog is not None:
+            return
+        from .port_control_gui import PortControlDialog
+
+        targets = self.ip_input.toPlainText().strip().splitlines()
+        dialog = PortControlDialog(
+            self,
+            ip=targets[0].strip() if len(targets) == 1 else "",
+            ssh_port=self.port_input.value(),
+            username=self.username_input.text(),
+            password=self.password_input.text(),
+            enable_password=self.enable_password_input.text(),
+        )
+        self._port_control_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            self._port_control_dialog = None
+            dialog.deleteLater()
 
     @Slot()
     def _manage_trusted_keys(self) -> None:
@@ -1872,6 +1910,12 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._port_control_dialog is not None:
+            if self._port_control_dialog.is_busy:
+                self._port_control_dialog.reject()
+                event.ignore()
+                return
+            self._port_control_dialog.reject()
         if self._thread is not None or self._cancel_thread_is_alive() or self._run_finalize_pending:
             self._closing_after_cancel = True
             if self._thread is not None:

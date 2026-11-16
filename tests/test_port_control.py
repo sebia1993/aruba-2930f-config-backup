@@ -1,0 +1,426 @@
+from __future__ import annotations
+
+import importlib
+import json
+import threading
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from aruba2930f_backup.hostkeys import HostKeyStore, sha256_fingerprint
+from aruba2930f_backup.models import (
+    CollectionFailure,
+    CollectionOptions,
+    Credentials,
+    DeviceTarget,
+    ErrorCode,
+    HostKeyObservation,
+)
+from aruba2930f_backup.port_control import PortAction, parse_interface_status, parse_poe_status
+
+
+@pytest.mark.parametrize(
+    "value", ["", "0", "01", "1,2", "1-2", "all", "1/1/1", "1\nend", " 1", "1 "]
+)
+def test_unsafe_interface_never_becomes_a_command_target(value: str) -> None:
+    module = importlib.import_module("aruba2930f_backup.port_control")
+    with pytest.raises(ValueError):
+        module.validate_interface(value)
+
+
+def test_port_admin_state_is_independent_of_link_state() -> None:
+    module = importlib.import_module("aruba2930f_backup.port_control")
+    state = module.parse_interface_status(
+        "Port Type | Alert Enabled Status Mode\n24 100/1000T | No Yes Down Auto\n", "24"
+    )
+    assert state.enabled is True
+    assert state.link_status == "Down"
+
+
+def test_poe_disabled_output_need_not_include_power_delivery_fields() -> None:
+    module = importlib.import_module("aruba2930f_backup.port_control")
+    state = module.parse_poe_status(
+        "Status and Counters - Port Power Status for port 24\nPower Enable : No\n", "24"
+    )
+    assert state.enabled is False
+    assert state.watts is None
+
+
+TARGET = DeviceTarget("192.0.2.20")
+CREDENTIALS = Credentials("operator", "test-password")
+
+
+class Device:
+    """Synthetic device whose state changes independently of the service."""
+
+    def __init__(self) -> None:
+        self.interface = "24"
+        self.enabled = True
+        self.link_status = "Down"
+        self.poe_enabled = True
+        self.poe_status = "Searching"
+        self.sku = "JL255A"
+        self.hostname = "edge-lab"
+        self.fingerprint = sha256_fingerprint(b"synthetic-port-control-key")
+        self.mutations: list[tuple[str, str]] = []
+        self.sessions: list[Session] = []
+        self.fail_after_change = False
+        self.fail_post_read = False
+        self.ignore_change = False
+        self.malformed = False
+        self.probes = 0
+
+    def probe(self, target: DeviceTarget, *, timeout: float = 15.0) -> HostKeyObservation:
+        self.probes += 1
+        return HostKeyObservation(target, "ssh-ed25519", self.fingerprint)
+
+    def session(
+        self,
+        target: DeviceTarget,
+        credentials: Credentials,
+        options: CollectionOptions,
+        store: HostKeyStore,
+    ) -> Session:
+        session = Session(self)
+        self.sessions.append(session)
+        return session
+
+
+class Session:
+    def __init__(self, device: Device) -> None:
+        self.device = device
+        self.closed = False
+
+    def connect(self) -> None:
+        pass
+
+    def enter_enable(self) -> None:
+        pass
+
+    def disable_paging(self) -> None:
+        pass
+
+    def set_terminal_width(self) -> None:
+        pass
+
+    def get_prompt(self) -> str:
+        return f"{self.device.hostname}#"
+
+    def send_show(self, command: str) -> str:
+        if command == "show version":
+            return f"Aruba {self.device.sku} 2930F Switch\nSoftware revision WC.16.11.0025"
+        assert command == "show modules"
+        return f"Chassis: Aruba 2930F {self.device.sku}"
+
+    def read_interfaces(self) -> str:
+        d = self.device
+        if d.fail_post_read and d.mutations:
+            raise TimeoutError("synthetic sensitive detail")
+        if d.malformed:
+            return "unparseable"
+        enabled = "Yes" if d.enabled else "No"
+        return f"Port Type | Alert Enabled Status Mode\n{d.interface} 100/1000T | No {enabled} {d.link_status} Auto\n"
+
+    def read_poe(self, interface: str) -> str:
+        d = self.device
+        enabled = "Yes" if d.poe_enabled else "No"
+        text = f"Status and Counters - Port Power Status for port {d.interface}\nPower Enable : {enabled}\n"
+        if d.poe_enabled:
+            text += f"Detection Status : {d.poe_status}\nPower : 0 W\n"
+        return text
+
+    def change_port(self, interface: str, action: str) -> None:
+        d = self.device
+        d.mutations.append((interface, action))
+        if not d.ignore_change:
+            if action.startswith("poe_"):
+                d.poe_enabled = action == "poe_on"
+            else:
+                d.enabled = action == "enable"
+        if d.fail_after_change:
+            raise TimeoutError("synthetic sensitive detail")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.fixture
+def setup(tmp_path: Path) -> tuple[Any, Device, list[float]]:
+    module = importlib.import_module("aruba2930f_backup.port_control")
+    d = Device()
+    clock = [100.0]
+    service = module.PortControlService(
+        host_key_store=HostKeyStore(tmp_path / "known_hosts.json"),
+        host_key_probe=d,
+        session_factory=d.session,
+        audit_directory=tmp_path / "audit",
+        clock=lambda: clock[0],
+    )
+    return service, d, clock
+
+
+def inspect(service: Any, device: Device) -> Any:
+    return service.inspect(
+        TARGET, device.interface, CREDENTIALS, approve_host_key=lambda check: True
+    )
+
+
+@pytest.mark.parametrize("action", list(PortAction))
+def test_each_action_changes_only_its_setting_and_is_verified(
+    setup: Any, action: PortAction
+) -> None:
+    service, d, _ = setup
+    if action.is_poe:
+        d.poe_enabled = not action.desired_enabled
+    else:
+        d.enabled = not action.desired_enabled
+    old_enabled, old_poe = d.enabled, d.poe_enabled
+    snapshot = inspect(service, d)
+    result = service.apply(snapshot, action, CREDENTIALS, confirmation=snapshot.confirmation_text)
+    assert result.status == "verified"
+    assert len(d.mutations) == 1
+    assert d.poe_enabled is (action.desired_enabled if action.is_poe else old_poe)
+    assert d.enabled is (old_enabled if action.is_poe else action.desired_enabled)
+    assert result.after.link_status == "Down"  # Enabling does not imply link restoration.
+    assert all(session.closed for session in d.sessions)
+    records = [json.loads(line) for line in result.audit_path.read_text().splitlines()]
+    assert [row["status"] for row in records] == ["pending", "verified"]
+    assert records[0]["interface"] == "24"
+    assert CREDENTIALS.password not in result.audit_path.read_text()
+
+
+def test_already_desired_state_sends_no_change(setup: Any) -> None:
+    service, d, _ = setup
+    snapshot = inspect(service, d)
+    result = service.apply(
+        snapshot, PortAction.ENABLE, CREDENTIALS, confirmation=snapshot.confirmation_text
+    )
+    assert result.status == "unchanged"
+    assert d.mutations == []
+
+
+@pytest.mark.parametrize(
+    "kind", ["wrong-confirmation", "expired", "copy", "state-changed", "hostname-changed"]
+)
+def test_stale_or_unconfirmed_targets_cannot_change(setup: Any, kind: str) -> None:
+    service, d, clock = setup
+    snapshot = inspect(service, d)
+    confirmation = snapshot.confirmation_text
+    if kind == "wrong-confirmation":
+        confirmation = "192.0.2.21:22 / 24"
+    elif kind == "expired":
+        clock[0] += 121
+    elif kind == "copy":
+        snapshot = replace(snapshot, interface="25")
+    elif kind == "state-changed":
+        d.enabled = False
+    else:
+        d.hostname = "changed-lab"
+    with pytest.raises((ValueError, CollectionFailure)):
+        service.apply(snapshot, PortAction.DISABLE, CREDENTIALS, confirmation=confirmation)
+    assert not d.mutations
+
+
+@pytest.mark.parametrize("kind", ["send-timeout", "post-read-timeout", "ignored"])
+def test_uncertain_results_never_replay_mutations(setup: Any, kind: str) -> None:
+    service, d, _ = setup
+    snapshot = inspect(service, d)
+    d.fail_after_change = kind == "send-timeout"
+    d.fail_post_read = kind == "post-read-timeout"
+    d.ignore_change = kind == "ignored"
+    result = service.apply(
+        snapshot, PortAction.POE_OFF, CREDENTIALS, confirmation=snapshot.confirmation_text
+    )
+    assert result.status == "unverified"
+    assert len(d.mutations) == 1
+    assert "sensitive" not in result.message
+    with pytest.raises(ValueError):
+        service.apply(
+            snapshot, PortAction.POE_OFF, CREDENTIALS, confirmation=snapshot.confirmation_text
+        )
+    assert len(d.mutations) == 1
+
+
+def test_new_key_requires_approval_before_authenticated_connection(setup: Any) -> None:
+    service, d, _ = setup
+    with pytest.raises(CollectionFailure):
+        service.inspect(TARGET, "24", CREDENTIALS, approve_host_key=lambda check: False)
+    assert not d.sessions
+
+
+def test_changed_host_key_blocks_apply_without_approval(setup: Any) -> None:
+    service, d, _ = setup
+    snapshot = inspect(service, d)
+    d.fingerprint = sha256_fingerprint(b"different-synthetic-key")
+    with pytest.raises(CollectionFailure) as error:
+        service.apply(
+            snapshot, PortAction.DISABLE, CREDENTIALS, confirmation=snapshot.confirmation_text
+        )
+    assert error.value.code is ErrorCode.HOST_KEY_CHANGED
+    assert len(d.sessions) == 1
+    assert not d.mutations
+
+
+def test_non_poe_model_allows_port_control_but_blocks_poe(setup: Any) -> None:
+    service, d, _ = setup
+    d.sku = "JL253A"
+    snapshot = inspect(service, d)
+    assert snapshot.poe_enabled is None
+    with pytest.raises(ValueError):
+        service.apply(
+            snapshot, PortAction.POE_OFF, CREDENTIALS, confirmation=snapshot.confirmation_text
+        )
+    assert not d.mutations
+    snapshot = inspect(service, d)
+    result = service.apply(
+        snapshot, PortAction.DISABLE, CREDENTIALS, confirmation=snapshot.confirmation_text
+    )
+    assert result.status == "verified"
+
+
+def test_audit_failure_blocks_command_before_transmission(setup: Any) -> None:
+    service, d, _ = setup
+    snapshot = inspect(service, d)
+    service.audit_directory.write_text("this path is a file")
+    with pytest.raises(CollectionFailure) as error:
+        service.apply(
+            snapshot, PortAction.DISABLE, CREDENTIALS, confirmation=snapshot.confirmation_text
+        )
+    assert error.value.code is ErrorCode.REPORT_WRITE_FAILED
+    assert not d.mutations
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "Port Type | Alert Enabled Status Mode\n2 100/1000T | No Yes Up Auto\n",
+        "Port Type | Alert Enabled Status Mode\n24 100/1000T | No Yes Up Auto\n24 100/1000T | No No Down Auto\n",
+        "Port Type | Alert Enabled Status Mode\n24 100/1000T | nonsense\n",
+    ],
+)
+def test_missing_ambiguous_or_malformed_port_is_rejected(output: str) -> None:
+    with pytest.raises(CollectionFailure):
+        parse_interface_status(output, "24")
+
+
+@pytest.mark.parametrize("status", ["Searching", "Disabled", "Delivering", "Other Fault"])
+def test_power_enable_is_not_inferred_from_detection_status(status: str) -> None:
+    result = parse_poe_status(
+        f"Status and Counters - Port Power Status for port 1/24\nPower Enable : Yes\nDetection Status : {status}\n",
+        "1/24",
+    )
+    assert result.enabled is True
+    assert result.status == status
+
+
+def test_poe_response_for_another_port_is_rejected() -> None:
+    with pytest.raises(CollectionFailure):
+        parse_poe_status(
+            "Status and Counters - Port Power Status for port 25\nPower Enable : No", "24"
+        )
+
+
+def test_duplicate_invalid_power_enable_field_is_rejected() -> None:
+    with pytest.raises(CollectionFailure):
+        parse_poe_status(
+            "Status and Counters - Port Power Status for port 24\n"
+            "Power Enable : No\nPower Enable : invalid\n",
+            "24",
+        )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "Detection Status : Unknown\n",
+        "Detection Status : Disabled\nDetection Status : Unknown\n",
+        "Power : -1 W\n",
+        "Power : unreadable\n",
+        "Power : 0 W\nPower : unreadable\n",
+    ],
+)
+def test_present_but_invalid_poe_fields_are_not_silently_ignored(extra: str) -> None:
+    with pytest.raises(CollectionFailure):
+        parse_poe_status(
+            "Status and Counters - Port Power Status for port 24\nPower Enable : No\n" + extra,
+            "24",
+        )
+
+
+def test_unexpected_value_error_is_not_displayed(setup: Any, monkeypatch: Any) -> None:
+    service, d, _ = setup
+
+    def broken_read(self: Session) -> str:
+        raise ValueError("synthetic sensitive detail")
+
+    monkeypatch.setattr(Session, "read_interfaces", broken_read)
+    with pytest.raises(CollectionFailure) as error:
+        inspect(service, d)
+    assert "sensitive" not in error.value.safe_message
+    assert all(session.closed for session in d.sessions)
+
+
+def test_concurrent_inspection_is_rejected_before_another_connection(
+    setup: Any,
+    monkeypatch: Any,
+) -> None:
+    service, d, _ = setup
+    entered, release = threading.Event(), threading.Event()
+    failures: list[BaseException] = []
+    original_probe = d.probe
+
+    def blocked_probe(target: DeviceTarget, *, timeout: float = 15.0) -> HostKeyObservation:
+        entered.set()
+        assert release.wait(3)
+        return original_probe(target, timeout=timeout)
+
+    monkeypatch.setattr(d, "probe", blocked_probe)
+
+    def run() -> None:
+        try:
+            inspect(service, d)
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    try:
+        assert entered.wait(3)
+        with pytest.raises(ValueError, match="진행 중"):
+            inspect(service, d)
+        assert d.probes == 0
+    finally:
+        release.set()
+        thread.join(3)
+    assert not thread.is_alive()
+    assert failures == []
+    assert d.probes == 1
+
+
+def test_failed_new_inspection_invalidates_old_snapshot(setup: Any) -> None:
+    service, d, _ = setup
+    snapshot = inspect(service, d)
+    with pytest.raises(ValueError):
+        service.inspect(TARGET, "1-2", CREDENTIALS, approve_host_key=lambda check: True)
+    with pytest.raises(ValueError):
+        service.apply(
+            snapshot, PortAction.DISABLE, CREDENTIALS, confirmation=snapshot.confirmation_text
+        )
+    assert not d.mutations
+
+
+@pytest.mark.parametrize("kind", ["model", "malformed"])
+def test_prewrite_identity_or_output_failure_cannot_mutate(setup: Any, kind: str) -> None:
+    service, d, _ = setup
+    snapshot = inspect(service, d)
+    if kind == "model":
+        d.sku = "JL999A"
+    else:
+        d.malformed = True
+    with pytest.raises(CollectionFailure):
+        service.apply(
+            snapshot, PortAction.DISABLE, CREDENTIALS, confirmation=snapshot.confirmation_text
+        )
+    assert not d.mutations

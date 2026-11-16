@@ -5,7 +5,6 @@ import threading
 from pathlib import Path
 
 import pytest
-from tests.fakes import MODULES_2930F, RUNNING_CONFIG, ScriptedFactory, ScriptedSession
 
 from aruba2930f_backup.collector import ArubaCollector
 from aruba2930f_backup.diagnostics import decode_diagnostic_code
@@ -23,6 +22,7 @@ from aruba2930f_backup.models import (
     HostKeyObservation,
     HostKeyTrustState,
 )
+from tests.fakes import MODULES_2930F, RUNNING_CONFIG, ScriptedFactory, ScriptedSession
 
 TARGET = DeviceTarget("192.0.2.40")
 CREDENTIALS = Credentials("operator", "session-password", "enable-secret")

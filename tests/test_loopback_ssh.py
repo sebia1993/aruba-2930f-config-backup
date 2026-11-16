@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from tests.loopback_server import LoopbackArubaSSHServer, wait_for
-
 from aruba2930f_backup.collector import ArubaCollector
 from aruba2930f_backup.hostkeys import HostKeyStore, sha256_fingerprint
 from aruba2930f_backup.models import (
@@ -14,6 +12,7 @@ from aruba2930f_backup.models import (
     HostKeyObservation,
     HostKeyTrustState,
 )
+from tests.loopback_server import LoopbackArubaSSHServer, wait_for
 
 
 def test_production_ssh_stack_against_loopback_aruba_fixture(tmp_path) -> None:
