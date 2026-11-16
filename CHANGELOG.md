@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-16
+
+### 추가
+
+- 여러 스위치와 스위치별 인터페이스 목록을 등록해 IP·SSH 포트별로 묶어 보는 읽기 전용 전력 조회 창
+- 직접 입력, Excel 표/CSV 붙여넣기, 중복 대상·포트 정리와 조회 대상 JSON 저장·불러오기
+- 최대 3대의 스위치를 동시에 조회하고 한 스위치의 포트를 한 연결에서 순차 조회하는 처리
+- 전체·스위치·포트 재조회, 부분 실패 구분, 조회 중지, 포트별 측정 시각과 누락 전력 표시
+- 한 포트가 한 행인 UTF-8 BOM CSV 결과 저장과 문자열 수식 실행 방어
+
+### 변경
+
+- 전력 조회 창과 백업·단일 포트 제어의 동시 실행을 제한하고 작업 중 종료 시 취소·연결 정리를 수행
+- 조회 대상 목록에는 접속 주소·인터페이스·표시 이름만 저장하며 계정과 암호는 저장하지 않음
+
 ## [0.2.0] - 2026-11-16
 
 ### 추가
@@ -228,7 +243,8 @@
 - 자격증명과 장비 목록을 세션에만 유지하고 운영 로그에서 민감정보 제거
 - 실제 2930F 미검증 및 미서명 바이너리임을 사전릴리즈에 명시
 
-[Unreleased]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.6...v0.1.7

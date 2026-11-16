@@ -5,11 +5,11 @@
 
 **ArubaOS-Switch 기반 Aruba 2930F 여러 대의 `running-config`를 SSH로 일괄 수집하는 Windows용 네트워크 자동화 도구입니다.** 백업은 읽기 전용이며, 별도 **포트 제어** 창에서 단일 인터페이스의 PoE 전원과 통신을 끄고 켤 수 있습니다.
 
-> **v0.2.0 사전릴리즈부터 단일 포트의 PoE 전원 OFF/ON과 포트 Down/Up을 제공합니다.** 기존 v0.1.8 배포 ZIP에는 포함되지 않습니다. [포트 제어 사용 안내](docs/PORT_CONTROL_KO.md)에서 동작과 한계를 확인하십시오.
+> **v0.3.0 사전릴리즈부터 여러 스위치·포트의 전력을 스위치별로 묶어 조회하고, 대상 목록을 저장·불러오기 할 수 있습니다.** [전력 조회 안내](docs/POE_QUERY_KO.md)에서 표 붙여넣기와 CSV 저장을 확인하십시오. v0.2.0의 [단일 포트 제어](docs/PORT_CONTROL_KO.md)도 계속 제공합니다.
 
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
-> 현재 버전은 **v0.2.0 사전릴리즈**입니다. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 배포 파일과 해당 버전의 검증 결과는 GitHub Releases 및 Actions에서 확인하십시오. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다. v0.2.0에는 RSA/SHA-1 차단 보완이 포함되며 Paramiko 의존성 감사 예외는 유지됩니다. [의존성 감사 예외](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)의 배포 경계를 확인하십시오.
+> 현재 버전은 **v0.3.0 사전릴리즈**입니다. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 배포 파일과 해당 버전의 검증 결과는 GitHub Releases 및 Actions에서 확인하십시오. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다. v0.2.0의 RSA/SHA-1 차단 보완을 유지하며 Paramiko 의존성 감사 예외도 유지됩니다. [의존성 감사 예외](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)의 배포 경계를 확인하십시오.
 
 ## 포트폴리오 요약
 
@@ -110,7 +110,7 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 
 ## 실행 화면
 
-[화면별 사용 흐름](docs/USAGE_SCREENSHOTS_KO.md)에서 입력 → SSH 지문 확인 → 완료·실패 해석을 4단계로 확인할 수 있습니다. 현재 앱 위젯에 합성 상태를 넣은 Windows 캡처이며 실제 장비 수집 결과가 아닙니다. 캡처 소스 SHA와 도구는 가이드에 기록했습니다.
+[화면별 사용 흐름](docs/USAGE_SCREENSHOTS_KO.md)에서 백업 입력 → SSH 지문 확인 → 완료·실패 해석과 다중 포트 전력 조회 화면을 확인할 수 있습니다. 앱 위젯에 합성 상태를 넣어 Qt offscreen으로 렌더링했으며 실제 장비 수집 결과가 아닙니다. 캡처 환경·소스 SHA·도구는 가이드에 기록했습니다.
 
 아래 이미지는 **문서용 가상 IP와 가상 장비명만 사용해 프로그램 자체에서 생성한 예시 화면**입니다. 실제 운영망 주소, 계정, 설정 정보는 포함하지 않습니다.
 
@@ -137,6 +137,7 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 | Windows x64 | 지원 | 배포 ZIP 기준 |
 | 다른 Aruba 모델 | 미지원 | 2930F 외 장비는 차단 |
 | 단일 포트 PoE/통신 제어 | v0.2.0부터 제공 | 별도 제어 창에서 대상 확인 후 실행 |
+| 다중 스위치·포트 전력 조회 | v0.3.0부터 제공 | 지정 포트 조회·묶음 표시·대상 목록 재사용·CSV |
 | 설정 복원 및 그 밖의 구성 변경 | 미지원 | 백업 경로는 읽기 전용 |
 
 ### 검증 현황
@@ -157,12 +158,12 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 
 ## 빠른 시작
 
-1. GitHub **Releases**에서 `Aruba2930FConfigBackup_v0.2.0_windows_x64.zip`을 받습니다.
+1. GitHub **Releases**에서 `Aruba2930FConfigBackup_v0.3.0_windows_x64.zip`을 받습니다.
 2. 함께 제공되는 `.sha256` 파일로 ZIP 해시를 확인합니다.
 
 ```powershell
-Get-FileHash .\Aruba2930FConfigBackup_v0.2.0_windows_x64.zip -Algorithm SHA256
-Get-Content .\Aruba2930FConfigBackup_v0.2.0_windows_x64.zip.sha256
+Get-FileHash .\Aruba2930FConfigBackup_v0.3.0_windows_x64.zip -Algorithm SHA256
+Get-Content .\Aruba2930FConfigBackup_v0.3.0_windows_x64.zip.sha256
 ```
 
 3. ZIP 전체를 쓰기 가능한 로컬 폴더에 압축 해제합니다.
@@ -172,6 +173,22 @@ Get-Content .\Aruba2930FConfigBackup_v0.2.0_windows_x64.zip.sha256
 7. 완료 후 장비별 TXT와 `result.xlsx`를 확인합니다.
 
 > EXE만 ZIP에서 따로 꺼내 실행하지 마십시오. 현재 사전릴리즈는 Authenticode 서명이 없어 Windows SmartScreen 경고가 표시될 수 있습니다.
+
+## 여러 스위치·포트의 전력 조회
+
+메인 화면의 **포트 전력 조회…**에서 IP·SSH 포트·인터페이스 목록을 한 행씩 등록합니다.
+예를 들어 A 스위치에는 `12,24`, B 스위치에는 `3,7,10`을 지정하면 각 스위치에서
+등록된 포트만 조회합니다. 같은 IP의 다른 SSH 접속 포트는 별도 묶음입니다.
+
+1. **스위치 추가** 또는 **엑셀 붙여넣기**로 대상을 등록합니다.
+2. 공통 SSH 계정·암호와 필요한 Enable 암호를 입력합니다.
+3. **전체 조회**를 누르고 처음 접속하는 스위치의 SSH 지문을 확인합니다.
+4. 스위치별 묶음을 펼쳐 포트의 현재 W, 링크·PoE 상태와 조회 시각을 확인합니다.
+5. **목록 저장 / 목록 불러오기**로 IP·포트 구성을 재사용하고 **CSV 저장**으로 결과를 남깁니다.
+
+목록 파일에는 계정·암호를 저장하지 않습니다. 최대 3대 동시 접속, 한 스위치 안에서는
+순차 조회이며 값 누락·미지원·실패를 실제 0 W와 구분합니다. 수동 재조회와 중지를
+지원합니다. 자세한 입력 형식과 제한은 [POE_QUERY_KO.md](docs/POE_QUERY_KO.md)에 있습니다.
 
 ## 포트 제어
 
@@ -283,6 +300,7 @@ show running-config
 |---|---|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 프로그램 구성, 수집 단계, 결과 생성 흐름 |
 | [PORT_CONTROL_KO.md](docs/PORT_CONTROL_KO.md) | 단일 포트 PoE/통신 제어, 실행 확인, 결과와 이력 |
+| [POE_QUERY_KO.md](docs/POE_QUERY_KO.md) | 다중 스위치·포트 묶음 조회, 대상 목록 저장, CSV |
 | [VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md) | 자동/실장비 검증 항목, 합격 기준, 검증 기록 |
 | [SSH_AND_SAFETY.md](docs/SSH_AND_SAFETY.md) | 프롬프트, `no page`, 모델 식별, SSH 알고리즘, 안전 경계 |
 | [DEPENDENCY_AUDIT_EXCEPTIONS_KO.md](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md) | Paramiko 감사 예외, 보완 통제, 재검토 기한과 제거 조건 |

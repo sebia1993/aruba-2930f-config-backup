@@ -31,6 +31,7 @@ def _smoke_test() -> int:
 
     from .developer_inspector import DeveloperInspectorController
     from .gui import MainWindow
+    from .poe_query_gui import PoEQueryDialog
 
     app = QApplication.instance()
     if app is None:
@@ -42,8 +43,12 @@ def _smoke_test() -> int:
     try:
         window.show()
         app.processEvents()
-        window.close()
+        query_dialog = PoEQueryDialog(window)
+        query_dialog.show()
+        app.processEvents()
+        query_dialog.close()
     finally:
+        window.close()
         developer_inspector.close()
     print(json.dumps({"application": "Aruba2930FConfigBackup", "version": __version__, "ok": True}))
     return 0

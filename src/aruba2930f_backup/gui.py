@@ -76,6 +76,7 @@ from .storage import (
 _GUI_SOURCE_PATH = "src/aruba2930f_backup/gui.py"
 
 if TYPE_CHECKING:
+    from .poe_query_gui import PoEQueryDialog
     from .port_control_gui import PortControlDialog
 
 
@@ -1085,6 +1086,7 @@ class MainWindow(QMainWindow):
         self._pending_diagnostic_counts: dict[str, int] = {}
         self._diagnostic_dialog: DiagnosticCodesDialog | None = None
         self._port_control_dialog: PortControlDialog | None = None
+        self._poe_query_dialog: PoEQueryDialog | None = None
         self._closing_after_cancel = False
         self._close_retry_scheduled = False
         self._run_finalize_pending = False
@@ -1182,6 +1184,10 @@ class MainWindow(QMainWindow):
         self.port_control_button.setObjectName("portControlButton")
         self.port_control_button.clicked.connect(self._open_port_control)
         options_layout.addWidget(self.port_control_button, 1, 2)
+        self.poe_query_button = QPushButton("포트 전력 조회…", options_group)
+        self.poe_query_button.setObjectName("poeQueryButton")
+        self.poe_query_button.clicked.connect(self._open_poe_query)
+        options_layout.addWidget(self.poe_query_button, 3, 2)
         options_layout.setColumnStretch(1, 1)
         outer.addWidget(options_group)
 
@@ -1355,6 +1361,13 @@ class MainWindow(QMainWindow):
                 "단일 스위치 포트의 PoE 전원과 통신 사용 설정을 제어하는 창을 엽니다.",
             ),
             (
+                self.poe_query_button,
+                "포트 전력 조회 버튼",
+                "POE-QUERY-OPEN",
+                "메인 화면 > 실행 옵션",
+                "스위치별 포트 목록의 전력을 읽기 전용으로 조회하는 창을 엽니다.",
+            ),
+            (
                 self.start_button,
                 "백업 시작 버튼",
                 "BACKUP-START",
@@ -1500,7 +1513,11 @@ class MainWindow(QMainWindow):
         self._launch_backup(targets_override=self._retry_exhausted_targets)
 
     def _launch_backup(self, *, targets_override: tuple[str, ...] | None = None) -> None:
-        if self._thread is not None:
+        if (
+            self._thread is not None
+            or self._poe_query_dialog is not None
+            or self._port_control_dialog is not None
+        ):
             return
         if self._service is None:
             try:
@@ -1821,7 +1838,12 @@ class MainWindow(QMainWindow):
     @Slot()
     def _retry_close_after_cancel(self) -> None:
         self._close_retry_scheduled = False
-        if self._thread is not None or self._cancel_thread_is_alive() or self._run_finalize_pending:
+        if (
+            self._thread is not None
+            or self._cancel_thread_is_alive()
+            or self._run_finalize_pending
+            or (self._poe_query_dialog is not None and self._poe_query_dialog.is_busy)
+        ):
             self._schedule_close_retry()
             return
         self._cancel_thread = None
@@ -1841,6 +1863,7 @@ class MainWindow(QMainWindow):
             self.browse_button,
             self.trust_keys_button,
             self.port_control_button,
+            self.poe_query_button,
         ):
             widget.setEnabled(not running)
         self.start_button.setEnabled(not running)
@@ -1856,7 +1879,11 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _open_port_control(self) -> None:
-        if self._thread is not None or self._port_control_dialog is not None:
+        if (
+            self._thread is not None
+            or self._port_control_dialog is not None
+            or self._poe_query_dialog is not None
+        ):
             return
         from .port_control_gui import PortControlDialog
 
@@ -1874,6 +1901,33 @@ class MainWindow(QMainWindow):
             dialog.exec()
         finally:
             self._port_control_dialog = None
+            dialog.deleteLater()
+
+    @Slot()
+    def _open_poe_query(self) -> None:
+        if (
+            self._thread is not None
+            or self._port_control_dialog is not None
+            or self._poe_query_dialog is not None
+        ):
+            return
+        from .poe_query_gui import PoEQueryDialog
+
+        dialog = PoEQueryDialog(
+            self,
+            initial_ips=tuple(
+                line.strip() for line in self.ip_input.toPlainText().splitlines() if line.strip()
+            ),
+            ssh_port=self.port_input.value(),
+            username=self.username_input.text(),
+            password=self.password_input.text(),
+            enable_password=self.enable_password_input.text(),
+        )
+        self._poe_query_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            self._poe_query_dialog = None
             dialog.deleteLater()
 
     @Slot()
@@ -1910,6 +1964,14 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._poe_query_dialog is not None:
+            if self._poe_query_dialog.is_busy:
+                self._closing_after_cancel = True
+                self._poe_query_dialog.reject()
+                self._schedule_close_retry()
+                event.ignore()
+                return
+            self._poe_query_dialog.reject()
         if self._port_control_dialog is not None:
             if self._port_control_dialog.is_busy:
                 self._port_control_dialog.reject()

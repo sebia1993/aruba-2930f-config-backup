@@ -24,6 +24,7 @@ from aruba2930f_backup import __version__
 from aruba2930f_backup.gui import HostKeyApprovalDialog, MainWindow
 from aruba2930f_backup.models import (
     DeviceTarget,
+    ErrorCode,
     HostKeyCheck,
     HostKeyObservation,
     HostKeyTrustState,
@@ -161,6 +162,69 @@ def _block_network(*_args: object, **_kwargs: object) -> None:
     raise RuntimeError("Documentation capture forbids network connections")
 
 
+def _save_poe_query(output: Path) -> None:
+    from aruba2930f_backup.poe_query_gui import PoEQueryDialog
+    from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
+    from aruba2930f_backup.port_control import PortSnapshot
+
+    app, window = _prepare_window()
+    groups = (
+        PoETarget(DeviceTarget("192.0.2.10"), ("12", "24"), "점검 A"),
+        PoETarget(DeviceTarget("192.0.2.20", 2222), ("3", "7"), "점검 B"),
+    )
+    dialog = PoEQueryDialog(window, username="netops-demo")
+    dialog.resize(1240, 900)
+    dialog._replace_targets(groups)
+    dialog._build_results(groups)
+    examples = (
+        (groups[0], "12", "Up", "Delivering", 14.8, "2026-11-16T12:30:01+00:00"),
+        (groups[0], "24", "Down", "Searching", 0.0, "2026-11-16T12:30:02+00:00"),
+        (groups[1], "3", "Up", "Delivering", 17.2, "2026-11-16T12:30:01+00:00"),
+    )
+    for group, interface, link, supply, watts, observed in examples:
+        snapshot = PortSnapshot(
+            group.target,
+            interface,
+            f"LAB-2930F-{group.target.ip.rsplit('.', 1)[1]}",
+            "Aruba 2930F",
+            True,
+            link,
+            True,
+            supply,
+            watts,
+            observed_at=observed,
+        )
+        dialog._on_result(
+            PoEQueryResult(
+                group,
+                interface,
+                QueryStatus.OK,
+                snapshot=snapshot,
+                finished_at=observed,
+            )
+        )
+    dialog._on_result(
+        PoEQueryResult(
+            groups[1],
+            "7",
+            QueryStatus.FAILED,
+            error_code=ErrorCode.COMMAND_TIMEOUT,
+            message="문서용 가상 시간 초과 — 실제 장비 조회 없음",
+            finished_at="2026-11-16T12:30:22+00:00",
+        )
+    )
+    dialog.result_tree.setCurrentItem(dialog.result_tree.topLevelItem(0).child(0))
+    dialog.progress_bar.setValue(100)
+    dialog.status_label.setText("문서용 가상 결과 · 스위치 2대 / 포트 4개 · 실제 장비 접속 없음")
+    dialog.show()
+    app.processEvents()
+    if not dialog.grab().save(str(output / "poe-query.png"), "PNG"):
+        raise RuntimeError("전력 조회 화면 PNG 저장에 실패했습니다.")
+    dialog.reject()
+    window.close()
+    app.processEvents()
+
+
 def _verify_image(path: Path) -> None:
     if not path.is_file():
         raise RuntimeError(f"문서 화면 파일이 생성되지 않았습니다: {path}")
@@ -192,6 +256,7 @@ def main() -> int:
     _save_result_example(output)
     _save_host_key_review(output)
     _save_mixed_result(output)
+    _save_poe_query(output)
 
     for path in sorted(output.glob("*.png")):
         _verify_image(path)
@@ -201,7 +266,7 @@ def main() -> int:
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "capture_os": platform.platform(),
         "python": platform.python_version(),
-        "method": "Actual PySide6 MainWindow and HostKeyApprovalDialog; Qt offscreen; synthetic widget state",
+        "method": "Actual PySide6 MainWindow, HostKeyApprovalDialog and PoEQueryDialog; Qt offscreen; synthetic widget state",
         "network": "socket connection attempts blocked; no collection or device access",
         "workflow_run": os.environ.get("GITHUB_RUN_ID", "local"),
         "images": [
