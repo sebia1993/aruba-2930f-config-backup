@@ -72,7 +72,7 @@ def test_conflicting_labels_reject_whole_merge() -> None:
         '192.0.2.1,22,1"broken',
         "192.0.2.1,22,1\nIP,SSH port,interfaces",
         " ",
-        "x" * 100_001,
+        pytest.param("x" * 100_001, id="oversized-paste"),
     ],
 )
 def test_malformed_or_oversized_paste_rejected(text: str) -> None:
