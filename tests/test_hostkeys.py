@@ -233,7 +233,7 @@ def test_parallel_store_instances_do_not_lose_independent_approvals(tmp_path) ->
         store.approve([check])
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        tasks = [pool.submit(approve, store, check) for store, check in zip((first, second), checks)]
+        tasks = [pool.submit(approve, store, check) for store, check in zip((first, second), checks, strict=True)]
         for task in tasks:
             task.result(timeout=5)
     approved = {key.endpoint for key in HostKeyStore(path).list_approved()}

@@ -10,7 +10,7 @@ import socket
 import tempfile
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -56,7 +56,7 @@ def default_host_key_store_path() -> Path:
 
 
 @contextmanager
-def _locked_host_key_file(path: Path):
+def _locked_host_key_file(path: Path) -> Iterator[None]:
     """Serialize the complete read/modify/replace transaction across processes.
 
     An in-process RLock cannot prevent two Windows EXE instances from losing
