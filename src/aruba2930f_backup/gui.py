@@ -1047,7 +1047,7 @@ class TrustedKeysDialog(QDialog):
             return
         try:
             self._remove_callback(tuple(self._entries[row] for row in rows))
-        except (CollectionFailure, OSError, ValueError):
+        except CollectionFailure, OSError, ValueError:
             QMessageBox.warning(
                 self,
                 "SSH 장비 지문 제거 실패",
@@ -1987,7 +1987,7 @@ class MainWindow(QMainWindow):
             return
         try:
             entries = tuple(list_method())
-        except (CollectionFailure, OSError, ValueError):
+        except CollectionFailure, OSError, ValueError:
             QMessageBox.warning(
                 self,
                 "SSH 장비 지문 조회 실패",

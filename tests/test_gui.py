@@ -1097,8 +1097,11 @@ def test_corrupt_hostkey_store_shows_operator_warning(
 
     warnings: list[str] = []
     monkeypatch.setattr(
-        QMessageBox, "warning",
-        lambda parent, title, message, *args: warnings.append(title) or QMessageBox.StandardButton.Ok,
+        QMessageBox,
+        "warning",
+        lambda parent, title, message, *args: (
+            warnings.append(title) or QMessageBox.StandardButton.Ok
+        ),
     )
     window = MainWindow(service=BrokenKeys(tmp_path))
     window._manage_trusted_keys()
@@ -1114,12 +1117,13 @@ def test_hostkey_remove_failure_preserves_dialog_and_explains_error(
     from PySide6.QtWidgets import QMessageBox
 
     warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
     monkeypatch.setattr(
-        QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes
-    )
-    monkeypatch.setattr(
-        QMessageBox, "warning",
-        lambda parent, title, message, *args: warnings.append(title) or QMessageBox.StandardButton.Ok,
+        QMessageBox,
+        "warning",
+        lambda parent, title, message, *args: (
+            warnings.append(title) or QMessageBox.StandardButton.Ok
+        ),
     )
 
     def fail_remove(entries: Sequence[object]) -> None:

@@ -322,7 +322,7 @@ class NetmikoSSHSession:
                     prefix = clean_tail[: pager_match.start()]
                     if prefix.endswith("\n"):
                         prefix = prefix[:-1]
-                    raw_output = prefix + clean[len(clean_tail):]
+                    raw_output = prefix + clean[len(clean_tail) :]
                     candidate_since = None
                     connection.write_channel(" ")
                 elif _ends_with_prompt(clean, prompt):

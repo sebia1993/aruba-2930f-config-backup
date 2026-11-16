@@ -547,14 +547,18 @@ def test_credentials_repr_never_contains_secrets() -> None:
     assert "enable-value" not in rendered
 
 
-def test_running_config_banner_containing_prompt_waits_for_closing_delimiter(tmp_path: Path) -> None:
+def test_running_config_banner_containing_prompt_waits_for_closing_delimiter(
+    tmp_path: Path,
+) -> None:
     connection = FakeConnection(
-        {"show running-config": [
-            "show running-config\nbanner motd ^\nedge-lab#",
-            "",
-            "\n^\ninterface 24\n   name AP-uplink\n",
-            "edge-lab#",
-        ]}
+        {
+            "show running-config": [
+                "show running-config\nbanner motd ^\nedge-lab#",
+                "",
+                "\n^\ninterface 24\n   name AP-uplink\n",
+                "edge-lab#",
+            ]
+        }
     )
     session = make_session(tmp_path, connection)
     session.connect()
