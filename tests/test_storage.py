@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 from datetime import datetime
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 
 from aruba2930f_backup.storage import (
     FilenameMode,
+    backup_storage_permission_warnings,
     cleanup_partial_files,
     create_run_directory,
     device_config_path,
@@ -215,3 +218,49 @@ def test_atomic_write_failure_removes_partial_file(
 
 def test_cleanup_missing_directory_is_noop(tmp_path: Path) -> None:
     assert cleanup_partial_files(tmp_path / "missing") == 0
+
+
+def test_run_directory_and_config_are_owner_only_on_posix(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("Windows uses NTFS ACL checks, not POSIX chmod")
+    directory = create_run_directory(tmp_path)
+    stored = write_config_atomic(directory / "config.txt", "hostname edge\n")
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+    assert stat.S_IMODE(stored.path.stat().st_mode) == 0o600
+    assert backup_storage_permission_warnings(directory, platform="posix") == ()
+
+
+def test_windows_acl_audit_warns_on_broad_read_access_without_changing_acls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aruba2930f_backup.storage as storage
+
+    called: list[list[str]] = []
+
+    def fake_icacls(command: list[str], **kwargs: object) -> SimpleNamespace:
+        called.append(command)
+        assert kwargs["check"] is False
+        assert kwargs["timeout"] == 5
+        return SimpleNamespace(
+            returncode=0,
+            stdout=str(tmp_path) + " BUILTIN\\\\Users:(I)(OI)(CI)(RX)\n",
+        )
+
+    monkeypatch.setattr(storage.subprocess, "run", fake_icacls)
+    result = backup_storage_permission_warnings(tmp_path, platform="nt")
+    assert len(result) == 1 and "ACL" in result[0]
+    assert called == [["icacls", str(tmp_path)]]
+
+
+def test_windows_acl_unknown_is_warning_not_false_security_assurance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aruba2930f_backup.storage as storage
+
+    def inaccessible(*_args: object, **_kwargs: object) -> None:
+        raise OSError("unavailable")
+
+    monkeypatch.setattr(storage.subprocess, "run", inaccessible)
+    assert "자동 확인하지 못했습니다" in backup_storage_permission_warnings(
+        tmp_path, platform="nt"
+    )[0]
