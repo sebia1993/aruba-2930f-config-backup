@@ -164,8 +164,9 @@ def test_requested_pairs_use_one_session_and_fresh_status_per_port(tmp_path: Pat
     for connection in network.connections:
         assert connection.disconnected
         expected = ["show version", "show modules"]
+        expected.append("show interfaces brief")
         for port in network.ports[connection.endpoint]:
-            expected += ["show interfaces brief", f"show power-over-ethernet {port}"]
+            expected.append(f"show power-over-ethernet {port}")
         expected += [
             f"show lldp info remote-device {p}" for p in network.ports[connection.endpoint]
         ]
