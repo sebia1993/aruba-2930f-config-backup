@@ -126,7 +126,8 @@ def _parse_table(text: str, delimiter: str) -> tuple[PoETarget, ...]:
     # A header declares column meaning for the whole block. Without a header,
     # the first row establishes the same schema; never reinterpret later rows.
     basic_schema = len(rows[0]) == 2
-    if _is_header(rows[0]):
+    has_header = _is_header(rows[0])
+    if has_header:
         rows = rows[1:]
     if not rows:
         raise ValueError("조회할 대상을 입력하세요.")
@@ -136,7 +137,7 @@ def _parse_table(text: str, delimiter: str) -> tuple[PoETarget, ...]:
             "한 표에는 IP / 인터페이스 2열과 SSH 포트를 포함한 3~4열을 섞을 수 없습니다."
         )
     parsed: list[PoETarget] = []
-    for line_number, row in enumerate(rows, start=1):
+    for line_number, row in enumerate(rows, start=2 if has_header else 1):
         try:
             target = (
                 make_target(row[0], 22, row[1])

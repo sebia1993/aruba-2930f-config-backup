@@ -153,9 +153,7 @@ def test_off_result_unknown_never_automatically_restarts_mutation() -> None:
     plan = prepare_cycle_off([measured("1"), measured("2")])
     session = PowerCycleSession(plan)
     session.mark_running(plan)
-    session.record_off(
-        batch_result(plan, (BatchStatus.VERIFIED, BatchStatus.UNVERIFIED))
-    )
+    session.record_off(batch_result(plan, (BatchStatus.VERIFIED, BatchStatus.UNVERIFIED)))
     assert session.phase is PowerCyclePhase.INTERRUPTED
     assert session.on_plan is None
     with pytest.raises(BatchControlError):
@@ -218,3 +216,29 @@ def test_unrelated_plan_and_disallowed_phase_do_not_advance_cycle() -> None:
 def test_more_than_300_ports_must_be_split_into_explicit_jobs() -> None:
     with pytest.raises(BatchControlError, match="300"):
         prepare_cycle_off([measured(str(i)) for i in range(1, 302)])
+
+
+def test_off_results_out_of_order_cannot_arm_the_on_phase() -> None:
+    plan = prepare_cycle_off([measured("1"), measured("2")])
+    session = PowerCycleSession(plan)
+    session.mark_running(plan)
+    outcome = batch_result(plan, (BatchStatus.VERIFIED, BatchStatus.VERIFIED))
+    switched = BatchOutcome(plan, tuple(reversed(outcome.results)), outcome.journal_path)
+    session.record_off(switched)
+    assert session.phase is PowerCyclePhase.INTERRUPTED
+    assert session.off_verified == ()
+    assert session.on_plan is None
+
+
+def test_on_results_out_of_order_cannot_be_reported_as_recovered() -> None:
+    session = off_success(2)
+    session.mark_off_requeried()
+    lookup = {
+        (TARGET.endpoint, port): measured(port, enabled=False)
+        for port in ("1", "2")
+    }
+    on = session.prepare_on(lookup)
+    session.mark_running(on)
+    outcome = batch_result(on, (BatchStatus.VERIFIED, BatchStatus.VERIFIED))
+    session.record_on(BatchOutcome(on, tuple(reversed(outcome.results)), outcome.journal_path))
+    assert session.phase is PowerCyclePhase.INTERRUPTED

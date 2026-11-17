@@ -323,7 +323,10 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         roots = (
             [parent]
             if parent is not None
-            else [self.result_tree.topLevelItem(i) for i in range(self.result_tree.topLevelItemCount())]
+            else [
+                self.result_tree.topLevelItem(i)
+                for i in range(self.result_tree.topLevelItemCount())
+            ]
         )
         return [
             row
@@ -407,9 +410,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         items = [
             item
             for item in self.result_tree.selectedItems()
-            if item.parent() is not None
-            and not item.isHidden()
-            and not item.parent().isHidden()
+            if item.parent() is not None and not item.isHidden() and not item.parent().isHidden()
         ]
         action = PortAction(str(self.action_combo.currentData()))
         eligible = 0
@@ -434,11 +435,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         if self.is_busy:
             raise ValueError("조회·포트 제어 중에는 대상 목록을 변경할 수 없습니다.")
         parsed = parse_pasted_targets(text)
-        existing = (
-            self._validated_targets()
-            if not replace and self._has_target_text()
-            else ()
-        )
+        existing = self._validated_targets() if not replace and self._has_target_text() else ()
         groups = merge_targets((*existing, *parsed))
         self._replace_targets(groups)
 
@@ -448,9 +445,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             return
         dialog = PortTargetPasteDialog(
             self,
-            existing_targets=lambda: (
-                self._validated_targets() if self._has_target_text() else ()
-            ),
+            existing_targets=lambda: self._validated_targets() if self._has_target_text() else (),
         )
         try:
             if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -591,7 +586,9 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         layout.addLayout(row2)
         self.cycle_button = QPushButton("PoE 재가동 시작 (OFF → 확인 → ON)", group)
         self.cycle_button.setObjectName("unifiedPowerCycle")
-        self.cycle_button.setToolTip("OFF와 ON을 자동 연속 실행하지 않습니다. 각 단계는 별도로 승인합니다.")
+        self.cycle_button.setToolTip(
+            "OFF와 ON을 자동 연속 실행하지 않습니다. 각 단계는 별도로 승인합니다."
+        )
         self.cycle_button.clicked.connect(self._cycle_next)
         layout.addWidget(self.cycle_button)
         self.cycle_status = QLabel(
@@ -728,12 +725,17 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             QMessageBox.warning(self, "접속 정보 확인", "SSH 사용자 이름과 비밀번호를 확인하세요.")
             return
         session = self._cycle
-        if session is not None and session.phase in (
-            PowerCyclePhase.OFF_READY,
-            PowerCyclePhase.ON_READY,
-        ) and (
-            plan.plan_id == session.off_plan.plan_id
-            or (session.on_plan is not None and plan.plan_id == session.on_plan.plan_id)
+        if (
+            session is not None
+            and session.phase
+            in (
+                PowerCyclePhase.OFF_READY,
+                PowerCyclePhase.ON_READY,
+            )
+            and (
+                plan.plan_id == session.off_plan.plan_id
+                or (session.on_plan is not None and plan.plan_id == session.on_plan.plan_id)
+            )
         ):
             try:
                 session.mark_running(plan)
@@ -995,7 +997,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.cycle_button.setText(labels[phase])
         self.cycle_button.setEnabled(
             not self.is_busy
-            and phase not in (
+            and phase
+            not in (
                 PowerCyclePhase.OFF_READY,
                 PowerCyclePhase.OFF_RUNNING,
                 PowerCyclePhase.ON_READY,

@@ -85,19 +85,21 @@ class PowerCycleSession:
         ):
             raise BatchControlError("PoE OFF 작업 결과와 계획이 일치하지 않습니다.")
         self.off_journal = outcome.journal_path
+        if len(outcome.results) != len(self.off_plan.targets) or any(
+            result.target != target
+            for result, target in zip(outcome.results, self.off_plan.targets, strict=True)
+        ):
+            self.phase = PowerCyclePhase.INTERRUPTED
+            return
         if any(result.status is BatchStatus.UNVERIFIED for result in outcome.results):
             self.phase = PowerCyclePhase.INTERRUPTED
             return
         self.off_verified = tuple(
-            result.target
-            for result in outcome.results
-            if result.status is BatchStatus.VERIFIED
+            result.target for result in outcome.results if result.status is BatchStatus.VERIFIED
         )
         self.excluded = len(self.off_plan.targets) - len(self.off_verified)
         self.phase = (
-            PowerCyclePhase.REQUERY_OFF
-            if self.off_verified
-            else PowerCyclePhase.INTERRUPTED
+            PowerCyclePhase.REQUERY_OFF if self.off_verified else PowerCyclePhase.INTERRUPTED
         )
 
     def off_requery_groups(self) -> tuple[PoETarget, ...]:
@@ -148,10 +150,17 @@ class PowerCycleSession:
         ):
             raise BatchControlError("PoE ON 작업 결과와 계획이 일치하지 않습니다.")
         self.on_journal = outcome.journal_path
-        if any(
-            result.status not in (BatchStatus.VERIFIED, BatchStatus.UNCHANGED)
-            for result in outcome.results
-        ) or len(outcome.results) != len(self.on_plan.targets):
+        if (
+            len(outcome.results) != len(self.on_plan.targets)
+            or any(
+                result.target != target
+                for result, target in zip(outcome.results, self.on_plan.targets, strict=True)
+            )
+            or any(
+                result.status not in (BatchStatus.VERIFIED, BatchStatus.UNCHANGED)
+                for result in outcome.results
+            )
+        ):
             self.phase = PowerCyclePhase.INTERRUPTED
         else:
             self.phase = PowerCyclePhase.REQUERY_ON

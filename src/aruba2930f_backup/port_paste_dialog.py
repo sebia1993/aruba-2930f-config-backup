@@ -62,8 +62,7 @@ class PortTargetPasteDialog(QDialog):
         self.pasted_text = QPlainTextEdit(self)
         self.pasted_text.setObjectName("pasteTwoColumnText")
         self.pasted_text.setPlaceholderText(
-            "스위치 IP\t포트\n192.0.2.10\t12\n192.0.2.10\t24\n"
-            "192.0.2.20\t1/12,1/24"
+            "스위치 IP\t포트\n192.0.2.10\t12\n192.0.2.10\t24\n192.0.2.20\t1/12,1/24"
         )
         self.pasted_text.setMinimumHeight(135)
         layout.addWidget(self.pasted_text, 2)
