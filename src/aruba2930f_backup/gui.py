@@ -2023,13 +2023,15 @@ class MainWindow(QMainWindow):
         from .port_control_gui import PortControlDialog
 
         targets = self.ip_input.toPlainText().strip().splitlines()
+        provider = self.session_credential_provider
         dialog = PortControlDialog(
             self,
             ip=targets[0].strip() if len(targets) == 1 else "",
             ssh_port=self.port_input.value(),
-            username=self.username_input.text(),
-            password=self.password_input.text(),
-            enable_password=self.enable_password_input.text(),
+            username=self.username_input.text() if provider is None else "",
+            password=self.password_input.text() if provider is None else "",
+            enable_password=self.enable_password_input.text() if provider is None else "",
+            credential_provider=provider,
         )
         self._port_control_dialog = dialog
         try:
@@ -2048,16 +2050,18 @@ class MainWindow(QMainWindow):
             return
         from .unified_port_gui import UnifiedPortManagementDialog
 
+        provider = self.session_credential_provider
         dialog = UnifiedPortManagementDialog(
             self,
             initial_ips=tuple(
                 line.strip() for line in self.ip_input.toPlainText().splitlines() if line.strip()
             ),
             ssh_port=self.port_input.value(),
-            username=self.username_input.text(),
-            password=self.password_input.text(),
-            enable_password=self.enable_password_input.text(),
+            username=self.username_input.text() if provider is None else "",
+            password=self.password_input.text() if provider is None else "",
+            enable_password=self.enable_password_input.text() if provider is None else "",
         )
+        dialog.session_credential_provider = provider
         self._poe_query_dialog = dialog
         try:
             dialog.exec()
