@@ -160,3 +160,21 @@ def test_batch_execution_clears_stale_ap_and_power_until_requery(
     assert (TARGET.endpoint, "1") not in dialog._results
     assert (TARGET.endpoint, "2") in dialog._results
     dialog.close()
+
+
+def test_unified_tree_accepts_300_switches_with_14400_ports(app: QApplication) -> None:
+    dialog = UnifiedPortManagementDialog(username="operator", password="fixture")
+    groups = tuple(
+        PoETarget(
+            DeviceTarget(
+                f"{'192.0.2' if i < 250 else '198.51.100'}.{i % 250 + 1}", 22
+            ),
+            tuple(str(number) for number in range(1, 49)),
+        )
+        for i in range(300)
+    )
+    dialog._build_results(groups)
+    assert len(dialog._groups) == 300
+    assert len(dialog._parents) == 300
+    assert len(dialog._items) == 14_400
+    dialog.close()
