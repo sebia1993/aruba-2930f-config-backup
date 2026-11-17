@@ -47,9 +47,9 @@ from .poe_cycle import (
     PowerCycleSession,
     prepare_cycle_off,
 )
+from .poe_power import LLDPStatus
 from .poe_query_gui import PoEQueryDialog, PoEQueryServiceProtocol
 from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
-from .poe_power import LLDPStatus
 from .poe_quick_review_dialog import QuickPoEReviewDialog
 from .poe_targets import merge_targets, parse_pasted_targets
 from .port_control import PortAction
