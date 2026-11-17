@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QApplication, QMessageBox, QSplitter
+from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QSplitter
 
 from aruba2930f_backup.manager_gui import (
     NetworkManagerWindow,
@@ -78,11 +78,14 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     window = make_window(app)
     assert window.navigate(2)
     port = window.port_page
-    splitter = port.findChild(QSplitter, "portResultDetailSplitter")
-    assert splitter is not None
-    assert splitter.count() == 2
+    # No side panel steals width from the switch/port status table.
+    assert port.findChild(QSplitter, "portResultDetailSplitter") is None
+    assert port.findChild(QScrollArea, "portDetailsAndControl") is None
     assert port.result_tree.isVisible()
+    assert port.result_tree.parentWidget() is port
+    assert port.result_tree.width() >= 700
     assert port.search_input.isVisible()
+    assert port.findChild(QScrollArea, "poeDetailsScroll").isHidden()
     assert not port.action_combo.isVisible()
     assert not port.run_button.isVisible()
     assert window.port_advanced_toggle.isVisible()
@@ -93,10 +96,13 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     assert window.port_target_scroll.isVisible()
     assert port.targets_table.isVisible()
     assert port.username_input.isVisible()
+    assert not window.port_advanced_scroll.isVisible()
     window.port_advanced_toggle.click()
+    assert window.port_advanced_scroll.isVisible()
     assert port.action_combo.isVisible()
     assert port.run_button.isVisible()
     window.port_advanced_toggle.click()
+    assert not window.port_advanced_scroll.isVisible()
     assert not port.run_button.isVisible()
     window.close()
 
