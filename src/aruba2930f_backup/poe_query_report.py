@@ -14,6 +14,7 @@ from pathlib import Path
 from .poe_power import AP535_REFERENCE_ID, AP535_REFERENCE_URL
 from .poe_query_models import PoEQueryResult, QueryStatus
 from .poe_targets import _atomic_write_bytes
+from .port_power_diagnosis import diagnose_port_power
 
 _FIELDS = (
     "ip",
@@ -51,6 +52,8 @@ _FIELDS = (
     "negotiation",
     "reference_id",
     "reference_url",
+    "port_poe_state",
+    "port_poe_explanation",
 )
 
 
@@ -145,6 +148,8 @@ def write_query_csv(path: Path, results: Sequence[PoEQueryResult]) -> None:
             result.error_code.value if result.error_code else "",
             result.message,
             *_detail_cells(result),
+            diagnose_port_power(snapshot).label,
+            diagnose_port_power(snapshot).reason,
         )
         writer.writerow(_safe_string(cell) if isinstance(cell, str) else cell for cell in row)
     _atomic_write_bytes(path, output.getvalue().encode("utf-8-sig"))
