@@ -114,9 +114,9 @@ def _render(version: str, body: str) -> str:
         # 0.4+ supports guarded bulk port operations; keep release notes
         # consistent with the actual operator workflow.
         configuration_limit = configuration_limit.replace(
-            "- 포트 제어는 한 번에 한 포트만 지원합니다. 자동 PoE 재시작과 일괄 제어는 제공하지 않습니다.\\n",
+            "- 포트 제어는 한 번에 한 포트만 지원합니다. 자동 PoE 재시작과 일괄 제어는 제공하지 않습니다.\n",
             "- 포트 통합 관리는 한 실행 계획에서 최대 300개 포트를 변경할 수 있습니다. "
-            "일괄 PoE OFF·포트 Down은 LLDP AP-535 확인 대상만 허용합니다.\\n",
+            "일괄 PoE OFF·포트 Down은 LLDP AP-535 확인 대상만 허용합니다.\n",
         )
         configuration_limit = configuration_limit.replace(
             "자동 반복 측정·일괄 전원 제어는 포함하지 않습니다.",
