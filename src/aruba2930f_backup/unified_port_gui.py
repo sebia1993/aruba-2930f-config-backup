@@ -211,12 +211,103 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.resize(1200, 920)
         self.result_tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.result_tree.itemSelectionChanged.connect(self._update_control_buttons)
+        self._build_search_panel()
         self._build_control_panel()
         self._set_busy(False)
 
     @property
     def is_busy(self) -> bool:
         return super().is_busy or getattr(self, "_batch_thread", None) is not None
+
+    def _build_search_panel(self) -> None:
+        """Operator-oriented search without editing the underlying target list."""
+        container = QGroupBox("포트 결과 검색·필터", self)
+        row = QHBoxLayout(container)
+        self.search_input = QLineEdit(container)
+        self.search_input.setObjectName("unifiedSearch")
+        self.search_input.setPlaceholderText(
+            "스위치 IP / 호스트네임 / 포트 / AP 이름 / 별칭 검색"
+        )
+        row.addWidget(self.search_input, 3)
+        self.filter_combo = QComboBox(container)
+        self.filter_combo.setObjectName("unifiedStatusFilter")
+        for label, code in (
+            ("전체", "all"),
+            ("조회 실패", "failed"),
+            ("전력 확인 필요", "unknown"),
+            ("PoE 꺼짐", "off"),
+        ):
+            self.filter_combo.addItem(label, code)
+        row.addWidget(self.filter_combo, 1)
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(180)
+        self._filter_timer.timeout.connect(self._apply_search_filter)
+        self.search_input.textChanged.connect(lambda _value: self._filter_timer.start())
+        self.filter_combo.currentIndexChanged.connect(
+            lambda _index: self._filter_timer.start()
+        )
+        layout = cast(QVBoxLayout, self.layout())
+        layout.insertWidget(layout.indexOf(self.result_tree), container)
+
+    @Slot()
+    def _apply_search_filter(self) -> None:
+        term = self.search_input.text().strip().casefold()
+        wanted = str(self.filter_combo.currentData())
+        for group in self._groups:
+            endpoint = group.target.endpoint
+            parent = self._parents[endpoint]
+            switch_name = parent.text(0)
+            visible = False
+            for interface in group.interfaces:
+                key = (endpoint, interface)
+                item = self._items[key]
+                result = self._results.get(key)
+                neighbors = result.lldp.neighbors if result and result.lldp else ()
+                names = " ".join(neighbor.system_name for neighbor in neighbors)
+                match_text = " ".join(
+                    (
+                        endpoint,
+                        switch_name,
+                        group.label,
+                        interface,
+                        names,
+                        item.text(1),
+                    )
+                )
+                matched_term = not term or term in match_text.casefold()
+                if wanted == "failed":
+                    matched_status = result is not None and (
+                        result.status.value == "failed"
+                        or (
+                            result.lldp is not None
+                            and result.lldp.status.value == "failed"
+                        )
+                    )
+                elif wanted == "unknown":
+                    matched_status = result is not None and (
+                        result.assessment is None
+                        or result.assessment.label == "확인 필요"
+                    )
+                elif wanted == "off":
+                    matched_status = (
+                        result is not None
+                        and result.snapshot is not None
+                        and result.snapshot.poe_enabled is False
+                    )
+                else:
+                    matched_status = True
+                shown = matched_term and matched_status
+                item.setHidden(not shown)
+                visible = visible or shown
+            parent.setHidden(not visible)
+
+    def _apply_result(self, value: object) -> None:
+        super()._apply_result(value)
+        if hasattr(self, "search_input") and (
+            self.search_input.text() or self.filter_combo.currentData() != "all"
+        ):
+            self._filter_timer.start()
 
     def _build_control_panel(self) -> None:
         group = QGroupBox("다중 포트 제어 · 작업 대기열", self)
