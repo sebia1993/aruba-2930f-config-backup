@@ -85,7 +85,8 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     assert port.findChild(QSplitter, "portResultDetailSplitter") is None
     assert port.findChild(QScrollArea, "portDetailsAndControl") is None
     assert port.result_tree.isVisible()
-    assert port.result_tree.parentWidget() is port
+    assert port.result_tree.parentWidget() is not port
+    assert window.port_vertical_splitter.count() == 2
     assert port.result_tree.width() >= 700
     assert port.search_input.isVisible()
     assert port.findChild(QScrollArea, "poeDetailsScroll").isHidden()
@@ -94,6 +95,8 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     assert window.port_advanced_toggle.isVisible()
     assert port.quick_off_button.isVisible()
     assert port.quick_on_button.isVisible()
+    assert window.port_target_scroll.isVisible()
+    window.port_target_toggle.click()
     assert not window.port_target_scroll.isVisible()
     window.port_target_toggle.click()
     assert window.port_target_scroll.isVisible()
@@ -292,8 +295,11 @@ def test_port_paste_entry_is_visible_without_expanding_ssh_settings(
     window = make_window(app)
     window.navigate(2)
     assert window.port_page.paste_button.isVisible()
-    assert not window.port_target_scroll.isVisible()
+    assert window.port_target_scroll.isVisible()
     assert "2열" in window.port_page.paste_button.text()
+    window.port_target_toggle.click()
+    assert not window.port_target_scroll.isVisible()
+    assert window.port_page.paste_button.isVisible()
     assert window.port_page.quick_off_button.isVisible()
     assert window.port_page.quick_on_button.isVisible()
     assert not window.port_page.quick_cycle_button.isVisible()
@@ -437,4 +443,23 @@ def test_common_ssh_account_dialog_is_shared_and_reprompts_after_clear(
     assert not window._ssh_credentials.configured
     assert window._require_ssh_credentials().username == "network-operator"
     assert len(calls) == 3
+    window.close()
+
+
+def test_port_vertical_splitter_expands_input_and_preserves_results(app: QApplication) -> None:
+    from PySide6.QtCore import Qt
+
+    window = make_window(app)
+    window.navigate(2)
+    port = window.port_page
+    assert window.port_target_toggle.isChecked()
+    assert window.port_target_scroll.isVisible()
+    assert window.port_vertical_splitter.orientation() == Qt.Orientation.Vertical
+    assert port.result_tree.parentWidget() is not None
+    window.port_target_toggle.setChecked(False)
+    assert not window.port_target_scroll.isVisible()
+    assert port.result_tree.isVisible()
+    window.port_target_toggle.setChecked(True)
+    assert window.port_target_scroll.isVisible()
+    assert port.result_tree.isVisible()
     window.close()
