@@ -554,9 +554,7 @@ def test_quick_off_starts_with_an_internal_plan_but_no_extra_plan_button(
             dispatched.append(dialog._batch_plan.action)
 
     monkeypatch.setattr(dialog, "_run_batch", capture)
-    monkeypatch.setattr(
-        QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted
-    )
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
     dialog.quick_off_button.click()
     assert dispatched == [PortAction.POE_OFF]
     assert dialog._batch_plan is not None
@@ -592,9 +590,7 @@ def test_quick_bar_exposes_only_independent_poe_off_and_on(
             executed.append(dialog._batch_plan.action)
 
     monkeypatch.setattr(dialog, "_run_batch", capture)
-    monkeypatch.setattr(
-        QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted
-    )
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
     dialog.quick_off_button.click()
     dialog.quick_on_button.click()
     assert executed == [PortAction.POE_OFF, PortAction.POE_ON]
@@ -676,9 +672,7 @@ def test_quick_single_port_off_executes_without_typed_confirmation(
         raise AssertionError("Quick action must not open EXECUTE N dialog")
 
     monkeypatch.setattr(BatchConfirmationDialog, "exec", forbid_typed_confirmation)
-    monkeypatch.setattr(
-        QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted
-    )
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
     dialog.quick_off_button.click()
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and dialog._batch_thread is not None:
@@ -831,9 +825,7 @@ def test_failed_lldp_requeries_only_for_off_not_on(
     dialog._set_checked_keys({(TARGET.endpoint, "2")})
     requested: list[tuple[PoETarget, ...]] = []
     monkeypatch.setattr(dialog, "_start", lambda groups, _auth: requested.append(groups))
-    monkeypatch.setattr(
-        QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Rejected
-    )
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Rejected)
     dialog.quick_off_button.click()
     assert requested and requested[0][0].interfaces == ("2",)
     dialog.stop()
@@ -896,8 +888,11 @@ def test_requery_finishes_with_partial_review_and_only_ready_plan(
             assert len(groups) == 1
             assert groups[0].interfaces == ("2",)
             row = PoEQueryResult(
-                groups[0], "2", QueryStatus.FAILED,
-                message="연결 오류 (가상)", complete=True,
+                groups[0],
+                "2",
+                QueryStatus.FAILED,
+                message="연결 오류 (가상)",
+                complete=True,
             )
             if callable(on_result):
                 on_result(row)
@@ -922,10 +917,12 @@ def test_requery_finishes_with_partial_review_and_only_ready_plan(
     def capture_execution(*, quick: bool = False) -> None:
         assert quick
         assert dialog._batch_plan is not None
-        executed.append((
-            dialog._batch_plan.action,
-            tuple(item.interface for item in dialog._batch_plan.targets),
-        ))
+        executed.append(
+            (
+                dialog._batch_plan.action,
+                tuple(item.interface for item in dialog._batch_plan.targets),
+            )
+        )
 
     monkeypatch.setattr(QuickPoEReviewDialog, "exec", approve_partial)
     monkeypatch.setattr(dialog, "_run_batch", capture_execution)
@@ -948,9 +945,7 @@ def test_approved_bulk_off_does_not_ask_duplicate_confirmation(
     dialog = setup_dialog()
     dialog._batch_controller = OfflineBatch()  # type: ignore[assignment]
     dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
-    monkeypatch.setattr(
-        QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted
-    )
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
 
     def forbid_duplicate_popup(*_args: object) -> None:
         raise AssertionError("The operator already approved the complete target review")

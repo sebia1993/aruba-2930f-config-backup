@@ -44,7 +44,8 @@ class QuickPoEReviewDialog(QDialog):
         layout = QVBoxLayout(self)
         self.summary = QLabel(
             f"요청: {title} · 전체 {selected}포트 · 실행 가능 {len(ready)}포트 · "
-            f"제외 {len(excluded)}포트", self
+            f"제외 {len(excluded)}포트",
+            self,
         )
         self.summary.setObjectName("quickPoEReviewSummary")
         self.summary.setTextFormat(Qt.TextFormat.PlainText)
@@ -54,8 +55,11 @@ class QuickPoEReviewDialog(QDialog):
             "표의 실행 가능 포트에만 변경 명령이 전송됩니다. 제외 포트는 변경하지 않습니다. "
             "실행 직전 SSH 지문·호스트네임·포트 설정을 다시 검증하며, "
             "결과가 불확실하면 자동 재전송하지 않습니다. "
-            + ("PoE OFF는 연결된 AP 서비스를 중단시킬 수 있습니다." if action is PortAction.POE_OFF else
-               "PoE ON 후에도 AP 등록 및 무선 서비스 정상화 여부를 별도 확인해야 합니다."),
+            + (
+                "PoE OFF는 연결된 AP 서비스를 중단시킬 수 있습니다."
+                if action is PortAction.POE_OFF
+                else "PoE ON 후에도 AP 등록 및 무선 서비스 정상화 여부를 별도 확인해야 합니다."
+            ),
             self,
         )
         message.setTextFormat(Qt.TextFormat.PlainText)
@@ -110,8 +114,7 @@ class QuickPoEReviewDialog(QDialog):
 
     def _update_approval(self, _checked: bool = False) -> None:
         self.approve_button.setEnabled(
-            self._ready_count > 0
-            and (self._blocked_count == 0 or self.exclusion_ack.isChecked())
+            self._ready_count > 0 and (self._blocked_count == 0 or self.exclusion_ack.isChecked())
         )
 
     def _approve(self) -> None:

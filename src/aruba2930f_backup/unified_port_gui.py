@@ -228,9 +228,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self._cycle_query_stage = ""
         # A quick action may refresh *only* missing observations. No port
         # command is ever sent as a consequence of the read-only refresh.
-        self._quick_requery_pending: (
-            tuple[PortAction, frozenset[tuple[str, str]]] | None
-        ) = None
+        self._quick_requery_pending: tuple[PortAction, frozenset[tuple[str, str]]] | None = None
         self._quick_review_approved_plan_id: str | None = None
         # Only explicitly checked ports can enter a mutation plan.
         self._checked_port_keys: set[tuple[str, str]] = set()
@@ -826,9 +824,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.quick_stop_button.setEnabled(worker is not None and not worker.cancel_event.is_set())
 
     @staticmethod
-    def _needs_quick_readonly_requery(
-        row: PoEQueryResult | None, action: PortAction
-    ) -> bool:
+    def _needs_quick_readonly_requery(row: PoEQueryResult | None, action: PortAction) -> bool:
         """Only missing/incomplete read evidence is refreshed, never a configuration."""
         if (
             row is None
@@ -849,7 +845,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             return
         if len(self._checked_port_keys) > 300:
             QMessageBox.warning(
-                self, "PoE 작업 범위",
+                self,
+                "PoE 작업 범위",
                 "일괄 제어는 최대 300포트입니다. 범위를 나눠 다시 선택하세요.",
             )
             return
@@ -892,9 +889,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             "완료 후 실행 대상 확인창을 표시합니다."
         )
 
-    def _review_quick_action(
-        self, action: PortAction, keys: frozenset[tuple[str, str]]
-    ) -> None:
+    def _review_quick_action(self, action: PortAction, keys: frozenset[tuple[str, str]]) -> None:
         """Never drop an unverified checkbox without displaying its reason."""
         if self._selection_locked() or self._checked_port_keys != set(keys):
             self.status_label.setText(
