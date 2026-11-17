@@ -546,6 +546,7 @@ def test_quick_off_starts_with_an_internal_plan_but_no_extra_plan_button(
     dialog = setup_dialog()
     dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
     dispatched: list[PortAction] = []
+
     def capture(*, quick: bool = False) -> None:
         assert quick
         if dialog._batch_plan is not None:
@@ -567,6 +568,7 @@ def test_quick_cycle_still_requires_distinct_off_on_operator_approvals(
     dialog = setup_dialog()
     dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
     reviewed: list[PortAction] = []
+
     def capture(*, quick: bool = False) -> None:
         assert quick
         if dialog._batch_plan is not None:
