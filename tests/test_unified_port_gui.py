@@ -238,9 +238,7 @@ def test_change_action_after_plan_forces_new_explicit_approval(app: QApplication
     dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
     dialog._prepare_batch()
     assert dialog._batch_plan is not None
-    dialog.action_combo.setCurrentIndex(
-        dialog.action_combo.findData(PortAction.POE_OFF.value)
-    )
+    dialog.action_combo.setCurrentIndex(dialog.action_combo.findData(PortAction.POE_OFF.value))
     assert dialog._batch_plan is None
     assert not dialog.run_button.isEnabled()
     dialog.close()
