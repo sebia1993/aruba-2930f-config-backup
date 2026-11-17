@@ -750,7 +750,8 @@ def test_admin_disabled_filter_is_distinct_from_poe_off(
     second = dialog._items[(TARGET.endpoint, "2")]
     assert first.isHidden()
     assert not second.isHidden()
-    assert second.text(6).startswith("포트 Disable")
+    assert second.text(3).startswith("포트 Disable")
+    assert second.text(5) == "PoE 공급 중"
     dialog.close()
 
 
@@ -765,7 +766,8 @@ def test_switch_admin_disable_does_not_disable_poe_quick_buttons(
     dialog._on_result(replace(result, snapshot=replace(result.snapshot, enabled=False)))
     item = dialog._items[(TARGET.endpoint, "1")]
     item.setCheckState(0, Qt.CheckState.Checked)
-    assert "PoE 공급 중" in item.text(6)
+    assert item.text(3).startswith("포트 Disable")
+    assert item.text(5) == "PoE 공급 중"
     assert dialog.quick_on_button.isEnabled()
     assert dialog.quick_off_button.isEnabled()
     dialog.close()
