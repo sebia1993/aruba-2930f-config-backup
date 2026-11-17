@@ -456,6 +456,7 @@ class NetworkManagerWindow(QMainWindow):
         )
         self.port_advanced_toggle.setCheckable(True)
         self.port_advanced_toggle.setChecked(False)
+        self.port_advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.port_advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
         self.port_advanced_toggle.toggled.connect(self._toggle_port_advanced)
         detail_layout.addWidget(self.port_advanced_toggle)
