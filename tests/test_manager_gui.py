@@ -85,7 +85,8 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     assert port.findChild(QSplitter, "portResultDetailSplitter") is None
     assert port.findChild(QScrollArea, "portDetailsAndControl") is None
     assert port.result_tree.isVisible()
-    assert port.result_tree.parentWidget() is port
+    assert port.result_tree.parentWidget() is not port
+    assert window.port_vertical_splitter.count() == 2
     assert port.result_tree.width() >= 700
     assert port.search_input.isVisible()
     assert port.findChild(QScrollArea, "poeDetailsScroll").isHidden()
@@ -94,6 +95,8 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     assert window.port_advanced_toggle.isVisible()
     assert port.quick_off_button.isVisible()
     assert port.quick_on_button.isVisible()
+    assert window.port_target_scroll.isVisible()
+    window.port_target_toggle.click()
     assert not window.port_target_scroll.isVisible()
     window.port_target_toggle.click()
     assert window.port_target_scroll.isVisible()
