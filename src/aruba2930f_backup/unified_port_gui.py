@@ -618,7 +618,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                         interface,
                         names,
                         item.text(1),
-                        item.text(6),
+                        item.text(3),
+                        item.text(5),
                     )
                 )
                 matched_term = not term or term in match_text.casefold()
@@ -1083,7 +1084,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 # Never present a pre-mutation AP identity or power value as current.
                 item.setText(1, "재조회 필요")
                 item.setText(2, "—")
-                item.setText(3, "확인 필요")
+                item.setText(3, "재조회 필요")
                 self._results.pop(key, None)
         self.batch_status.setText(
             f"일괄 작업: {self._batch_count}/{len(self._batch_plan.targets) if self._batch_plan else '?'}개 처리 · "
@@ -1134,7 +1135,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 if item is not None:
                     item.setText(1, "재조회 필요")
                     item.setText(2, "—")
-                    item.setText(3, "확인 필요")
+                    item.setText(3, "재조회 필요")
                     item.setText(5, "일괄 작업 실패 · 결과 불확실")
                     item.setToolTip(5, "작업 이력을 확인하고 수동 재조회하세요.")
         self._batch_outcome = None
@@ -1421,7 +1422,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             if key in self._items:
                 self._items[key].setText(1, "재조회 필요")
                 self._items[key].setText(2, "—")
-                self._items[key].setText(3, "확인 필요")
+                self._items[key].setText(3, "재조회 필요")
                 self._items[key].setText(5, "단일 제어 종료 · 재조회 필요")
             self._batch_plan = None
             self._update_control_buttons()
