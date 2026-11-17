@@ -960,3 +960,25 @@ def test_approved_bulk_off_does_not_ask_duplicate_confirmation(
     assert dialog._batch_outcome is not None
     assert len(dialog._batch_outcome.results) == 2
     dialog.close()
+
+
+def test_large_quick_review_requires_explicit_bulk_ack_without_repeated_prompts(
+    app: QApplication,
+) -> None:
+    ready = [queried(str(port)) for port in range(1, 12)]
+    dialog = QuickPoEReviewDialog(PortAction.POE_OFF, ready, [])
+    try:
+        assert dialog.large_action_ack.isVisible() is False or dialog.large_action_ack.isEnabled()
+        assert dialog.approve_button.isEnabled() is False
+        dialog.large_action_ack.setChecked(True)
+        assert dialog.approve_button.isEnabled() is True
+    finally:
+        dialog.close()
+
+
+def test_small_quick_review_keeps_existing_single_approval(app: QApplication) -> None:
+    dialog = QuickPoEReviewDialog(PortAction.POE_OFF, [queried("1")], [])
+    try:
+        assert dialog.approve_button.isEnabled() is True
+    finally:
+        dialog.close()
