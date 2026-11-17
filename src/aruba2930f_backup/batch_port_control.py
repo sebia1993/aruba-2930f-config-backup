@@ -57,6 +57,8 @@ class BatchTarget:
     fingerprint: str = field(repr=False)
     ap_name: str = ""
     confirmed_ap535: bool = False
+    expected_chassis_id: str = ""
+    expected_remote_port_id: str = ""
 
     def __post_init__(self) -> None:
         validate_interface(self.interface)
@@ -156,6 +158,10 @@ def validate_batch_target(
         row.lldp.neighbors if row.lldp is not None and row.lldp.status is LLDPStatus.OK else ()
     )
     confirmed = len(neighbors) == 1 and neighbors[0].model == "AP-535"
+    if action in (PortAction.POE_OFF, PortAction.DISABLE) and confirmed and (
+        not neighbors[0].chassis_id or not neighbors[0].port_id
+    ):
+        raise BatchControlError("AP-535의 LLDP Chassis ID와 Port ID를 확인해야 일괄 차단할 수 있습니다.")
     if action in (PortAction.POE_OFF, PortAction.DISABLE) and not (
         confirmed or allow_unverified_ap
     ):
@@ -172,6 +178,8 @@ def validate_batch_target(
         snapshot.fingerprint,
         ap_name=neighbors[0].system_name if len(neighbors) == 1 else "",
         confirmed_ap535=confirmed,
+        expected_chassis_id=neighbors[0].chassis_id if confirmed else "",
+        expected_remote_port_id=neighbors[0].port_id if confirmed else "",
     )
 
 
@@ -392,9 +400,15 @@ class BatchPortController:
             # The pending intent is persisted BEFORE the single-port service
             # is allowed to send any mutation. Crash recovery never replays it.
             journal.append(index, "intent", action=action.value)
-            result = controller.apply(
-                snapshot, action, credentials, confirmation=snapshot.confirmation_text
-            )
+            # A fresh, same-session LLDP identity check happens inside apply,
+            # immediately before OFF/Down. A stale AP model alone is not enough.
+            apply_kwargs: dict[str, object] = {"confirmation": snapshot.confirmation_text}
+            if action in (PortAction.POE_OFF, PortAction.DISABLE) and item.confirmed_ap535:
+                apply_kwargs["expected_lldp_identity"] = (
+                    item.expected_chassis_id,
+                    item.expected_remote_port_id,
+                )
+            result = controller.apply(snapshot, action, credentials, **apply_kwargs)
             if result.status == "verified":
                 state = BatchStatus.VERIFIED
             elif result.status == "unchanged":
