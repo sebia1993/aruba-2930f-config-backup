@@ -1,0 +1,42 @@
+name: Reviewed Chat release request
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/release-requests/*.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Verify reviewed main and dispatch existing Release
+    if: github.repository == 'sebia1993/aruba-2930f-config-backup'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+      checks: read
+    steps:
+      - name: Check out approved main with parent
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Validate release-request commit and dispatch guarded release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/prepare_release_request.py
