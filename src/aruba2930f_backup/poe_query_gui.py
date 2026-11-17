@@ -45,11 +45,6 @@ from .poe_power import (
     PowerEvidence,
 )
 from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
-from .port_power_diagnosis import (
-    diagnose_port_power,
-    poe_supply_label,
-    port_admin_link_label,
-)
 from .poe_query_report import write_query_csv
 from .poe_targets import (
     load_target_profile,
@@ -57,6 +52,11 @@ from .poe_targets import (
     merge_targets,
     parse_pasted_targets,
     save_target_profile,
+)
+from .port_power_diagnosis import (
+    diagnose_port_power,
+    poe_supply_label,
+    port_admin_link_label,
 )
 
 
