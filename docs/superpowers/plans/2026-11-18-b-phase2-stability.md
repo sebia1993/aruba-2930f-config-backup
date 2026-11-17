@@ -27,4 +27,12 @@
 - 파일: `docs/SSH_AND_SAFETY.md`, `docs/PORT_OPERATOR_FLOW_KO.md`, `docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md`, 위 신규 설계/계획.
 - 검증: Windows CI의 Ruff/format/mypy/pytest+coverage/pip-audit/Windows 빌드 및 스모크가 success인지 GitHub Actions에서 확인.
 - 리뷰: PR #46/#45/#47과 코드·정책 중복 검토, 자체 최종 코드 리뷰 (subagent 도구 없음 명시).
-- 산출: 후속 Draft PR을 main 대상으로 생성, 검증 데이터와 현장검증 미수행 범위 기록; 기존 PR들 보존, 미병합·미릴리스.
+- 산출: 기존 PR #47을 base로 하는 stacked Draft PR #49 생성. 검증 데이터·현장검증 미수행 범위 기록, 기존 PR 보존, `main` 미병합·미릴리스.
+
+
+### 검증 기록 및 병합 주의사항
+- 수정 전 RED Windows CI #44190588436: 의도한 7개 안전·성능 회귀 테스트가 실패했고 기존 테스트 1,080개 통과. 원인 확인 후 수정.
+- 최종 코드 Windows CI [#44192091018](https://github.com/sebia1993/aruba-2930f-config-backup/actions/runs/44192091018): Python 3.14.10, **1,087 passed / 1 skipped**, 총 커버리지 **86.68%**, Ruff/mypy/기존 감사 예외 포함 의존성 검사 및 Windows 포터블 EXE 빌드/스모크/ZIP 검증 통과.
+- GitHub PR #48(별도 병렬 작업)은 PR #49와 일부 파일(최초 비교 시 12개)이 겹침. PR #46 내용도 양쪽에 포함됨. 따라서 PR #48과 #49를 순서 없이 모두 main에 병합하지 않고 변경별 중복·안전성/테스트를 대조한 후 통합 필요.
+- 본 PR의 Base는 PR #47 개발 브랜치이고, PR #45/#46/#47/#48 원본 브랜치는 변경하지 않음. main 및 릴리스는 사용자 승인 전 유지.
+- 자동 검증은 실제 Aruba 2930F의 LLDP TTL/PoE/현장 서비스 검증을 대체하지 않음. Link Up도 LLDP 수신 최신성을 보증하지 않음.
