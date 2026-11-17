@@ -1,0 +1,402 @@
+"""Fail-closed, durable batch port changes over independently verified single-port services.
+
+Read-only PoE/LLDP discovery and mutation deliberately remain separate transports.
+A batch plan is immutable; every job gets a fresh inspect/apply pair and a
+write-ahead event before the existing single-port adapter may send a mutation.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+import uuid
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
+from pathlib import Path
+from typing import Protocol
+
+from .models import CollectionFailure, Credentials, DeviceTarget, HostKeyCheck
+from .poe_power import LLDPStatus
+from .poe_query_models import PoEQueryResult, QueryStatus
+from .port_control import (
+    PortAction,
+    PortControlService,
+    PortOperationResult,
+    PortSnapshot,
+    validate_interface,
+)
+from .storage import default_output_directory
+
+MAX_BATCH_ACTIONS = 300
+BATCH_CHECKPOINT = 10
+
+
+class BatchStatus(StrEnum):
+    VERIFIED = "verified"
+    UNCHANGED = "unchanged"
+    PREFLIGHT_FAILED = "preflight_failed"
+    UNVERIFIED = "unverified"
+    CANCELLED = "cancelled"
+    PAUSED = "paused"
+
+
+class BatchControlError(ValueError):
+    """Operator-safe error from preparing or recording an intended mutation."""
+
+
+@dataclass(frozen=True, slots=True)
+class BatchTarget:
+    target: DeviceTarget
+    interface: str
+    expected_hostname: str
+    expected_enabled: bool
+    expected_poe_enabled: bool | None
+    fingerprint: str = field(repr=False)
+    ap_name: str = ""
+    confirmed_ap535: bool = False
+
+    def __post_init__(self) -> None:
+        validate_interface(self.interface)
+        if not self.expected_hostname or self.expected_hostname == "확인 불가":
+            raise BatchControlError("장비 호스트네임을 확인한 포트만 일괄 제어할 수 있습니다.")
+        if not self.fingerprint.startswith("SHA256:"):
+            raise BatchControlError("승인된 SSH 지문이 없는 대상은 일괄 제어할 수 없습니다.")
+
+
+@dataclass(frozen=True, slots=True)
+class BatchPlan:
+    plan_id: str
+    created_at: str
+    action: PortAction
+    targets: tuple[BatchTarget, ...]
+
+    def __post_init__(self) -> None:
+        try:
+            uuid.UUID(self.plan_id)
+        except (ValueError, AttributeError) as exc:
+            raise BatchControlError("작업 ID가 올바르지 않습니다.") from exc
+        if not isinstance(self.action, PortAction):
+            raise BatchControlError("지원하지 않는 포트 제어 동작입니다.")
+        if not self.targets or len(self.targets) > MAX_BATCH_ACTIONS:
+            raise BatchControlError("일괄 작업 대상은 1~300개 포트여야 합니다.")
+        keys = [(t.target.endpoint, t.interface) for t in self.targets]
+        if len(set(keys)) != len(keys):
+            raise BatchControlError("같은 스위치·포트를 한 작업에 중복 등록할 수 없습니다.")
+
+
+@dataclass(frozen=True, slots=True)
+class BatchResult:
+    target: BatchTarget
+    status: BatchStatus
+    message: str
+    after: PortSnapshot | None = None
+    audit_path: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BatchOutcome:
+    plan: BatchPlan
+    results: tuple[BatchResult, ...]
+    journal_path: Path
+
+    @property
+    def counts(self) -> dict[str, int]:
+        return {
+            status.value: sum(result.status is status for result in self.results)
+            for status in BatchStatus
+        }
+
+
+class SinglePortController(Protocol):
+    def inspect(
+        self,
+        target: DeviceTarget,
+        interface: str,
+        credentials: Credentials,
+        *,
+        approve_host_key: Callable[[HostKeyCheck], bool],
+    ) -> PortSnapshot: ...
+
+    def apply(
+        self,
+        snapshot: PortSnapshot,
+        action: PortAction,
+        credentials: Credentials,
+        *,
+        confirmation: str,
+    ) -> PortOperationResult: ...
+
+
+def create_batch_plan(
+    results: Sequence[PoEQueryResult],
+    action: PortAction,
+    *,
+    allow_unverified_ap: bool = False,
+) -> BatchPlan:
+    """Bind a concrete, already-observed endpoint/port list to one fixed action.
+
+    OFF and Down require a single manufacturer-identified AP-535 by default.
+    An explicit per-job/manual override may be considered in a later release;
+    it is not enabled from the normal batch GUI to avoid uplink mass outages.
+    """
+    if not isinstance(action, PortAction):
+        raise BatchControlError("지원하지 않는 포트 제어 동작입니다.")
+    if not results or len(results) > MAX_BATCH_ACTIONS:
+        raise BatchControlError("한 번의 제어 계획에는 1~300개 포트만 넣을 수 있습니다.")
+    targets: list[BatchTarget] = []
+    for row in results:
+        snapshot = row.snapshot
+        if (
+            not row.complete
+            or snapshot is None
+            or row.status not in (QueryStatus.OK, QueryStatus.UNSUPPORTED)
+        ):
+            raise BatchControlError("완료된 포트 상태가 없는 행은 일괄 제어할 수 없습니다.")
+        if action.is_poe and snapshot.poe_enabled is None:
+            raise BatchControlError("PoE 미지원·확인 불가 포트에는 전원 제어를 실행할 수 없습니다.")
+        neighbors = (
+            row.lldp.neighbors
+            if row.lldp is not None and row.lldp.status is LLDPStatus.OK
+            else ()
+        )
+        confirmed = len(neighbors) == 1 and neighbors[0].model == "AP-535"
+        if action in (PortAction.POE_OFF, PortAction.DISABLE) and not (
+            confirmed or allow_unverified_ap
+        ):
+            raise BatchControlError(
+                "일괄 전원 OFF/포트 Down은 LLDP에서 AP-535로 확인된 포트만 허용합니다. "
+                "미확인 포트는 기존 단일 포트 제어에서 개별 확인하세요."
+            )
+        targets.append(
+            BatchTarget(
+                snapshot.target,
+                snapshot.interface,
+                snapshot.hostname,
+                snapshot.enabled,
+                snapshot.poe_enabled,
+                snapshot.fingerprint,
+                ap_name=neighbors[0].system_name if len(neighbors) == 1 else "",
+                confirmed_ap535=confirmed,
+            )
+        )
+    return BatchPlan(str(uuid.uuid4()), datetime.now(UTC).isoformat(), action, tuple(targets))
+
+
+class _BatchJournal:
+    """Append-only fsynced ledger; never stores passwords or Enable secrets."""
+
+    def __init__(self, path: Path, plan: BatchPlan) -> None:
+        self.path = path
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("x", encoding="utf-8", newline="\n") as handle:
+                header = {
+                    "event": "plan",
+                    "schema": 1,
+                    "plan_id": plan.plan_id,
+                    "created_at": plan.created_at,
+                    "action": plan.action.value,
+                    "items": [
+                        {
+                            "endpoint": item.target.endpoint,
+                            "interface": item.interface,
+                            "hostname": item.expected_hostname,
+                            "ap_name": item.ap_name,
+                            "confirmed_ap535": item.confirmed_ap535,
+                        }
+                        for item in plan.targets
+                    ],
+                }
+                handle.write(json.dumps(header, ensure_ascii=False) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            raise BatchControlError(
+                "작업 계획 파일을 안전하게 기록하지 못해 변경을 시작하지 않았습니다."
+            ) from exc
+
+    def append(self, index: int, event: str, **fields: object) -> None:
+        data = {
+            "event": event,
+            "index": index,
+            "timestamp": datetime.now(UTC).isoformat(),
+            **fields,
+        }
+        try:
+            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(data, ensure_ascii=False) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            raise BatchControlError(
+                "작업 이력 저장에 실패했습니다. 실행 상태가 불확실할 수 있으므로 "
+                "다음 명령을 전송하지 않습니다."
+            ) from exc
+
+
+def journal_states(path: Path) -> dict[int, str]:
+    """Read durable states without resuming or replaying an uncertain write."""
+    if path.stat().st_size > 2 * 1024 * 1024:
+        raise BatchControlError("작업 이력 파일이 예상보다 큽니다.")
+    events: list[dict[str, object]] = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise ValueError("Invalid record")
+            events.append(value)
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise BatchControlError("작업 이력을 안전하게 해석하지 못했습니다.") from exc
+    if not events or events[0].get("event") != "plan":
+        raise BatchControlError("작업 계획 기록이 없습니다.")
+    entries = events[0].get("items")
+    if not isinstance(entries, list):
+        raise BatchControlError("작업 대상 기록이 올바르지 않습니다.")
+    state = {index: "queued" for index in range(len(entries))}
+    for event in events[1:]:
+        index = event.get("index")
+        name = event.get("event")
+        if type(index) is not int or index not in state or not isinstance(name, str):
+            raise BatchControlError("작업 이력에 올바르지 않은 상태가 있습니다.")
+        if name == "intent":
+            state[index] = "result_unknown"  # May have reached the switch.
+        elif name == "result":
+            value = event.get("status")
+            state[index] = value if isinstance(value, str) else "result_unknown"
+        elif name == "preflight":
+            state[index] = "preflight"
+    return state
+
+
+class BatchPortController:
+    """Sequential mutation with per-item fresh identity check and strict checkpoints."""
+
+    def __init__(
+        self,
+        *,
+        controller_factory: Callable[[], SinglePortController] | None = None,
+        journal_directory: Path | None = None,
+        chunk_size: int = BATCH_CHECKPOINT,
+    ) -> None:
+        if type(chunk_size) is not int or not 1 <= chunk_size <= BATCH_CHECKPOINT:
+            raise ValueError("작업 확인 단위는 1~10개 포트여야 합니다.")
+        self._controller_factory = controller_factory or PortControlService
+        self._journal_directory = (
+            journal_directory or default_output_directory() / "port-control" / "batch"
+        )
+        self._chunk_size = chunk_size
+
+    def execute(
+        self,
+        plan: BatchPlan,
+        credentials: Credentials,
+        *,
+        cancel_event: threading.Event | None = None,
+        on_result: Callable[[int, BatchResult], None] | None = None,
+        continue_after_chunk: Callable[[int, int], bool] | None = None,
+    ) -> BatchOutcome:
+        cancel = cancel_event if cancel_event is not None else threading.Event()
+        journal = _BatchJournal(self._journal_directory / f"{plan.plan_id}.jsonl", plan)
+        outcomes: list[BatchResult] = []
+        halt = False
+        for index, item in enumerate(plan.targets):
+            if cancel.is_set():
+                result = BatchResult(item, BatchStatus.CANCELLED, "실행 전 사용자가 중지했습니다.")
+            elif halt:
+                result = BatchResult(item, BatchStatus.PAUSED, "이전 작업의 결과가 불확실하여 중단했습니다.")
+            elif index and index % self._chunk_size == 0:
+                can_continue = (
+                    continue_after_chunk(index, len(plan.targets))
+                    if continue_after_chunk is not None
+                    else False
+                )
+                if not can_continue or cancel.is_set():
+                    halt = True
+                    result = BatchResult(item, BatchStatus.PAUSED, "다음 작업 묶음이 승인되지 않았습니다.")
+                else:
+                    result = self._execute_one(index, item, plan.action, credentials, journal, cancel)
+            else:
+                result = self._execute_one(index, item, plan.action, credentials, journal, cancel)
+            if result.status is BatchStatus.UNVERIFIED:
+                halt = True
+            journal.append(index, "result", status=result.status.value, message=result.message)
+            outcomes.append(result)
+            if on_result is not None:
+                on_result(index, result)
+        return BatchOutcome(plan, tuple(outcomes), journal.path)
+
+    def _execute_one(
+        self,
+        index: int,
+        item: BatchTarget,
+        action: PortAction,
+        credentials: Credentials,
+        journal: _BatchJournal,
+        cancel: threading.Event,
+    ) -> BatchResult:
+        controller = self._controller_factory()
+        try:
+            snapshot = controller.inspect(
+                item.target,
+                item.interface,
+                credentials,
+                approve_host_key=lambda _check: False,
+            )
+            actual = (
+                snapshot.target,
+                snapshot.interface,
+                snapshot.hostname,
+                snapshot.fingerprint,
+                snapshot.enabled,
+                snapshot.poe_enabled,
+            )
+            expected = (
+                item.target,
+                item.interface,
+                item.expected_hostname,
+                item.fingerprint,
+                item.expected_enabled,
+                item.expected_poe_enabled,
+            )
+            if actual != expected:
+                return BatchResult(
+                    item, BatchStatus.PREFLIGHT_FAILED,
+                    "조회 이후 스위치 식별 정보 또는 포트 설정이 달라져 변경을 건너뛰었습니다.",
+                )
+            if cancel.is_set():
+                return BatchResult(item, BatchStatus.CANCELLED, "명령 전 중지 요청을 확인했습니다.")
+            journal.append(index, "preflight", status="ok")
+            # The pending intent is persisted BEFORE the single-port service
+            # is allowed to send any mutation. Crash recovery never replays it.
+            journal.append(index, "intent", action=action.value)
+            result = controller.apply(
+                snapshot, action, credentials, confirmation=snapshot.confirmation_text
+            )
+            if result.status == "verified":
+                state = BatchStatus.VERIFIED
+            elif result.status == "unchanged":
+                state = BatchStatus.UNCHANGED
+            else:
+                state = BatchStatus.UNVERIFIED
+            return BatchResult(item, state, result.message, result.after, result.audit_path)
+        except BatchControlError:
+            # A failed durable append is a hard stop: later targets must not be
+            # changed if a mutation cannot be audited reliably.
+            raise
+        except (CollectionFailure, ValueError) as exc:
+            # After an intent has been persisted, a transport exception may mean
+            # the command reached the device. Never retry or mislabel it as a
+            # harmless preflight failure.
+            if journal_states(journal.path).get(index) == "result_unknown":
+                return BatchResult(
+                    item, BatchStatus.UNVERIFIED,
+                    "변경 요청의 결과를 확인할 수 없습니다. 수동 재조회 전 다음 명령을 중단합니다.",
+                )
+            if isinstance(exc, CollectionFailure):
+                message = exc.safe_message
+            else:
+                message = "실행 전 대상 또는 현재 상태를 확인하지 못했습니다."
+            return BatchResult(item, BatchStatus.PREFLIGHT_FAILED, message)
