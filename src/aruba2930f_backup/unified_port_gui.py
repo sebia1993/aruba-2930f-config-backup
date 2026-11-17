@@ -543,7 +543,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         layout = QVBoxLayout(dialog)
         note = QLabel(
             "result_unknown은 변경 명령의 전송 여부를 확인하지 못한 상태입니다. "
-            "자동 재시도하지 말고 장비를 직접 재조회하세요.", dialog
+            "자동 재시도하지 말고 장비를 직접 재조회하세요.",
+            dialog
         )
         note.setWordWrap(True)
         layout.addWidget(note)
