@@ -407,7 +407,7 @@ def test_cycle_eligible_button_uses_ap535_and_current_poe_on_not_generic_on(
     assert dialog.action_combo.currentData() == PortAction.POE_ON.value
     dialog.select_cycle_eligible_button.click()
     assert dialog._items[(TARGET.endpoint, "1")].checkState(0) is Qt.CheckState.Checked
-    assert not dialog._items[(TARGET.endpoint, "2")].checkState(0) is Qt.CheckState.Checked
+    assert dialog._items[(TARGET.endpoint, "2")].checkState(0) is Qt.CheckState.Unchecked
     assert len(dialog._selected_rows()) == 1
     dialog.close()
 
@@ -461,7 +461,14 @@ def test_refresh_invalidates_on_plan_but_recovers_original_off_targets(
     dialog.close()
 
 
-def test_row_focus_alone_never_authorizes_a_port_mutation(app: QApplication) -> None:
+def test_row_focus_alone_never_authorizes_a_port_mutation(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *_args: QMessageBox.StandardButton.Ok,
+    )
     dialog = setup_dialog()
     dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
     assert dialog._selected_rows() == ()
@@ -558,7 +565,14 @@ def test_quick_cycle_still_requires_distinct_off_on_operator_approvals(
     dialog.close()
 
 
-def test_bulk_checkbox_selection_keeps_workflow_bound_at_300_ports(app: QApplication) -> None:
+def test_bulk_checkbox_selection_keeps_workflow_bound_at_300_ports(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *_args: QMessageBox.StandardButton.Ok,
+    )
     dialog = UnifiedPortManagementDialog(username="operator", password="test-password")
     groups = (PoETarget(TARGET, tuple(str(port) for port in range(1, 351))),)
     dialog._build_results(groups)
@@ -583,4 +597,32 @@ def test_checkbox_change_is_reverted_during_an_active_cycle(app: QApplication) -
     second.setCheckState(0, Qt.CheckState.Checked)
     assert second.checkState(0) is Qt.CheckState.Unchecked
     assert len(dialog._checked_port_keys) == 1
+    dialog.close()
+
+
+def test_missing_checked_observation_blocks_plan_instead_of_dropping_port(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
+    dialog._results.pop((TARGET.endpoint, "2"))
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, _title, message: warnings.append(message) or QMessageBox.StandardButton.Ok,
+    )
+    dialog._prepare_batch()
+    assert dialog._batch_plan is None
+    assert warnings and "임의로" in warnings[0]
+    dialog.close()
+
+
+def test_changed_target_input_clears_old_checks(app: QApplication) -> None:
+    dialog = setup_dialog()
+    dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
+    assert dialog._checked_port_keys
+    dialog.targets_table.item(0, 0).setText("192.0.2.99")
+    assert not dialog._checked_port_keys
+    assert dialog._items[(TARGET.endpoint, "1")].checkState(0) is Qt.CheckState.Unchecked
     dialog.close()
