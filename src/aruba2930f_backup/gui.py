@@ -1171,6 +1171,8 @@ class MainWindow(QMainWindow):
         self._diagnostic_dialog: DiagnosticCodesDialog | None = None
         self._port_control_dialog: PortControlDialog | None = None
         self._poe_query_dialog: PoEQueryDialog | None = None
+        # The integrated shell provides one memory-only session; standalone UI remains unchanged.
+        self.session_credential_provider: Callable[[], Credentials] | None = None
         self._closing_after_cancel = False
         self._close_retry_scheduled = False
         self._run_finalize_pending = False
@@ -1556,8 +1558,16 @@ class MainWindow(QMainWindow):
             if targets_override is not None
             else self.parse_targets(self.ip_input.toPlainText())
         )
-        username = self.username_input.text().strip()
-        password = self.password_input.text()
+        provider = self.session_credential_provider
+        if provider is None:
+            username = self.username_input.text().strip()
+            password = self.password_input.text()
+            enable_password = self.enable_password_input.text() or None
+        else:
+            credentials = provider()
+            username = credentials.username
+            password = credentials.password
+            enable_password = credentials.enable_secret
         output_text = self.output_input.text().strip()
         if not username:
             raise ValueError("사용자 이름을 입력하세요.")
@@ -1574,7 +1584,7 @@ class MainWindow(QMainWindow):
             port=self.port_input.value(),
             username=username,
             password=password,
-            enable_password=self.enable_password_input.text() or None,
+            enable_password=enable_password,
             concurrency=self.concurrency_input.value(),
             output_directory=Path(output_text).expanduser(),
             filename_mode=filename_mode,
