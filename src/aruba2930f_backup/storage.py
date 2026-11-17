@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import stat
+import subprocess
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -75,6 +77,10 @@ def create_run_directory(
             candidate.mkdir(parents=True, exist_ok=False)
         except FileExistsError:
             continue
+        # Restrict newly created run folders on POSIX. On Windows chmod does
+        # not manage NTFS DACLs; those are evaluated separately, never faked.
+        if os.name != "nt":
+            candidate.chmod(0o700)
         return candidate
 
     raise FileExistsError("하루 범위에서 사용할 수 있는 실행 폴더를 찾지 못했습니다.")
@@ -154,6 +160,8 @@ def write_config_atomic(
 
     try:
         with partial_path.open("wb") as stream:
+            if os.name != "nt":
+                os.chmod(partial_path, 0o600)
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
@@ -192,3 +200,65 @@ def cleanup_partial_files(run_directory: str | os.PathLike[str]) -> int:
             path.unlink(missing_ok=True)
             removed += 1
     return removed
+
+
+_PUBLIC_ACL_PRINCIPALS = re.compile(
+    r"(?:Everyone|Authenticated Users|BUILTIN\\Users|"
+    r"모든 사용자|인증된 사용자|기본 제공\\사용자|"
+    r"S-1-1-0|S-1-5-11|S-1-5-32-545)",
+    re.IGNORECASE,
+)
+_ACL_READ_OR_WRITE = re.compile(r"\((?:F|M|R|RX|W|WD|AD|DC|GR|GW)\)", re.IGNORECASE)
+
+
+def backup_storage_permission_warnings(
+    directory: Path, *, platform: str | None = None
+) -> tuple[str, ...]:
+    """Best-effort confidentiality audit; never claim a full Windows ACL proof.
+
+    A shared path may be intentional, so warn operators rather than silently
+    moving backups or altering corporate ACLs. On Windows use the OS ACL tool
+    without a shell. Unsupported ACL layouts are explicitly inconclusive.
+    """
+    platform = platform or os.name
+    notes: list[str] = []
+    if str(directory).startswith("\\\\"):
+        notes.append(
+            "백업 폴더가 네트워크 공유 경로입니다. 접근 가능한 계정과 공유/NTFS 권한을 확인하세요."
+        )
+    if platform == "nt":
+        try:
+            result = subprocess.run(
+                ["icacls", str(directory)],
+                capture_output=True,
+                check=False,
+                timeout=5,
+                text=True,
+                errors="replace",
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            notes.append("백업 폴더의 NTFS ACL을 자동 확인하지 못했습니다. 권한을 직접 확인하세요.")
+        else:
+            if result.returncode != 0:
+                notes.append(
+                    "백업 폴더의 NTFS ACL 확인이 실패했습니다. 권한을 직접 확인하세요."
+                )
+            elif any(
+                _PUBLIC_ACL_PRINCIPALS.search(line)
+                and _ACL_READ_OR_WRITE.search(line)
+                and "(DENY)" not in line.upper()
+                for line in result.stdout.splitlines()
+            ):
+                notes.append(
+                    "백업 폴더의 ACL에 광범위한 사용자 그룹의 읽기/쓰기 권한이 감지됐습니다. "
+                    "NTFS 상속 및 공유 권한을 확인하세요."
+                )
+    else:
+        try:
+            mode = stat.S_IMODE(directory.stat().st_mode)
+        except OSError:
+            notes.append("백업 폴더 접근 권한을 확인하지 못했습니다.")
+        else:
+            if mode & 0o077:
+                notes.append("백업 폴더에 소유자 이외의 접근 권한이 있습니다.")
+    return tuple(notes)
