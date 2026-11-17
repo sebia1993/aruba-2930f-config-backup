@@ -136,7 +136,13 @@ def test_success_is_written_before_advancing_and_password_never_persisted(tmp_pa
         json.loads(line) for line in completed.journal_path.read_text(encoding="utf-8").splitlines()
     ]
     assert [event["event"] for event in events] == [
-        "plan", "preflight", "intent", "result", "preflight", "intent", "result"
+        "plan",
+        "preflight",
+        "intent",
+        "result",
+        "preflight",
+        "intent",
+        "result",
     ]
     assert journal_states(completed.journal_path) == {0: "verified", 1: "verified"}
     journal = completed.journal_path.read_text(encoding="utf-8")
@@ -163,7 +169,9 @@ def test_unknown_write_outcome_stops_remaining_targets_without_replay(tmp_path: 
         controller_factory=lambda: fake, journal_directory=tmp_path
     ).execute(plan, CREDS)
     assert [result.status for result in outcome.results] == [
-        BatchStatus.UNVERIFIED, BatchStatus.PAUSED, BatchStatus.PAUSED
+        BatchStatus.UNVERIFIED,
+        BatchStatus.PAUSED,
+        BatchStatus.PAUSED,
     ]
     assert len(fake.applied) == 1
     assert journal_states(outcome.journal_path)[0] == "unverified"
@@ -187,7 +195,7 @@ def test_checkpoint_requires_operator_reapproval_after_ten(tmp_path: Path) -> No
     ).execute(
         create_batch_plan(ports, PortAction.POE_ON),
         CREDS,
-        continue_after_chunk=lambda done, total: (calls.append((done, total)) or True),
+        continue_after_chunk=lambda done, total: calls.append((done, total)) or True,
     )
     assert calls == [(10, 12)]
     assert sum(x.status is BatchStatus.VERIFIED for x in complete.results) == 12
