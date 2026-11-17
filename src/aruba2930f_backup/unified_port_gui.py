@@ -258,7 +258,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             ("전체", "all"),
             ("조회 실패", "failed"),
             ("전력 확인 필요", "unknown"),
-            ("PoE 꺼짐", "off"),
+            ("PoE 설정 OFF", "off"),
+            ("포트 Disable", "port_disabled"),
         ):
             self.filter_combo.addItem(label, code)
         row.addWidget(self.filter_combo, 1)
@@ -617,6 +618,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                         interface,
                         names,
                         item.text(1),
+                        item.text(6),
                     )
                 )
                 matched_term = not term or term in match_text.casefold()
@@ -634,6 +636,12 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                         result is not None
                         and result.snapshot is not None
                         and result.snapshot.poe_enabled is False
+                    )
+                elif wanted == "port_disabled":
+                    matched_status = (
+                        result is not None
+                        and result.snapshot is not None
+                        and result.snapshot.enabled is False
                     )
                 else:
                     matched_status = True
