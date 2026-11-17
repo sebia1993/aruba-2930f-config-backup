@@ -411,6 +411,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             for endpoint in affected:
                 self._sync_parent_check(endpoint)
         self._selection_changed_for_batch()
+        self._update_selection_summary()
 
     def _scope_items(self) -> list[QTreeWidgetItem] | None:
         scope = str(self.selection_scope.currentData())
@@ -836,6 +837,20 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             if (key := (group.target.endpoint, interface)) in checked and key in self._results
         )
 
+    def _checked_rows_for_plan(self) -> tuple[PoEQueryResult, ...]:
+        """Fail closed: missing observations must not silently drop checked ports."""
+        if not self._checked_port_keys:
+            raise BatchControlError("작업할 포트를 체크하세요.")
+        if len(self._checked_port_keys) > 300:
+            raise BatchControlError("일괄 작업은 300포트 이하로 나눠 실행해야 합니다.")
+        rows = self._selected_rows()
+        if len(rows) != len(self._checked_port_keys):
+            raise BatchControlError(
+                "체크된 포트 중 조회 결과가 없는 대상이 있습니다. 전체 대상 상태를 확인하고 "
+                "다시 조회하세요. 임의로 일부 포트를 제외하여 실행하지 않습니다."
+            )
+        return rows
+
     @Slot()
     def _update_control_buttons(self) -> None:
         if not hasattr(self, "plan_button"):
@@ -863,6 +878,18 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             self.plan_button.setEnabled(self.plan_button.isEnabled() and not locked)
             self.action_combo.setEnabled(not locked)
             self.single_button.setEnabled(self.single_button.isEnabled() and not locked)
+            for button in (
+                self.collect_button,
+                self.refresh_group_button,
+                self.refresh_port_button,
+                self.add_button,
+                self.remove_button,
+                self.paste_button,
+                self.load_button,
+                self.advanced_toggle,
+                self.targets_table,
+            ):
+                button.setEnabled(not locked)
         if hasattr(self, "cycle_button"):
             self._update_cycle_controls()
 
@@ -870,11 +897,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
     def _prepare_batch(self) -> None:
         if self.is_busy:
             return
-        selected = self._selected_rows()
-        if not selected:
-            QMessageBox.information(self, "작업 대상 선택", "조회 결과에서 포트 행을 선택하세요.")
-            return
         try:
+            selected = self._checked_rows_for_plan()
             action = PortAction(str(self.action_combo.currentData()))
             self._batch_plan = create_batch_plan(selected, action)
         except (BatchControlError, ValueError) as exc:
@@ -1098,7 +1122,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 self._update_cycle_controls()
                 return
             try:
-                plan = prepare_cycle_off(self._selected_rows())
+                plan = prepare_cycle_off(self._checked_rows_for_plan())
             except (BatchControlError, ValueError) as exc:
                 QMessageBox.warning(self, "재가동 OFF 계획 확인", str(exc))
                 return
