@@ -233,10 +233,7 @@ def test_off_results_out_of_order_cannot_arm_the_on_phase() -> None:
 def test_on_results_out_of_order_cannot_be_reported_as_recovered() -> None:
     session = off_success(2)
     session.mark_off_requeried()
-    lookup = {
-        (TARGET.endpoint, port): measured(port, enabled=False)
-        for port in ("1", "2")
-    }
+    lookup = {(TARGET.endpoint, port): measured(port, enabled=False) for port in ("1", "2")}
     on = session.prepare_on(lookup)
     session.mark_running(on)
     outcome = batch_result(on, (BatchStatus.VERIFIED, BatchStatus.VERIFIED))
