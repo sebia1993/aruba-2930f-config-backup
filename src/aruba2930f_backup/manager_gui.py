@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from openpyxl import load_workbook
+from zipfile import BadZipFile
 from PySide6.QtCore import Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
@@ -103,7 +104,10 @@ def recent_backup_reports(root: Path, *, limit: int = 30) -> list[Path]:
 
 def report_device_rows(path: Path, *, limit: int = 200) -> list[tuple[str, str, str]]:
     """Read only the existing device report and never modify any saved result."""
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        workbook = load_workbook(path, read_only=True, data_only=True)
+    except (BadZipFile, OSError) as exc:
+        raise ValueError("저장된 백업 보고서를 읽을 수 없습니다.") from exc
     try:
         if "Devices" not in workbook.sheetnames:
             return []
@@ -457,7 +461,7 @@ class NetworkManagerWindow(QMainWindow):
             except (OSError, ValueError, KeyError):
                 continue
             for hostname, ip, status in records:
-                item = QTreeWidgetItem(self.history_table, ["컨피그 백업", hostname, ip, status, str(report)])
+                QTreeWidgetItem(self.history_table, ["컨피그 백업", hostname, ip, status, str(report)])
                 self._history_paths[row_count] = report
                 row_count += 1
         journal_root = default_output_directory() / "port-control" / "batch"

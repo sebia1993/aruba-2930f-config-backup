@@ -11,7 +11,7 @@
 
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
-> 개발 버전 **v0.5.0**의 Windows CI 패키지는 검증 완료 전까지 공식 Release가 아닙니다. 현재 게시된 안정적 기준의 사전릴리즈는 **v0.4.0**으로 [GitHub Releases](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.4.0)에서 내려받을 수 있습니다.
+> 개발 버전 **v0.5.0**의 Windows CI 패키지 `Aruba2930FConfigBackup_v0.5.0_windows_x64.zip`는 검증 완료 전까지 공식 Release가 아닙니다. 현재 게시된 안정적 기준의 사전릴리즈는 **v0.4.0**으로 [GitHub Releases](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.4.0)에서 내려받을 수 있습니다.
 
 > 최신 공개 사전릴리즈는 **v0.4.0**입니다. v0.5.0은 개발 브랜치의 Windows 검증 결과를 먼저 확인하십시오.  단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다. v0.2.0의 RSA/SHA-1 차단 보완과 Paramiko 의존성 감사 예외를 유지합니다. [의존성 감사 예외](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)의 배포 경계를 확인하십시오.
 

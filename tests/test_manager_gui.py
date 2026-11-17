@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QSplitter
+from PySide6.QtWidgets import QApplication, QMessageBox, QSplitter
 
 from aruba2930f_backup.manager_gui import (
     NetworkManagerWindow,
