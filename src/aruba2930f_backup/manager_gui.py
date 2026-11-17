@@ -365,6 +365,7 @@ class NetworkManagerWindow(QMainWindow):
             raise RuntimeError("Could not relocate the existing SSH credential form")
         search_group = port.search_input.parentWidget()
         control_group = port.batch_progress.parentWidget()
+        quick_bar = port.quick_action_bar
         assert search_group is not None and control_group is not None
         details_scroll = port.findChild(QScrollArea, "poeDetailsScroll")
         if details_scroll is None:
@@ -378,6 +379,7 @@ class NetworkManagerWindow(QMainWindow):
             port.status_label,
             search_group,
             control_group,
+            quick_bar,
         )
         for widget in header_items:
             if widget is not None:
@@ -442,7 +444,7 @@ class NetworkManagerWindow(QMainWindow):
         detail = QWidget(body)
         detail_layout = QVBoxLayout(detail)
         detail_layout.setContentsMargins(5, 0, 0, 0)
-        detail_layout.addWidget(QLabel("선택 포트 상세 · 제어", detail))
+        detail_layout.addWidget(QLabel("선택 포트 상세 · 고급 제어", detail))
         detail_layout.addWidget(details_scroll)
         self._layout_port_control_buttons(control_group)
         detail_layout.addWidget(control_group)
@@ -457,6 +459,9 @@ class NetworkManagerWindow(QMainWindow):
         body.setChildrenCollapsible(False)
         body.setSizes([730, 350])
         root.addWidget(body, 1)
+        # Fixed below the scrolling results and details: always show checked targets
+        # and guarded OFF / ON / power-cycle actions, independent of detail scroll.
+        root.addWidget(quick_bar)
         root.addWidget(port.progress_bar)
         root.addWidget(port.status_label)
 
@@ -505,7 +510,7 @@ class NetworkManagerWindow(QMainWindow):
             if isinstance(explanation_label, QLabel):
                 explanation_label.setToolTip(explanation_label.text())
                 explanation_label.setText(
-                    "표 상단에서 전체·스위치별 포트를 선택하세요. "
+                    "포트 체크박스로 전체·스위치별 대상을 선택하세요. "
                     "일괄 OFF/Down은 LLDP로 확인된 AP-535만 허용합니다."
                 )
 
