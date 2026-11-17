@@ -415,4 +415,3 @@ def test_large_csv_uses_bounded_heap_without_changing_bytes(tmp_path: Path) -> N
     assert peak < 8 * 1024 * 1024
     with destination.open("rb") as handle:
         assert handle.read(3) == b"\xef\xbb\xbf"
-
