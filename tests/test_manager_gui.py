@@ -284,7 +284,10 @@ def test_port_paste_entry_is_visible_without_expanding_ssh_settings(
     assert window.port_page.paste_button.isVisible()
     assert not window.port_target_scroll.isVisible()
     assert "2열" in window.port_page.paste_button.text()
-    assert window.port_page.quick_cycle_button.isVisible()
+    assert window.port_page.quick_off_button.isVisible()
+    assert window.port_page.quick_on_button.isVisible()
+    assert not window.port_page.quick_cycle_button.isVisible()
+    assert not window.port_page.cycle_button.isVisible()
     assert not window.port_page.cycle_button.isVisible()
     window.close()
 
