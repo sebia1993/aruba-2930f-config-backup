@@ -75,9 +75,11 @@ class _BatchWorker(QObject):
         credentials: Credentials,
         *,
         controller: BatchPortController | None = None,
+        auto_continue_chunks: bool = False,
     ) -> None:
         super().__init__()
         self._plan = plan
+        self._auto_continue_chunks = auto_continue_chunks
         self._credentials: Credentials | None = credentials
         self._controller = controller or BatchPortController()
         self.cancel_event = threading.Event()
@@ -94,6 +96,10 @@ class _BatchWorker(QObject):
         self._continue_event.set()
 
     def _wait_for_checkpoint(self, done: int, total: int) -> bool:
+        # Quick PoE actions have one upfront selection/approval; no repetitive
+        # 10-port popup. Backend per-port preflight, journal and stop checks stay.
+        if self._auto_continue_chunks:
+            return not self.cancel_event.is_set()
         self._continue_allowed = False
         self._continue_event.clear()
         self.checkpoint.emit(done, total)
@@ -736,9 +742,9 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.quick_summary.setWordWrap(True)
         self.quick_summary.setMinimumWidth(230)
         layout.addWidget(self.quick_summary, 1)
-        self.quick_off_button = QPushButton("PoE OFF…", self.quick_action_bar)
-        self.quick_on_button = QPushButton("PoE ON…", self.quick_action_bar)
-        self.quick_cycle_button = QPushButton("PoE 재가동…", self.quick_action_bar)
+        self.quick_off_button = QPushButton("PoE OFF 즉시", self.quick_action_bar)
+        self.quick_on_button = QPushButton("PoE ON 즉시", self.quick_action_bar)
+        self.quick_cycle_button = QPushButton("PoE 재가동", self.quick_action_bar)
         for button, name in (
             (self.quick_off_button, "poeQuickOff"),
             (self.quick_on_button, "poeQuickOn"),
@@ -747,6 +753,14 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             button.setObjectName(name)
             button.setMinimumHeight(38)
             layout.addWidget(button)
+        self.quick_off_button.setToolTip(
+            "체크된 포트를 즉시 OFF합니다. 2개 이상이면 한 번만 확인합니다. "
+            "명령 직전 장비 확인·변경 이력·불확실 결과 중단은 유지합니다."
+        )
+        self.quick_on_button.setToolTip(
+            "체크된 포트를 즉시 ON합니다. 별도 계획 버튼·확인 문자열 입력 없음. "
+            "명령 직전 장비 확인·변경 이력은 유지합니다."
+        )
         self.quick_off_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_OFF))
         self.quick_on_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_ON))
         self.quick_cycle_button.clicked.connect(self._quick_cycle)
@@ -754,7 +768,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         root.insertWidget(root.count() - 2, self.quick_action_bar)
 
     def _quick_poe_action(self, action: PortAction) -> None:
-        """Prepare a frozen plan and open the normal EXECUTE N confirmation."""
+        """Direct PoE action: construct the internal frozen plan transparently."""
         if self._selection_locked() or not self._checked_port_keys:
             return
         index = self.action_combo.findData(action.value)
@@ -763,7 +777,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.action_combo.setCurrentIndex(index)
         self._prepare_batch()
         if self._batch_plan is not None and self._batch_plan.action is action:
-            self._run_batch()
+            self._run_batch(quick=True)
 
     @Slot()
     def _quick_cycle(self) -> None:
@@ -773,7 +787,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         phase = self._cycle.phase if self._cycle is not None else None
         if phase in (PowerCyclePhase.OFF_READY, PowerCyclePhase.ON_READY):
             if self._batch_plan is not None:
-                self._run_batch()
+                self._run_batch(quick=True)
             return
         self._cycle_next()
         phase = self._cycle.phase if self._cycle is not None else None
@@ -781,7 +795,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             phase in (PowerCyclePhase.OFF_READY, PowerCyclePhase.ON_READY)
             and self._batch_plan is not None
         ):
-            self._run_batch()
+            self._run_batch(quick=True)
 
     def _set_busy(self, busy: bool) -> None:
         super()._set_busy(busy)
@@ -917,13 +931,36 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self._update_control_buttons()
 
     @Slot()
-    def _run_batch(self) -> None:
+    def _run_batch(self, *, quick: bool = False) -> None:
         if self.is_busy or self._batch_plan is None:
             return
         plan = self._batch_plan
-        confirmation = BatchConfirmationDialog(plan, self)
-        if confirmation.exec() != QDialog.DialogCode.Accepted:
-            return
+        if quick:
+            # Single-port OFF and all ON actions begin from one deliberate click.
+            # Bulk OFF has one concise confirmation to prevent accidental AP outages.
+            if plan.action is PortAction.POE_OFF and len(plan.targets) > 1:
+                summary = "\n".join(
+                    f"{item.expected_hostname} ({item.target.ip}) / {item.interface}"
+                    for item in plan.targets[:12]
+                )
+                if len(plan.targets) > 12:
+                    summary += f"\n외 {len(plan.targets) - 12}개 포트"
+                answer = QMessageBox.question(
+                    self,
+                    "다중 PoE 전원 OFF 확인",
+                    f"선택한 {len(plan.targets)}개 포트의 PoE를 끕니다. "
+                    "연결된 AP 서비스가 중단될 수 있습니다.\n\n"
+                    f"{summary}\n\n진행하시겠습니까?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+        else:
+            # Legacy advanced mode preserves typed EXECUTE N and 10-port approvals.
+            confirmation = BatchConfirmationDialog(plan, self)
+            if confirmation.exec() != QDialog.DialogCode.Accepted:
+                return
         try:
             credentials = self._credentials()
         except ValueError:
@@ -948,7 +985,12 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 QMessageBox.warning(self, "PoE 재가동 승인", str(exc))
                 return
         thread = QThread(self)
-        worker = _BatchWorker(plan, credentials, controller=self._batch_controller)
+        worker = _BatchWorker(
+            plan,
+            credentials,
+            controller=self._batch_controller,
+            auto_continue_chunks=quick,
+        )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._batch_progress)
@@ -1219,14 +1261,14 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 PowerCyclePhase.OFF_READY: "OFF 승인…",
                 PowerCyclePhase.OFF_RUNNING: "OFF 진행 중",
                 PowerCyclePhase.REQUERY_OFF: "OFF 재조회",
-                PowerCyclePhase.ON_PREPARE: "ON 계획·승인",
+                PowerCyclePhase.ON_PREPARE: "PoE ON 실행",
                 PowerCyclePhase.ON_READY: "ON 승인…",
                 PowerCyclePhase.ON_RUNNING: "ON 진행 중",
                 PowerCyclePhase.REQUERY_ON: "복구 재조회",
                 PowerCyclePhase.VERIFY_ON: "PoE 복구 확인",
                 PowerCyclePhase.INTERRUPTED: "중단 상태 확인",
             }
-            label = "PoE 재가동…"
+            label = "PoE 재가동"
             if phase is not None:
                 label = short_labels.get(phase, label)
             self.quick_cycle_button.setText(label)
