@@ -291,8 +291,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             self._results[key]
             for group in self._groups
             for interface in group.interfaces
-            if (key := (group.target.endpoint, interface)) in selected
-            and key in self._results
+            if (key := (group.target.endpoint, interface)) in selected and key in self._results
         )
 
     @Slot()
