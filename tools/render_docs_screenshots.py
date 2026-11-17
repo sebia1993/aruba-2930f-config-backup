@@ -348,6 +348,12 @@ def _save_network_manager(output: Path) -> None:
     app.processEvents()
     if not manager.grab().save(str(output / "manager-ports-all-checked.png"), "PNG"):
         raise RuntimeError("전체 체크 포트 관리 화면 PNG 저장에 실패했습니다.")
+    # Optional advanced mode exists but is collapsed in normal operator use.
+    manager.port_advanced_toggle.click()
+    app.processEvents()
+    if not manager.grab().save(str(output / "manager-ports-advanced.png"), "PNG"):
+        raise RuntimeError("고급 포트 제어 화면 PNG 저장에 실패했습니다.")
+    manager.port_advanced_toggle.click()
     manager.port_page.search_input.setText("AP-24")
     manager.port_page._apply_search_filter()
     manager.port_page._update_selection_summary()
