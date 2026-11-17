@@ -227,3 +227,24 @@ AP-535 기준을 적용한 경우를 상세 화면의 모델 근거로 구분합
 [port-poe]: https://arubanetworking.hpe.com/techdocs/AOS-S/16.11/MCG/WC/content/common%20files/vie-poe-sta-spe-por.htm
 [lldp-roles]: https://arubanetworking.hpe.com/techdocs/AOS-S/16.11/MCG/WC/content/common%20files/vie-lld-por-con.htm
 [ap-state]: https://arubanetworking.hpe.com/techdocs/CLI-Bank/Content/aos8/sh-ap-dbg-sys-st.htm
+
+
+## v0.8.0 개발 브랜치: 포트 상태와 PoE 상태 분리
+
+포트 통합 조회 표에서 복잡한 **PoE 판정/조회 상태** 열 대신 다음 다섯 정보를 표시합니다.
+
+| 스위치 / 포트 | AP 이름 | 현재 전력 | 포트 상태 | PoE 상태 |
+|---|---|---|---|---|
+| 192.0.2.10 / 12 | AP-12 | 14.8 W | 포트 Enable · Link Up | PoE 공급 중 |
+| 192.0.2.10 / 24 | 없음 | 0 W | 포트 Disable · Link Down | PoE 대기 |
+| 192.0.2.10 / 25 | 없음 | 확인 안 됨 | 포트 Enable · Link Down | PoE OFF(설정) |
+| 192.0.2.10 / 26 | 없음 | 확인 안 됨 | 포트 Disable · Link Down | PoE OFF(설정) |
+
+- `show interfaces brief`의 Enabled는 **포트의 네트워크 관리 설정**, Status는 **링크 상태**를 뜻합니다.
+- `show power-over-ethernet`의 Power Enable=No는 **PoE 설정 OFF**입니다. Power Enable=Yes이면서 0W/Searching은 관리자 OFF로 해석하지 않습니다.
+- Power Enable=Yes, Detection Status=Disabled인 경우 공급 예산 부족 등 별도 원인을 점검하도록 표시합니다.
+- LLDP AP 이름, AP-535 협상 판정과 조회 실패 원인은 기존 수집 데이터 및 상세 정보/CSV에 보존하며 변경하지 않습니다.
+- 변경 이후 전력/포트 조회 데이터가 무효화될 때는 상태에 **재조회 필요**가 나타납니다.
+- 신규 표시/필터 기능 외 SSH·PoE 제어 안전 정책과 원본 수집 명령은 그대로 유지합니다.
+
+이 기능은 아직 개발 중이므로 사용자 검토 이전에 main에 병합하거나 릴리스를 게시하지 않습니다.
