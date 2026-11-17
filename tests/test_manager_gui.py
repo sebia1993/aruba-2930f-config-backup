@@ -83,13 +83,21 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     assert splitter.count() == 2
     assert port.result_tree.isVisible()
     assert port.search_input.isVisible()
-    assert port.action_combo.isVisible()
-    assert port.run_button.isVisible()
+    assert not port.action_combo.isVisible()
+    assert not port.run_button.isVisible()
+    assert window.port_advanced_toggle.isVisible()
+    assert port.quick_off_button.isVisible()
+    assert port.quick_on_button.isVisible()
     assert not window.port_target_scroll.isVisible()
     window.port_target_toggle.click()
     assert window.port_target_scroll.isVisible()
     assert port.targets_table.isVisible()
     assert port.username_input.isVisible()
+    window.port_advanced_toggle.click()
+    assert port.action_combo.isVisible()
+    assert port.run_button.isVisible()
+    window.port_advanced_toggle.click()
+    assert not port.run_button.isVisible()
     window.close()
 
 
@@ -277,4 +285,28 @@ def test_port_paste_entry_is_visible_without_expanding_ssh_settings(
     assert not window.port_target_scroll.isVisible()
     assert "2열" in window.port_page.paste_button.text()
     assert window.port_page.cycle_button.isVisible()
+    window.close()
+
+
+def test_switch_to_port_reuses_only_empty_in_memory_credentials(app: QApplication) -> None:
+    window = make_window(app)
+    backup = window.backup_page
+    port = window.port_page
+    backup.username_input.setText("backup-operator")
+    backup.password_input.setText("ephemeral-demo-password")
+    backup.enable_password_input.setText("optional-enable")
+    assert window.navigate(2)
+    assert port.username_input.text() == "backup-operator"
+    assert port.password_input.text() == "ephemeral-demo-password"
+    assert port.enable_password_input.text() == "optional-enable"
+
+    # A port-specific account must never be overwritten by backup credentials.
+    port.username_input.setText("port-operator")
+    port.password_input.setText("different-secret")
+    assert window.navigate(1)
+    backup.username_input.setText("new-backup-account")
+    backup.password_input.setText("new-backup-secret")
+    assert window.navigate(2)
+    assert port.username_input.text() == "port-operator"
+    assert port.password_input.text() == "different-secret"
     window.close()
