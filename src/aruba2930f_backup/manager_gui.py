@@ -439,7 +439,10 @@ class NetworkManagerWindow(QMainWindow):
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.addWidget(search_group)
         port.result_tree.setColumnHidden(4, True)  # timestamps remain in Details
-        port.result_tree.setColumnWidth(0, 255)  # hostname and IP together
+        port.result_tree.setColumnWidth(0, 225)  # hostname and IP together
+        port.result_tree.setColumnWidth(1, 155)  # LLDP AP
+        port.result_tree.setColumnWidth(2, 92)  # watts
+        port.result_tree.setColumnWidth(6, 185)  # port/PoE administrative state
         center_layout.addWidget(port.result_tree, 1)
         detail = QWidget(body)
         detail_layout = QVBoxLayout(detail)
