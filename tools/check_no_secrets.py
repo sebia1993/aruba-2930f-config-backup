@@ -11,6 +11,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
 MAX_TEXT_BYTES = 2 * 1024 * 1024
+# Large source documents must never silently escape credential/IP checks.
+# Known binary artifacts cannot be inspected as UTF-8 text by this scanner.
+_ALLOWED_LARGE_BINARY_SUFFIXES = frozenset(
+    {
+        ".7z",
+        ".bmp",
+        ".dll",
+        ".docx",
+        ".exe",
+        ".gif",
+        ".ico",
+        ".jpeg",
+        ".jpg",
+        ".pdf",
+        ".png",
+        ".pptx",
+        ".pyd",
+        ".so",
+        ".ttf",
+        ".webp",
+        ".xlsx",
+        ".zip",
+    }
+)
 ALLOWED_CREDENTIAL_WORDS = {
     "changeme",
     "dummy",
@@ -58,7 +82,14 @@ def _is_private_fixture(address: ipaddress.IPv4Address) -> bool:
 def main() -> int:
     findings: list[str] = []
     for path in _repository_files():
-        if path.resolve() == SELF or not path.is_file() or path.stat().st_size > MAX_TEXT_BYTES:
+        if path.resolve() == SELF or not path.is_file():
+            continue
+        relative = path.relative_to(ROOT)
+        if path.stat().st_size > MAX_TEXT_BYTES:
+            # Fail closed for oversized source/text/unknown formats. A silent
+            # size skip could publish a large script or document with secrets.
+            if path.suffix.casefold() not in _ALLOWED_LARGE_BINARY_SUFFIXES:
+                findings.append(f"{relative}: oversized source was not secret-scanned")
             continue
         raw = path.read_bytes()
         if b"\0" in raw:
@@ -67,7 +98,6 @@ def main() -> int:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
             continue
-        relative = path.relative_to(ROOT)
 
         for label, pattern in TOKEN_PATTERNS.items():
             for match in pattern.finditer(text):
