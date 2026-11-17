@@ -10,6 +10,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from aruba2930f_backup.batch_port_control import BatchOutcome, BatchResult, BatchStatus
@@ -64,12 +65,12 @@ def setup_dialog() -> UnifiedPortManagementDialog:
 def test_unified_window_shows_one_console_and_multi_selects_ports(app: QApplication) -> None:
     dialog = setup_dialog()
     assert dialog.windowTitle() == "Aruba 2930F · 포트 통합 관리"
-    assert dialog.result_tree.selectionMode() == dialog.result_tree.SelectionMode.ExtendedSelection
+    assert dialog.result_tree.selectionMode() == dialog.result_tree.SelectionMode.SingleSelection
     first = dialog._items[(TARGET.endpoint, "1")]
     second = dialog._items[(TARGET.endpoint, "2")]
     dialog.result_tree.setCurrentItem(first)
-    first.setSelected(True)
-    second.setSelected(True)
+    first.setCheckState(0, Qt.CheckState.Checked)
+    second.setCheckState(0, Qt.CheckState.Checked)
     assert len(dialog._selected_rows()) == 2
     dialog.action_combo.setCurrentIndex(dialog.action_combo.findData(PortAction.POE_OFF.value))
     dialog._prepare_batch()
@@ -82,6 +83,7 @@ def test_unified_window_shows_one_console_and_multi_selects_ports(app: QApplicat
 def test_confirmation_requires_exact_batch_size_text(app: QApplication) -> None:
     plan = setup_dialog()
     plan.result_tree.setCurrentItem(plan._items[(TARGET.endpoint, "1")])
+    plan._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
     plan._prepare_batch()
     assert plan._batch_plan is not None
     dialog = BatchConfirmationDialog(plan._batch_plan)
@@ -101,7 +103,7 @@ def test_destructive_batch_refuses_non_ap_neighbor(
     dialog._on_result(queried("2", model="Aruba 2930F"))
     second = dialog._items[(TARGET.endpoint, "2")]
     dialog.result_tree.setCurrentItem(second)
-    second.setSelected(True)
+    second.setCheckState(0, Qt.CheckState.Checked)
     dialog.action_combo.setCurrentIndex(dialog.action_combo.findData(PortAction.DISABLE.value))
     shown: list[str] = []
     monkeypatch.setattr(
@@ -144,6 +146,7 @@ def test_batch_execution_clears_stale_ap_and_power_until_requery(
     dialog = setup_dialog()
     dialog._batch_controller = OfflineBatch()  # type: ignore[assignment]
     dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
+    dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
     dialog._prepare_batch()
     assert dialog._batch_plan is not None
     monkeypatch.setattr(BatchConfirmationDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
@@ -215,13 +218,13 @@ def test_failure_filter_does_not_mark_unqueried_port_as_failure(app: QApplicatio
     dialog.close()
 
 
-def test_filter_hides_and_deselects_ports_and_invalidates_batch_plan(app: QApplication) -> None:
+def test_filter_hides_but_preserves_checked_ports_and_invalidates_plan(app: QApplication) -> None:
     dialog = setup_dialog()
     first = dialog._items[(TARGET.endpoint, "1")]
     second = dialog._items[(TARGET.endpoint, "2")]
     dialog.result_tree.setCurrentItem(first)
-    first.setSelected(True)
-    second.setSelected(True)
+    first.setCheckState(0, Qt.CheckState.Checked)
+    second.setCheckState(0, Qt.CheckState.Checked)
     dialog._prepare_batch()
     assert dialog._batch_plan is not None
     assert len(dialog._batch_plan.targets) == 2
@@ -229,9 +232,11 @@ def test_filter_hides_and_deselects_ports_and_invalidates_batch_plan(app: QAppli
     assert dialog._batch_plan is None
     dialog._apply_search_filter()
     assert first.isHidden()
-    assert not first.isSelected()
+    assert first.checkState(0) is Qt.CheckState.Checked
     assert not second.isHidden()
-    assert tuple(row.interface for row in dialog._selected_rows()) == ("2",)
+    assert tuple(row.interface for row in dialog._selected_rows()) == ("1", "2")
+    dialog._update_selection_summary()
+    assert "화면 밖 1개" in dialog.selection_summary.text()
     assert not dialog.run_button.isEnabled()
     dialog.close()
 
@@ -239,6 +244,7 @@ def test_filter_hides_and_deselects_ports_and_invalidates_batch_plan(app: QAppli
 def test_change_action_after_plan_forces_new_explicit_approval(app: QApplication) -> None:
     dialog = setup_dialog()
     dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
+    dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
     dialog._prepare_batch()
     assert dialog._batch_plan is not None
     dialog.action_combo.setCurrentIndex(dialog.action_combo.findData(PortAction.POE_OFF.value))
@@ -261,7 +267,7 @@ def test_failed_batch_without_result_callbacks_invalidates_planned_ports(
     dialog = setup_dialog()
     dialog._batch_controller = FailedAuditController()  # type: ignore[assignment]
     first = dialog._items[(TARGET.endpoint, "1")]
-    first.setSelected(True)
+    first.setCheckState(0, Qt.CheckState.Checked)
     dialog._prepare_batch()
     assert dialog._batch_plan is not None
     monkeypatch.setattr(BatchConfirmationDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
@@ -292,14 +298,14 @@ def test_select_all_scope_and_eligible_only_keep_unsafe_ports_unselected(
     dialog._on_result(queried("2", model="Aruba 2930F"))
     dialog.action_combo.setCurrentIndex(dialog.action_combo.findData(PortAction.POE_OFF.value))
     dialog.select_all_button.click()
-    assert first.isSelected() and second.isSelected()
-    assert "선택 2개" in dialog.selection_summary.text()
+    assert first.checkState(0) is Qt.CheckState.Checked and second.checkState(0) is Qt.CheckState.Checked
+    assert "체크 2개" in dialog.selection_summary.text()
     assert "가능 1개" in dialog.selection_summary.text()
     dialog.select_eligible_button.click()
-    assert first.isSelected() and not second.isSelected()
+    assert first.checkState(0) is Qt.CheckState.Checked and second.checkState(0) is Qt.CheckState.Unchecked
     assert len(dialog._selected_rows()) == 1
     dialog.clear_selection_button.click()
-    assert not first.isSelected() and not second.isSelected()
+    assert first.checkState(0) is Qt.CheckState.Unchecked and second.checkState(0) is Qt.CheckState.Unchecked
     dialog.close()
 
 
@@ -313,17 +319,17 @@ def test_select_current_switch_and_filter_results_without_selecting_group_parent
     dialog.result_tree.setCurrentItem(first)
     dialog.selection_scope.setCurrentIndex(dialog.selection_scope.findData("switch"))
     dialog.select_all_button.click()
-    assert first.isSelected() and second.isSelected()
-    assert not dialog._parents[TARGET.endpoint].isSelected()
+    assert first.checkState(0) is Qt.CheckState.Checked and second.checkState(0) is Qt.CheckState.Checked
+    assert dialog._parents[TARGET.endpoint].checkState(0) is Qt.CheckState.Checked
     dialog.search_input.setText("AP-2")
     dialog._apply_search_filter()
     dialog.selection_scope.setCurrentIndex(dialog.selection_scope.findData("filtered"))
     dialog.select_all_button.click()
-    assert not first.isSelected() and second.isSelected()
+    assert first.checkState(0) is Qt.CheckState.Unchecked and second.checkState(0) is Qt.CheckState.Checked
     dialog.selection_scope.setCurrentIndex(dialog.selection_scope.findData("all"))
     dialog.select_all_button.click()
-    assert dialog.search_input.text() == ""
-    assert first.isSelected() and second.isSelected()
+    assert dialog.search_input.text() == "AP-2"
+    assert first.checkState(0) is Qt.CheckState.Checked and second.checkState(0) is Qt.CheckState.Checked
     dialog.close()
 
 
@@ -338,7 +344,7 @@ def test_select_all_over_300_warns_without_creating_mutation_plan(
     dialog._build_results(groups)
     dialog.show()
     dialog.select_all_button.click()
-    assert len(dialog.result_tree.selectedItems()) == 400
+    assert len(dialog._checked_port_keys) == 400
     assert "최대 300포트" in dialog.selection_summary.text()
     assert dialog._batch_plan is None
     assert not dialog.run_button.isEnabled()
@@ -354,6 +360,7 @@ def test_guided_cycle_does_not_auto_send_on_after_off(
     dialog._batch_controller = OfflineBatch()  # type: ignore[assignment]
     dialog.show()
     dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
+    dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
     dialog._cycle_next()
     assert dialog._cycle is not None
     assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
@@ -399,8 +406,8 @@ def test_cycle_eligible_button_uses_ap535_and_current_poe_on_not_generic_on(
     # Default generic PoE ON permits non-AP neighbors. Cycle candidacy must not.
     assert dialog.action_combo.currentData() == PortAction.POE_ON.value
     dialog.select_cycle_eligible_button.click()
-    assert dialog._items[(TARGET.endpoint, "1")].isSelected()
-    assert not dialog._items[(TARGET.endpoint, "2")].isSelected()
+    assert dialog._items[(TARGET.endpoint, "1")].checkState(0) is Qt.CheckState.Checked
+    assert not dialog._items[(TARGET.endpoint, "2")].checkState(0) is Qt.CheckState.Checked
     assert len(dialog._selected_rows()) == 1
     dialog.close()
 
@@ -414,6 +421,7 @@ def test_refresh_invalidates_ready_off_plan_without_stranding_wizard(
 
     dialog = setup_dialog()
     dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
+    dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
     dialog._cycle_next()
     assert dialog._cycle is not None
     assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
@@ -435,6 +443,7 @@ def test_refresh_invalidates_on_plan_but_recovers_original_off_targets(
 
     dialog = setup_dialog()
     dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
+    dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
     plan = create_batch_plan([queried("1")], PortAction.POE_OFF)
     session = PowerCycleSession(plan)
     session.off_verified = plan.targets
@@ -449,4 +458,129 @@ def test_refresh_invalidates_on_plan_but_recovers_original_off_targets(
     assert session.phase is PowerCyclePhase.REQUERY_OFF
     assert dialog.cycle_button.isEnabled()
     assert session.off_requery_groups()[0].interfaces == ("1",)
+    dialog.close()
+
+
+def test_row_focus_alone_never_authorizes_a_port_mutation(app: QApplication) -> None:
+    dialog = setup_dialog()
+    dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
+    assert dialog._selected_rows() == ()
+    dialog._prepare_batch()
+    assert dialog._batch_plan is None
+    assert not dialog.quick_off_button.isEnabled()
+    dialog.close()
+
+
+def test_child_and_parent_checkboxes_are_consistent(app: QApplication) -> None:
+    dialog = setup_dialog()
+    first = dialog._items[(TARGET.endpoint, "1")]
+    second = dialog._items[(TARGET.endpoint, "2")]
+    parent = dialog._parents[TARGET.endpoint]
+    first.setCheckState(0, Qt.CheckState.Checked)
+    assert parent.checkState(0) is Qt.CheckState.PartiallyChecked
+    parent.setCheckState(0, Qt.CheckState.Checked)
+    assert second.checkState(0) is Qt.CheckState.Checked
+    assert len(dialog._checked_port_keys) == 2
+    parent.setCheckState(0, Qt.CheckState.Unchecked)
+    assert dialog._checked_port_keys == set()
+    assert first.checkState(0) is Qt.CheckState.Unchecked
+    dialog.close()
+
+
+def test_checked_targets_survive_search_but_all_are_reviewed_before_execution(
+    app: QApplication,
+) -> None:
+    dialog = setup_dialog()
+    dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
+    dialog.search_input.setText("AP-2")
+    dialog._apply_search_filter()
+    dialog._update_selection_summary()
+    assert len(dialog._checked_port_keys) == 2
+    assert "화면 밖 1개" in dialog.quick_summary.text()
+    dialog._prepare_batch()
+    assert dialog._batch_plan is not None
+    assert {target.interface for target in dialog._batch_plan.targets} == {"1", "2"}
+    dialog.close()
+
+
+def test_rebuilding_targets_clears_checkboxes_and_prepared_plans(app: QApplication) -> None:
+    dialog = setup_dialog()
+    dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
+    dialog._prepare_batch()
+    assert dialog._batch_plan is not None
+    dialog._build_results((PoETarget(TARGET, ("1", "3")),))
+    assert not dialog._checked_port_keys
+    assert dialog._batch_plan is None
+    assert dialog._items[(TARGET.endpoint, "1")].checkState(0) is Qt.CheckState.Unchecked
+    dialog.close()
+
+
+def test_quick_off_uses_existing_reviewed_plan_without_skipping_confirmation(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
+    dispatched: list[PortAction] = []
+    monkeypatch.setattr(
+        dialog,
+        "_run_batch",
+        lambda: dispatched.append(dialog._batch_plan.action) if dialog._batch_plan else None,
+    )
+    dialog.quick_off_button.click()
+    assert dispatched == [PortAction.POE_OFF]
+    assert dialog._batch_plan is not None
+    assert len(dialog._batch_plan.targets) == 1
+    dialog.close()
+
+
+def test_quick_cycle_still_requires_distinct_off_on_operator_approvals(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aruba2930f_backup.poe_cycle import PowerCyclePhase
+
+    dialog = setup_dialog()
+    dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
+    reviewed: list[PortAction] = []
+    monkeypatch.setattr(
+        dialog,
+        "_run_batch",
+        lambda: reviewed.append(dialog._batch_plan.action) if dialog._batch_plan else None,
+    )
+    dialog.quick_cycle_button.click()
+    assert reviewed == [PortAction.POE_OFF]
+    assert dialog._cycle is not None
+    assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
+    assert not dialog.quick_off_button.isEnabled()
+    assert not dialog.quick_on_button.isEnabled()
+    dialog.quick_cycle_button.click()
+    assert reviewed == [PortAction.POE_OFF, PortAction.POE_OFF]
+    assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
+    dialog.close()
+
+
+def test_bulk_checkbox_selection_keeps_workflow_bound_at_300_ports(app: QApplication) -> None:
+    dialog = UnifiedPortManagementDialog(username="operator", password="test-password")
+    groups = (PoETarget(TARGET, tuple(str(port) for port in range(1, 351))),)
+    dialog._build_results(groups)
+    dialog.select_all_button.click()
+    assert len(dialog._checked_port_keys) == 350
+    dialog._prepare_batch()
+    assert dialog._batch_plan is None
+    assert len(dialog._checked_port_keys) == 350
+    dialog.close()
+
+
+def test_checkbox_change_is_reverted_during_an_active_cycle(app: QApplication) -> None:
+    from aruba2930f_backup.poe_cycle import PowerCyclePhase
+
+    dialog = setup_dialog()
+    first = dialog._items[(TARGET.endpoint, "1")]
+    second = dialog._items[(TARGET.endpoint, "2")]
+    first.setCheckState(0, Qt.CheckState.Checked)
+    dialog._cycle_next()
+    assert dialog._cycle is not None
+    assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
+    second.setCheckState(0, Qt.CheckState.Checked)
+    assert second.checkState(0) is Qt.CheckState.Unchecked
+    assert len(dialog._checked_port_keys) == 1
     dialog.close()
