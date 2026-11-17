@@ -118,3 +118,12 @@ def test_older_notes_do_not_advertise_grouped_query() -> None:
         notes = render(version, "### 추가\n\n- 기존 기능\n")
         assert "**포트 전력 조회**" not in notes
         assert "docs/POE_QUERY_KO.md" not in notes
+
+
+def test_v080_release_notes_describe_guarded_bulk_port_controls() -> None:
+    render = run_path(str(ROOT / "tools" / "release_notes.py"))["_render"]
+    notes = render("0.8.0", "### 변경\\n\\n- 포트 상태와 PoE 상태 표시 개선\\n")
+    assert "최대 300개 포트" in notes
+    assert "LLDP AP-535 확인 대상" in notes
+    assert "일괄 제어는 제공하지 않습니다" not in notes
+    assert "자동 반복 측정·일괄 전원 제어는 포함하지 않습니다" not in notes

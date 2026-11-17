@@ -11,7 +11,7 @@
 
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
-> **현재 공개 버전은 [v0.7.0](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.7.0)** (`Aruba2930FConfigBackup_v0.7.0_windows_x64.zip`)입니다. v0.8.0의 Windows CI 검증용 파일명은 `Aruba2930FConfigBackup_v0.8.0_windows_x64.zip`이며 아직 공식 릴리스가 아닙니다.
+> **최신 배포 버전은 [v0.8.0](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.8.0)** (`Aruba2930FConfigBackup_v0.8.0_windows_x64.zip`)입니다. 현장 장비 검증을 구분하기 위해 GitHub 사전릴리즈로 게시합니다.
 
 > 새 일괄 제어 기능은 여러 AP의 무선 서비스에 영향을 줄 수 있습니다. 실제 운영 장비 검증은 사용자 직접 수행 범위입니다. 컨피그 수집/포트 제어의 SSH 인증·장비 지문·작업 이력 보호는 그대로 유지합니다.
 
@@ -25,7 +25,7 @@
 
 > **v0.8.0 전원 버튼 정리:** 포트 통합 관리에서는 PoE OFF 즉시와 PoE ON 즉시 두 버튼만 사용자에게 표시합니다. 중복된 재가동 버튼은 기본 화면과 고급 화면에서 숨기며, OFF와 ON은 별도로 실행합니다. 기존 전원 변경 안전 검증과 실행 이력은 그대로 유지합니다.
 
-> **v0.8.0 화면 개선 검토용:** 포트 통합 관리의 'PoE 판정' 및 '조회 상태' 표 열을 각각 '포트 상태(Enable/Disable · Link Up/Down)'와 'PoE 상태(Power Enable 및 실제 공급)'로 바꿉니다. 포트 Disable만으로 전력 OFF를 단정하지 않고 장비의 실제 관리 설정을 구분합니다. 기존 협상 판정 및 실패 원인은 상세 내용·CSV에 유지합니다. v0.8.0은 아직 릴리스하지 않았으며 [v0.7.0](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.7.0)이 최신 공개 버전입니다.
+> **v0.8.0 A안 화면 개선:** 포트 통합 관리 대상 입력을 펼친 상태로 시작하며, 상하 분할선으로 입력/조회 결과 높이를 조절할 수 있습니다. 입력을 접으면 가로폭 전체의 조회 결과가 확대됩니다. 엑셀 붙여넣기 창(1120×750)은 원본/검증 미리보기를 좌우 분할로 표시하고 모든 대상 스위치를 확인합니다. 'PoE 판정' 및 '조회 상태' 열은 '포트 상태(Enable/Disable · Link Up/Down)'와 'PoE 상태(Power Enable 및 실제 공급)'로 바꾸고 상세 근거는 CSV에 유지합니다.
 
 ## 포트폴리오 요약
 
@@ -175,7 +175,7 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 
 ## 빠른 시작
 
-1. GitHub **Releases**에서 게시된 `Aruba2930FConfigBackup_v0.4.0_windows_x64.zip`을 받습니다.
+1. GitHub **Releases**에서 게시된 `Aruba2930FConfigBackup_v0.8.0_windows_x64.zip`을 받습니다.
    아직 게시되지 않은 개발 버전은 해당 PR의 성공한 Windows CI 실행에서
    `Aruba2930FConfigBackup-windows-x64-ci` 아티팩트를 내려받습니다.
 2. 함께 제공되는 `.sha256` 파일로 ZIP 해시를 확인합니다.
