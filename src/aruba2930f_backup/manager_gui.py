@@ -444,9 +444,22 @@ class NetworkManagerWindow(QMainWindow):
         detail = QWidget(body)
         detail_layout = QVBoxLayout(detail)
         detail_layout.setContentsMargins(5, 0, 0, 0)
-        detail_layout.addWidget(QLabel("선택 포트 상세 · 고급 제어", detail))
+        detail_layout.addWidget(QLabel("선택 포트 상세", detail))
         detail_layout.addWidget(details_scroll)
         self._layout_port_control_buttons(control_group)
+        self.port_advanced_toggle = QToolButton(detail)
+        self.port_advanced_toggle.setObjectName("portAdvancedControlToggle")
+        self.port_advanced_toggle.setText("고급 제어 · 단일 포트 / 기존 계획 기능")
+        self.port_advanced_toggle.setToolTip(
+            "일반 PoE 작업은 화면 하단 버튼만 사용하세요. "
+            "포트 Up/Down·단일 포트 상세 제어·기존 계획 승인은 여기서 사용할 수 있습니다."
+        )
+        self.port_advanced_toggle.setCheckable(True)
+        self.port_advanced_toggle.setChecked(False)
+        self.port_advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.port_advanced_toggle.toggled.connect(self._toggle_port_advanced)
+        detail_layout.addWidget(self.port_advanced_toggle)
+        control_group.setVisible(False)
         detail_layout.addWidget(control_group)
         detail_layout.addStretch(1)
         right = QScrollArea(port)
@@ -513,6 +526,15 @@ class NetworkManagerWindow(QMainWindow):
                     "포트 체크박스로 전체·스위치별 대상을 선택하세요. "
                     "일괄 OFF/Down은 LLDP로 확인된 AP-535만 허용합니다."
                 )
+
+    @Slot(bool)
+    def _toggle_port_advanced(self, expanded: bool) -> None:
+        group = self.port_page.batch_progress.parentWidget()
+        if group is not None:
+            group.setVisible(expanded)
+        self.port_advanced_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
 
     @Slot(bool)
     def _toggle_port_targets(self, expanded: bool) -> None:
@@ -705,6 +727,16 @@ class NetworkManagerWindow(QMainWindow):
                 )
                 if ips:
                     port._replace_targets_rows(tuple((ip, "22", "", "") for ip in ips))
+            # Reuse in-memory session credentials only when the port fields are
+            # empty. Never persist or silently overwrite separately set credentials.
+            backup = self.backup_page
+            for source, destination in (
+                (backup.username_input, port.username_input),
+                (backup.password_input, port.password_input),
+                (backup.enable_password_input, port.enable_password_input),
+            ):
+                if not destination.text() and source.text():
+                    destination.setText(source.text())
             if not port.isVisible():
                 port.show()
         if index == 3:
