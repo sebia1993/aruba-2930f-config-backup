@@ -438,3 +438,22 @@ def test_common_ssh_account_dialog_is_shared_and_reprompts_after_clear(
     assert window._require_ssh_credentials().username == "network-operator"
     assert len(calls) == 3
     window.close()
+
+
+def test_port_vertical_splitter_expands_input_and_preserves_results(app: QApplication) -> None:
+    from PySide6.QtCore import Qt
+
+    window = make_window(app)
+    window.navigate(2)
+    port = window.port_page
+    assert window.port_target_toggle.isChecked()
+    assert window.port_target_scroll.isVisible()
+    assert window.port_vertical_splitter.orientation() == Qt.Orientation.Vertical
+    assert port.result_tree.parentWidget() is not None
+    window.port_target_toggle.setChecked(False)
+    assert not window.port_target_scroll.isVisible()
+    assert port.result_tree.isVisible()
+    window.port_target_toggle.setChecked(True)
+    assert window.port_target_scroll.isVisible()
+    assert port.result_tree.isVisible()
+    window.close()
