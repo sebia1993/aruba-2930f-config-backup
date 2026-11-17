@@ -325,6 +325,8 @@ def test_ssh_account_is_shared_without_copying_passwords_to_feature_views(
 
     # Backup's legacy per-run clear must not revoke the integrated session.
     backup._finalize_completed_run()
+    # Even if a stale legacy input was populated, navigation must not copy it.
+    backup.password_input.setText("stale-legacy-password")
     assert window.navigate(2)
     port = window.port_page
     assert port._credentials() is session.require()
