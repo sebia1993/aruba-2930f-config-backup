@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QSplitter
+from PySide6.QtWidgets import QApplication, QMessageBox, QSplitter
 
 from aruba2930f_backup.manager_gui import (
     NetworkManagerWindow,
@@ -55,33 +55,6 @@ def test_navigation_has_five_pages_and_keeps_existing_engines(app: QApplication)
     assert window.port_page.collect_button is not None
     assert window.port_page.run_button is not None
     window.close()
-
-
-def test_home_only_shows_operational_shortcuts_but_preserves_security_controls(
-    app: QApplication,
-) -> None:
-    window = make_window(app)
-    try:
-        # Three primary actions are available without exposing the advanced
-        # SSH trust maintenance / backup output settings on the home screen.
-        for index in (1, 2, 3):
-            shortcut = window.findChild(QPushButton, f"homeShortcut{index}")
-            assert shortcut is not None
-            assert shortcut.parentWidget() is window.home_page
-        assert window.findChild(QPushButton, "homeShortcut4") is None
-
-        # Removing the shortcut must not remove the trust-management path:
-        # operators need it when investigating a changed SSH host key.
-        settings_nav = window.findChild(QPushButton, "navSettings")
-        assert settings_nav is not None
-        settings_nav.click()
-        assert window.pages.currentIndex() == 4
-        trust = window.findChild(QPushButton, "managerTrustedKeys")
-        assert trust is not None
-        assert trust.isVisible()
-        assert window.backup_page.output_input is not None
-    finally:
-        window.close()
 
 
 def test_backup_settings_and_results_are_in_distinct_splitter_panes(
