@@ -870,3 +870,52 @@ def test_large_query_gui_batches_result_signals_without_losing_final_state(
     assert not dialog._render_queue
     assert item.text(5) == "실패"
     dialog.close()
+
+
+def test_port_and_poe_administrative_status_are_visible_without_opening_details(
+    app: QApplication, qtbot: object
+) -> None:
+    from dataclasses import replace
+
+    dialog, _service = setup_dialog(qtbot)
+    group = dialog._validated_targets()[0]
+    dialog._build_results((group,))
+    result = phase_result(group)
+    assert result.snapshot is not None
+
+    admin_disabled = replace(
+        result,
+        snapshot=replace(
+            result.snapshot,
+            enabled=False,
+            link_status="Down",
+            poe_enabled=True,
+            poe_status="Searching",
+            watts=0.0,
+        ),
+    )
+    dialog._on_result(admin_disabled)
+    item = dialog._items[(group.target.endpoint, group.interfaces[0])]
+    assert item.text(2) == "0 W"
+    assert item.text(6) == "포트 Disable · PoE 대기"
+    assert "PoE OFF라고 단정할 수 없습니다" in item.toolTip(6)
+    assert dialog.result_tree.headerItem().text(6) == "포트 / PoE 상태"
+    assert dialog.result_tree.header().visualIndex(6) == 3
+    dialog.result_tree.setCurrentItem(item)
+    assert "포트/PoE 관리 상태" in dialog.details_label.text()
+
+    manual_poe_off = replace(
+        admin_disabled,
+        snapshot=replace(
+            result.snapshot,
+            enabled=True,
+            poe_enabled=False,
+            poe_status="사용 안 함",
+            watts=None,
+        ),
+    )
+    dialog._on_result(manual_poe_off)
+    assert item.text(2) == "확인 안 됨"
+    assert item.text(6) == "PoE OFF(설정)"
+    assert "Power Enable=No" in item.toolTip(6)
+    dialog.close()
