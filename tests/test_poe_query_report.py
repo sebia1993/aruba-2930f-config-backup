@@ -368,3 +368,33 @@ def test_csv_rejects_naive_phase_time_without_replacing_existing_file(
     with pytest.raises(ValueError, match="시간대"):
         write_query_csv(path, [result])
     assert path.read_bytes() == b"original"
+
+
+def test_csv_explains_admin_disabled_and_poe_off_separately(tmp_path: Path) -> None:
+    group = make_target("192.0.2.10", 22, "12,24")
+    administrative_disable = PortSnapshot(
+        group.target, "12", "LAB-SW-10", "Aruba 2930F",
+        False, "Down", True, "Searching", 0.0
+    )
+    manual_power_off = PortSnapshot(
+        group.target, "24", "LAB-SW-10", "Aruba 2930F",
+        True, "Down", False, "사용 안 함", None
+    )
+    out = tmp_path / "causes.csv"
+    write_query_csv(
+        out,
+        [
+            PoEQueryResult(group, "12", QueryStatus.OK, administrative_disable),
+            PoEQueryResult(group, "24", QueryStatus.OK, manual_power_off),
+        ],
+    )
+    entries = read_rows(out)
+    assert entries[0]["enabled"] == "no"
+    assert entries[0]["poe_enabled"] == "yes"
+    assert entries[0]["port_poe_state"] == "포트 Disable · PoE 대기"
+    assert entries[0]["watts"] == "0"
+    assert "PoE OFF라고 단정" in entries[0]["port_poe_explanation"]
+    assert entries[1]["enabled"] == "yes"
+    assert entries[1]["poe_enabled"] == "no"
+    assert entries[1]["port_poe_state"] == "PoE OFF(설정)"
+    assert entries[1]["watts"] == ""
