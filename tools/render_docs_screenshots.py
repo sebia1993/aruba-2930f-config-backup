@@ -291,7 +291,10 @@ def _save_network_manager(output: Path) -> None:
     manager = NetworkManagerWindow()
     manager.resize(1320, 840)
     manager.backup_page.ip_input.setPlainText("192.0.2.10\n192.0.2.20")
-    manager.backup_page.username_input.setText("documentation-only")
+    # The real GUI must show one configured account in the global header,
+    # never duplicate credentials in the backup or port tabs.
+    manager._ssh_credentials.configure("demo-operator", "documentation-only")
+    manager._refresh_ssh_session_status()
     manager.show()
     app.processEvents()
     if not manager.grab().save(str(output / "manager-home.png"), "PNG"):
