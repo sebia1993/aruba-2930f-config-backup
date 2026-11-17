@@ -198,6 +198,7 @@ class PortSession(Protocol):
     def send_show(self, command: str) -> str: ...
     def read_interfaces(self) -> str: ...
     def read_poe(self, interface: str) -> str: ...
+    def read_lldp(self, interface: str) -> str: ...
     def change_port(self, interface: str, action: str) -> None: ...
     def close(self) -> None: ...
 
@@ -328,6 +329,7 @@ class PortControlService:
         credentials: Credentials,
         *,
         confirmation: str,
+        expected_lldp_identity: tuple[str, str] | None = None,
     ) -> PortOperationResult:
         with self._exclusive():
             approved, self._snapshot = self._snapshot, None
@@ -341,6 +343,12 @@ class PortControlService:
                 )
             if not isinstance(action, PortAction):
                 raise ValueError("지원하지 않는 포트 제어 동작입니다.")
+            if expected_lldp_identity is not None and (
+                action not in (PortAction.POE_OFF, PortAction.DISABLE)
+                or len(expected_lldp_identity) != 2
+                or not all(isinstance(value, str) and value for value in expected_lldp_identity)
+            ):
+                raise ValueError("일괄 전원 차단의 LLDP 장비 식별 정보가 올바르지 않습니다.")
             if action.is_poe and snapshot.poe_enabled is None:
                 raise ValueError(
                     "이 포트의 PoE 지원/사용 설정을 확인할 수 없어 전원을 제어할 수 없습니다."
@@ -364,6 +372,25 @@ class PortControlService:
                         ErrorCode.INPUT_INVALID,
                         "조회 후 대상 정보 또는 포트 설정이 변경되었습니다. 다시 조회하세요.",
                     )
+                if expected_lldp_identity is not None:
+                    # A fresh LLDP read on the *same SSH session* as the write
+                    # rejects a rewired or replaced neighbor, even if the
+                    # switch hostname and PoE configuration are unchanged.
+                    from .poe_power import parse_lldp_neighbors
+
+                    neighbors = parse_lldp_neighbors(
+                        session.read_lldp(before.interface), before.interface
+                    )
+                    if (
+                        len(neighbors) != 1
+                        or neighbors[0].model != "AP-535"
+                        or (neighbors[0].chassis_id, neighbors[0].port_id)
+                        != expected_lldp_identity
+                    ):
+                        raise CollectionFailure(
+                            ErrorCode.INPUT_INVALID,
+                            "LLDP 이웃 장비가 최초 AP-535 조회와 일치하지 않아 명령을 차단했습니다.",
+                        )
                 return self._apply_once(session, before, action)
             except CollectionFailure:
                 raise
