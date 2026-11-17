@@ -14,7 +14,6 @@ from aruba2930f_backup.port_power_diagnosis import (
     port_admin_link_label,
 )
 
-
 BASE = PortSnapshot(
     DeviceTarget("192.0.2.10", 22),
     "24",
