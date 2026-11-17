@@ -657,7 +657,9 @@ class PoEQueryDialog(QDialog):
     def _on_result(self, value: object) -> None:
         # Large jobs deliver up to two observations per port. Coalescing GUI
         # writes keeps the main event loop responsive even at 14,400 ports.
-        if self._run_total > 750:
+        # The operator typically queries just 1-2 ports on each of many
+        # switches. Coalesce by switch count as well as raw port count.
+        if self._run_total > 750 or len(self._groups) >= 100:
             self._render_queue.append(cast(PoEQueryResult, value))
             if not self._render_timer.isActive():
                 self._render_timer.start()
