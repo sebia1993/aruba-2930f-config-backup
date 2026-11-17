@@ -72,6 +72,10 @@ class Device:
         self.ignore_change = False
         self.malformed = False
         self.probes = 0
+        self.lldp_chassis = "00:11:22:33:44:55"
+        self.lldp_port = "eth0"
+        self.lldp_model = "AP-535"
+        self.lldp_failure = False
 
     def probe(self, target: DeviceTarget, *, timeout: float = 15.0) -> HostKeyObservation:
         self.probes += 1
@@ -136,6 +140,22 @@ class Session:
         if d.poe_enabled:
             text += f"Detection Status : {d.poe_status}\nPower : 0 W\n"
         return text
+
+    def read_lldp(self, interface: str) -> str:
+        d = self.device
+        if d.lldp_failure:
+            raise TimeoutError("synthetic LLDP timeout")
+        if d.lldp_model == "none":
+            return "LLDP Remote Device Information Detail\nNo neighbors found.\n"
+        return (
+            "LLDP Remote Device Information Detail\n"
+            f" Local Port :{interface}\n"
+            " ChassisType :mac-address\n"
+            f" ChassisId :{d.lldp_chassis}\n"
+            " PortType :local\n"
+            f" PortId :{d.lldp_port}\n"
+            f" System Descr :Aruba {d.lldp_model}\n"
+        )
 
     def change_port(self, interface: str, action: str) -> None:
         d = self.device
@@ -512,3 +532,64 @@ def test_legacy_format_rejects_configuration_format_fields(extra: str) -> None:
             "Status and Counters - Port Power Status for port 24\nPower Enable : No\n" + extra,
             "24",
         )
+
+
+def test_bulk_off_requires_current_lldp_identity_in_the_write_session(setup: Any) -> None:
+    service, d, _ = setup
+    snapshot = inspect(service, d)
+    identity = (d.lldp_chassis, d.lldp_port)
+    result = service.apply(
+        snapshot,
+        PortAction.POE_OFF,
+        CREDENTIALS,
+        confirmation=snapshot.confirmation_text,
+        expected_lldp_identity=identity,
+    )
+    assert result.status == "verified"
+    assert d.mutations == [("24", "poe_off")]
+    assert all(session.closed for session in d.sessions)
+
+
+@pytest.mark.parametrize(
+    "change", ["chassis", "port", "model", "missing", "failed"]
+)
+def test_bulk_off_rejects_rewired_missing_or_unverified_lldp_before_write(
+    setup: Any, change: str
+) -> None:
+    service, d, _ = setup
+    snapshot = inspect(service, d)
+    expected = (d.lldp_chassis, d.lldp_port)
+    if change == "chassis":
+        d.lldp_chassis = "66:77:88:99:aa:bb"
+    elif change == "port":
+        d.lldp_port = "eth9"
+    elif change == "model":
+        d.lldp_model = "AP-515"
+    elif change == "missing":
+        d.lldp_model = "none"
+    else:
+        d.lldp_failure = True
+    with pytest.raises(CollectionFailure):
+        service.apply(
+            snapshot,
+            PortAction.POE_OFF,
+            CREDENTIALS,
+            confirmation=snapshot.confirmation_text,
+            expected_lldp_identity=expected,
+        )
+    assert d.mutations == []
+    assert all(session.closed for session in d.sessions)
+
+
+def test_lldp_expectation_is_not_accepted_for_on_operation(setup: Any) -> None:
+    service, d, _ = setup
+    snapshot = inspect(service, d)
+    with pytest.raises(ValueError, match="LLDP"):
+        service.apply(
+            snapshot,
+            PortAction.POE_ON,
+            CREDENTIALS,
+            confirmation=snapshot.confirmation_text,
+            expected_lldp_identity=(d.lldp_chassis, d.lldp_port),
+        )
+    assert not d.mutations
