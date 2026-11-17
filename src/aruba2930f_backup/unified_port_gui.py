@@ -880,7 +880,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             self.plan_button.setEnabled(self.plan_button.isEnabled() and not locked)
             self.action_combo.setEnabled(not locked)
             self.single_button.setEnabled(self.single_button.isEnabled() and not locked)
-            for button in (
+            for control in (
                 self.collect_button,
                 self.refresh_group_button,
                 self.refresh_port_button,
@@ -891,7 +891,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 self.advanced_toggle,
                 self.targets_table,
             ):
-                button.setEnabled(not locked)
+                control.setEnabled(not locked)
         if hasattr(self, "cycle_button"):
             self._update_cycle_controls()
 
@@ -1226,7 +1226,10 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 PowerCyclePhase.VERIFY_ON: "PoE 복구 확인",
                 PowerCyclePhase.INTERRUPTED: "중단 상태 확인",
             }
-            self.quick_cycle_button.setText(short_labels.get(phase, "PoE 재가동…"))
+            label = "PoE 재가동…"
+            if phase is not None:
+                label = short_labels.get(phase, label)
+            self.quick_cycle_button.setText(label)
             self.quick_cycle_button.setEnabled(
                 not self.is_busy
                 and (
