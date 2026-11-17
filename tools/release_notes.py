@@ -58,7 +58,9 @@ def _render(version: str, body: str) -> str:
     if not highlights_text:
         highlights_text = "- 세부 변경 내용은 아래 버전 변경 내역을 확인하십시오."
 
-    has_port_control = tuple(int(part) for part in version.split(".")) >= (0, 2, 0)
+    version_parts = tuple(int(part) for part in version.split("."))
+    has_port_control = version_parts >= (0, 2, 0)
+    has_grouped_query = version_parts >= (0, 3, 0)
     operation_scope = (
         "- 백업은 **읽기 전용 설정 수집**이며 설정 모드에 진입하지 않습니다.\n"
         "- 별도 **포트 제어** 창은 SW IP와 단일 인터페이스를 확인한 뒤 "
@@ -87,6 +89,26 @@ def _render(version: str, body: str) -> str:
         if has_port_control
         else ""
     )
+    if has_grouped_query:
+        operation_scope += (
+            "\n- **포트 전력 조회**는 여러 스위치별로 지정한 포트를 읽고, "
+            "IP와 실제 호스트네임으로 묶어 포트별 W·LLDP AP 이름·AP-535 공급 판정을 표시합니다. "
+            "기본 입력은 IP와 인터페이스 목록이며 비기본 SSH 포트는 고급 설정에서 유지합니다. "
+            "장비 설정을 변경하지 않습니다."
+            "\n- 조회 대상 목록은 JSON으로 저장·불러오기 하며 계정과 암호를 저장하지 않습니다. "
+            "CSV 결과에는 포트별 전력·LLDP·판정 근거와 각각의 조회 시각이 포함됩니다."
+            "\n- PoE를 먼저 표시한 뒤 같은 연결에서 LLDP를 조회합니다. "
+            "LLDP 실패·취소가 이미 수집한 전력을 지우지 않습니다."
+        )
+        configuration_limit += (
+            "\n- 전력 조회는 공통 계정으로 최대 3대의 스위치에 동시 접속하고, "
+            "각 스위치의 포트를 순서대로 읽습니다. 값이 없는 전력은 0 W로 추정하지 않습니다."
+            "\n- 조회 대상 목록과 CSV에는 장비 식별 정보가 포함됩니다. "
+            "자동 반복 측정·일괄 전원 제어는 포함하지 않습니다."
+            "\n- AP-535 공급·협상 정상은 해당 포트의 지원 전원과 유효 요청 충족을 뜻합니다. "
+            "실측 W 하한으로 판정하지 않으며 AP 내부 IPM·라디오·서비스 상태는 별도 확인 범위입니다."
+        )
+        port_control_document += "\n- [다중 스위치·포트 전력 조회](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/POE_QUERY_KO.md)"
 
     return f"""# Aruba 2930F 설정 백업 v{version}
 

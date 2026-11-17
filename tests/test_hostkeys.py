@@ -214,3 +214,325 @@ def test_approve_rejects_fabricated_non_unknown_review(tmp_path) -> None:
         store.approve([fabricated])
 
     assert captured.value.code is ErrorCode.HOST_KEY_REJECTED
+
+
+def _unknown(address: str, key: bytes = b"public-key-a"):
+    from aruba2930f_backup.models import HostKeyCheck
+
+    return HostKeyCheck(
+        HostKeyObservation(DeviceTarget(address, 22), "ssh-ed25519", sha256_fingerprint(key)),
+        HostKeyTrustState.UNKNOWN,
+    )
+
+
+@pytest.mark.parametrize("operation", ["approve", "remove", "changed"])
+def test_concurrent_store_transactions_preserve_updates(tmp_path, operation) -> None:
+    """An instance-local lock must not allow stale read/merge/replace writes."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = tmp_path / "known_hosts.json"
+    first = HostKeyStore(path)
+    (path.parent / "nested").mkdir()
+    second = HostKeyStore(path.parent / "nested" / ".." / path.name)
+    unrelated = _unknown("192.0.2.1")
+    removed = _unknown("192.0.2.2")
+    first.approve([unrelated, removed])
+    write_entered = threading.Event()
+    release_write = threading.Event()
+    second_entered = threading.Event()
+    second_finished = threading.Event()
+    original_write = first._write_endpoints
+
+    def held_write(endpoints):
+        write_entered.set()
+        assert release_write.wait(10), "transaction was not released"
+        original_write(endpoints)
+
+    first._write_endpoints = held_write
+    added = _unknown("192.0.2.3")
+
+    def competing_update():
+        second_entered.set()
+        try:
+            if operation == "remove":
+                return second.remove(removed.observation.target)
+            check = (
+                _unknown("192.0.2.3", b"changed")
+                if operation == "changed"
+                else _unknown("192.0.2.4")
+            )
+            second.approve([check])
+            return None
+        finally:
+            second_finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(first.approve, [added])
+        try:
+            assert write_entered.wait(5)
+            contender = pool.submit(competing_update)
+            assert second_entered.wait(5)
+            # The old implementation finishes here with a stale snapshot. A
+            # correct transaction waits for the held writer; no sleep is used.
+            second_finished.wait(0.5)
+        finally:
+            release_write.set()
+        writer.result(timeout=5)
+        if operation == "changed":
+            with pytest.raises(CollectionFailure) as captured:
+                contender.result(timeout=5)
+            assert captured.value.code is ErrorCode.HOST_KEY_CHANGED
+        else:
+            result = contender.result(timeout=5)
+            if operation == "remove":
+                assert result is True
+
+    expected = {"192.0.2.1:22", "192.0.2.3:22"}
+    if operation != "remove":
+        expected.add("192.0.2.2:22")
+    if operation == "approve":
+        expected.add("192.0.2.4:22")
+    assert {key.endpoint for key in first.list_approved()} == expected
+    assert first.check(added.observation).state is HostKeyTrustState.TRUSTED
+
+
+def _stop_children(*children) -> None:
+    for child in children:
+        if child.pid is not None:
+            child.join(timeout=5)
+            if child.is_alive():
+                child.terminate()
+                child.join(timeout=5)
+            assert not child.is_alive()
+            child.close()
+
+
+def test_spawned_process_approvals_do_not_lose_updates(tmp_path) -> None:
+    import multiprocessing
+
+    from tests.hostkey_process_worker import approve_in_child
+
+    context = multiprocessing.get_context("spawn")
+    path = tmp_path / "known_hosts.json"
+    entered_a, entered_b, write_entered, release = [context.Event() for _ in range(4)]
+    finished_a, finished_b = context.Event(), context.Event()
+    result_a, send_a = context.Pipe(duplex=False)
+    result_b, send_b = context.Pipe(duplex=False)
+    first = context.Process(
+        target=approve_in_child,
+        args=(
+            str(path),
+            "192.0.2.1",
+            entered_a,
+            finished_a,
+            send_a,
+            write_entered,
+            release,
+        ),
+    )
+    second = context.Process(
+        target=approve_in_child,
+        args=(
+            str(path),
+            "192.0.2.2",
+            entered_b,
+            finished_b,
+            send_b,
+        ),
+    )
+    try:
+        first.start()
+        assert write_entered.wait(10)
+        second.start()
+        assert entered_b.wait(10)
+        finished_b.wait(0.5)
+        release.set()
+        assert finished_a.wait(10)
+        assert finished_b.wait(10)
+        assert result_a.poll(1) and result_a.recv()[0] == "approved"
+        assert result_b.poll(1) and result_b.recv()[0] == "approved"
+    finally:
+        release.set()
+        _stop_children(first, second)
+        for connection in (result_a, result_b, send_a, send_b):
+            connection.close()
+
+    assert {key.endpoint for key in HostKeyStore(path).list_approved()} == {
+        "192.0.2.1:22",
+        "192.0.2.2:22",
+    }
+
+
+@pytest.mark.parametrize("operation", ["approve", "remove"])
+def test_store_busy_timeout_is_safe_and_preserves_records(tmp_path, monkeypatch, operation) -> None:
+    import multiprocessing
+    import time
+
+    from tests.hostkey_process_worker import hold_lock_in_child
+
+    path = tmp_path / "known_hosts.json"
+    store = HostKeyStore(path)
+    store.approve([store.check(observation())])
+    before = path.read_bytes()
+    context = multiprocessing.get_context("spawn")
+    acquired, release = context.Event(), context.Event()
+    holder = context.Process(target=hold_lock_in_child, args=(str(path), acquired, release))
+    monkeypatch.setattr("aruba2930f_backup.hostkey_lock._LOCK_WAIT_SECONDS", 0.15)
+    try:
+        holder.start()
+        assert acquired.wait(10)
+        start = time.monotonic()
+        with pytest.raises(CollectionFailure) as captured:
+            if operation == "approve":
+                store.approve([_unknown("192.0.2.2")])
+            else:
+                store.remove(TARGET)
+        assert captured.value.code is ErrorCode.HOST_KEY_REJECTED
+        assert str(path) not in str(captured.value)
+        assert time.monotonic() - start < 2
+        assert path.read_bytes() == before
+    finally:
+        release.set()
+        _stop_children(holder)
+
+    # Timeout must release the caller's descriptor and not poison future work.
+    assert store.remove(TARGET)
+
+
+def test_crashed_process_does_not_leave_a_stale_lock(tmp_path) -> None:
+    import multiprocessing
+
+    from tests.hostkey_process_worker import hold_lock_in_child
+
+    path = tmp_path / "known_hosts.json"
+    context = multiprocessing.get_context("spawn")
+    acquired, release = context.Event(), context.Event()
+    holder = context.Process(target=hold_lock_in_child, args=(str(path), acquired, release))
+    try:
+        holder.start()
+        assert acquired.wait(10)
+        holder.terminate()
+        holder.join(timeout=5)
+        assert not holder.is_alive()
+        store = HostKeyStore(path)
+        store.approve([store.check(observation())])
+        assert store.check(observation()).state is HostKeyTrustState.TRUSTED
+    finally:
+        # A terminated process may die inside Event.wait's condition protocol;
+        # never reuse that synchronization object after forced process death.
+        _stop_children(holder)
+
+
+@pytest.mark.parametrize("operation", ["approve", "remove"])
+@pytest.mark.parametrize("failure_point", ["fsync", "replace"])
+def test_transaction_write_failure_preserves_approved_records(
+    tmp_path,
+    monkeypatch,
+    operation,
+    failure_point,
+) -> None:
+    from pathlib import Path
+
+    path = tmp_path / "known_hosts.json"
+    store = HostKeyStore(path)
+    store.approve([store.check(observation())])
+    before = path.read_bytes()
+
+    def fail(*args, **kwargs):
+        raise OSError("private filesystem details")
+
+    if failure_point == "fsync":
+        monkeypatch.setattr("aruba2930f_backup.hostkeys.os.fsync", fail)
+    else:
+        monkeypatch.setattr(Path, "replace", fail)
+    with pytest.raises(CollectionFailure) as captured:
+        if operation == "approve":
+            store.approve([_unknown("192.0.2.2")])
+        else:
+            store.remove(TARGET)
+    assert captured.value.code is ErrorCode.HOST_KEY_REJECTED
+    assert "private filesystem details" not in str(captured.value)
+    assert path.read_bytes() == before
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("operation", ["approve", "remove"])
+def test_corrupt_store_cannot_be_overwritten_by_transactions(tmp_path, operation) -> None:
+    path = tmp_path / "known_hosts.json"
+    path.write_text("damaged store", encoding="utf-8")
+    store = HostKeyStore(path)
+    with pytest.raises(CollectionFailure) as captured:
+        if operation == "approve":
+            store.approve([_unknown("192.0.2.2")])
+        else:
+            store.remove(TARGET)
+    assert captured.value.code is ErrorCode.HOST_KEY_REJECTED
+    assert path.read_text(encoding="utf-8") == "damaged store"
+
+
+@pytest.mark.parametrize("operation", ["approve", "remove"])
+def test_lock_io_failure_is_safe_and_preserves_store(tmp_path, monkeypatch, operation) -> None:
+    path = tmp_path / "known_hosts.json"
+    store = HostKeyStore(path)
+    store.approve([store.check(observation())])
+    before = path.read_bytes()
+
+    def fail(handle):
+        raise OSError("private lock details")
+
+    monkeypatch.setattr("aruba2930f_backup.hostkey_lock._try_lock", fail)
+    with pytest.raises(CollectionFailure) as captured:
+        if operation == "approve":
+            store.approve([_unknown("192.0.2.2")])
+        else:
+            store.remove(TARGET)
+    assert captured.value.code is ErrorCode.HOST_KEY_REJECTED
+    assert "private lock details" not in str(captured.value)
+    assert path.read_bytes() == before
+
+
+def test_file_symlink_alias_approval_and_removal_share_one_store(tmp_path) -> None:
+    """Atomic replacement through an alias must update its canonical store."""
+    path = tmp_path / "known_hosts.json"
+    target_store = HostKeyStore(path)
+    original = _unknown("192.0.2.1")
+    target_store.approve([original])
+    alias = tmp_path / "alias.json"
+    try:
+        alias.symlink_to(path.name)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"file symlinks are unavailable in this environment: {exc}")
+    alias_store = HostKeyStore(alias)
+    alias_added = _unknown("192.0.2.2")
+    target_added = _unknown("192.0.2.3")
+
+    alias_store.approve([alias_added])
+    assert target_store.check(alias_added.observation).state is HostKeyTrustState.TRUSTED
+    target_store.approve([target_added])
+    assert alias_store.check(target_added.observation).state is HostKeyTrustState.TRUSTED
+    assert alias.is_symlink()
+    expected = {"192.0.2.1:22", "192.0.2.2:22", "192.0.2.3:22"}
+    assert {key.endpoint for key in target_store.list_approved()} == expected
+    assert alias_store.list_approved() == target_store.list_approved()
+
+    assert alias_store.remove(original.observation.target)
+    assert target_store.check(original.observation).state is HostKeyTrustState.UNKNOWN
+    assert target_store.remove(alias_added.observation.target)
+    assert alias_store.check(alias_added.observation).state is HostKeyTrustState.UNKNOWN
+    assert alias_store.list_approved() == target_store.list_approved()
+    assert {key.endpoint for key in alias_store.list_approved()} == {"192.0.2.3:22"}
+    assert alias.is_symlink()
+
+
+def test_store_path_resolution_failure_is_safe(tmp_path, monkeypatch) -> None:
+    from pathlib import Path
+
+    def fail(path, *args, **kwargs):
+        raise OSError("private resolution details")
+
+    monkeypatch.setattr(Path, "resolve", fail)
+    with pytest.raises(CollectionFailure) as captured:
+        HostKeyStore(tmp_path / "known_hosts.json")
+    assert captured.value.code is ErrorCode.HOST_KEY_REJECTED
+    assert "private resolution details" not in str(captured.value)

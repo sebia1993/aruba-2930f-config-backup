@@ -1,0 +1,30 @@
+LLDP Remote Device Information Detail
+
+ Local Port   : 13
+ ChassisType  : mac-address
+ ChassisId    : 020000-000053
+ PortType     : mac-address
+ PortId       : 02 00 00 00 00 54
+ SysName      : fictional-ap-535
+ System Descr : ArubaOS (MODEL: 535), Version fictional AP
+ PortDescr    : eth0
+ Pvid         : 1
+
+ System Capabilities Supported : bridge, wlan-access-point
+ System Capabilities Enabled   : wlan-access-point
+
+ Remote Management Address
+    Type    : ipv4
+    Address : 192.0.2.53
+
+ Poe Plus Information Detail
+
+    Poe Device Type           : Type2 PD
+    Power Source              : Only PSE
+    Power Priority            : Unknown
+    PD Requested Power Value  : 25.5 Watts
+    PSE Allocated Power Value : 25.5 Watts
+
+ MED Information Detail
+
+    Endpoint Class : Class III

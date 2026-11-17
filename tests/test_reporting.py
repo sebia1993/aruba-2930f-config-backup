@@ -202,3 +202,16 @@ def test_jsonl_logger_preserves_retry_round_and_delay_but_not_target(tmp_path: P
     assert record["error_code"] == "TCP_TIMEOUT"
     assert "target" not in record
     assert "192.0.2.10" not in json.dumps(record)
+
+
+def test_result_workbook_persists_safe_warnings_as_text(tmp_path: Path) -> None:
+    path = write_result_workbook(
+        tmp_path,
+        [],
+        summary=ReportSummary(warnings=("로그 저장 실패: 출력 경로를 확인하세요.", "=unsafe")),
+    )
+    workbook = load_workbook(path, data_only=False)
+    rows = list(workbook["Summary"].values)
+    assert ("Warning", "로그 저장 실패: 출력 경로를 확인하세요.") in rows
+    assert ("Warning", "'=unsafe") in rows
+    workbook.close()

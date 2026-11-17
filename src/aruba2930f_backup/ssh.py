@@ -20,7 +20,12 @@ from .models import (
     ErrorCode,
     HostKeyObservation,
 )
-from .validation import PAGER_MARKERS, require_valid_prompt, validate_cli_response
+from .validation import (
+    PAGER_MARKERS,
+    _config_banners_closed,
+    require_valid_prompt,
+    validate_cli_response,
+)
 
 
 class SSHSession(Protocol):
@@ -226,6 +231,7 @@ class NetmikoSSHSession:
             raw = self._read_until_prompt(
                 prompt,
                 cancel_event=cancel_event,
+                command=normalized_command,
             )
             output = _strip_command_and_prompt(raw, normalized_command, prompt)
             validate_cli_response(normalized_command, output)
@@ -274,6 +280,7 @@ class NetmikoSSHSession:
         prompt: str,
         *,
         cancel_event: CancellationSignal | None,
+        command: str | None = None,
     ) -> str:
         connection = self._require_connection()
         deadline = self._clock() + self._options.command_timeout_seconds
@@ -292,18 +299,23 @@ class NetmikoSSHSession:
                     max_bytes=self._options.max_output_bytes,
                     max_lines=self._options.max_output_lines,
                 )
-                output = (
-                    _remove_backspaces(_strip_ansi(output))
-                    .replace("\r\n", "\n")
-                    .replace("\r", "\n")
-                )
             elif output:
-                # Confirm one channel-idle read before interpreting a tail token.
-                # This avoids treating a legitimate line at a TCP chunk boundary
-                # as either the final prompt or the device pager.
-                clean_tail = output.rstrip()
+                # Retain raw text between reads: CRLF, ANSI escapes and backspace
+                # sequences may cross arbitrary channel boundaries (including idle).
+                clean_output = _clean_channel_text(output)
+                clean_tail = clean_output.rstrip()
                 pager_match = _tail_pager_match(clean_tail)
                 if pager_match is not None:
+                    if command == "show running-config" and not _config_banners_closed(
+                        _strip_command_and_prompt(
+                            clean_tail[: pager_match.start()], command, prompt
+                        )
+                    ):
+                        raise CollectionFailure(
+                            ErrorCode.PROMPT_PARSE_FAILED,
+                            "A pager marker occurred inside a banner; literal text and residual "
+                            "paging cannot be distinguished safely.",
+                        )
                     pager_advances += 1
                     if pager_advances > self._options.max_pager_advances:
                         raise CollectionFailure(
@@ -313,10 +325,25 @@ class NetmikoSSHSession:
                     prefix = clean_tail[: pager_match.start()]
                     if prefix.endswith("\n"):
                         prefix = prefix[:-1]
-                    output = prefix + output[len(clean_tail) :]
+                    pending_cr = output.endswith("\r")
+                    output = prefix + clean_output[len(clean_tail) :]
+                    # A pager is a consumed terminal control, so commit its cleaned
+                    # prefix, but keep a pending CR available to pair with the next LF.
+                    if pending_cr:
+                        output = output[:-1] + "\r"
                     connection.write_channel(" ")
-                elif _ends_with_prompt(output, prompt):
-                    return output
+                elif _ends_with_prompt(clean_output, prompt):
+                    if command is not None and not _has_command_echo(clean_output, command, prompt):
+                        self._sleep(0.05)
+                        continue
+                    # An idle read is not EOF. The candidate must be outside the
+                    # banner, and must not itself supply the banner's delimiter.
+                    if command == "show running-config" and not _config_banners_closed(
+                        _strip_command_and_prompt(clean_output, command, prompt)
+                    ):
+                        self._sleep(0.05)
+                        continue
+                    return clean_output
             self._sleep(0.05)
 
         raise CollectionFailure(
@@ -546,6 +573,11 @@ def _tail_pager_match(output: str) -> re.Match[str] | None:
         if matches and matches[-1].end() == len(output):
             return matches[-1]
     return None
+
+
+def _has_command_echo(output: str, command: str, prompt: str) -> bool:
+    first = output.lstrip().split("\n", maxsplit=1)[0].strip()
+    return first in {command, f"{prompt}{command}", f"{prompt} {command}"}
 
 
 def _strip_command_and_prompt(output: str, command: str, prompt: str) -> str:

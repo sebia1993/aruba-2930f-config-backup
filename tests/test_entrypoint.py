@@ -62,6 +62,22 @@ def test_default_entrypoint_delegates_to_gui(monkeypatch: object) -> None:
     assert entrypoint.main([]) == 17
 
 
+def test_smoke_rejects_broken_grouped_query_dialog(monkeypatch: object) -> None:
+    import aruba2930f_backup.poe_query_gui as query_gui
+
+    def unavailable_dialog(*args: object, **kwargs: object) -> None:
+        raise ImportError("Synthetic missing packaged query component")
+
+    captured: list[str] = []
+    monkeypatch.setattr(query_gui, "PoEQueryDialog", unavailable_dialog)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        entrypoint, "_show_fatal_diagnostic", lambda code: captured.append(code) or 1
+    )
+
+    assert entrypoint.main(["--smoke-test"]) == 1
+    assert len(captured) == 1
+
+
 def test_fatal_smoke_error_is_converted_to_diagnostic_code(monkeypatch: object) -> None:
     import aruba2930f_backup.diagnostics as diagnostics
 

@@ -290,6 +290,12 @@ def normalize_config_text(output: str) -> str:
             ErrorCode.PROMPT_PARSE_FAILED,
             "The running configuration output was empty.",
         )
+    if not _config_banners_closed(text):
+        raise CollectionFailure(
+            ErrorCode.PROMPT_PARSE_FAILED,
+            "The running configuration contains an incomplete banner.",
+            transient=True,
+        )
     if contains_pager_marker(text):
         raise CollectionFailure(
             ErrorCode.PROMPT_PARSE_FAILED,
@@ -297,6 +303,43 @@ def normalize_config_text(output: str) -> str:
             transient=True,
         )
     return text.rstrip("\n").replace("\n", "\r\n") + "\r\n"
+
+
+def _config_banners_closed(text: str) -> bool:
+    """Check opaque banner boundaries without interpreting banner text as CLI.
+
+    AOS-S 16.11 Basic Operation Guide, banner motd (pp. 12-14), documents
+    single-character delimiters, inline/multiline text, and backslash escapes:
+    https://arubanetworking.hpe.com/techdocs/AOS-Switch/16.11/
+    Aruba%20Basic%20Operation%20Guide%20for%20AOS-S%2016.11.pdf
+    This is a completeness guard, not a general running-config grammar.
+    """
+
+    delimiter: str | None = None
+    escaped = False
+    for line in text.split("\n"):
+        if delimiter is None:
+            match = re.fullmatch(r"[ \t]*banner[ \t]+motd(?:[ \t]+(.*))?", line, re.IGNORECASE)
+            if match is None:
+                continue
+            value = (match.group(1) or "").lstrip(" \t")
+            if not value:
+                return False
+            delimiter, line = value[0], value[1:]
+        for index, character in enumerate(line):
+            if escaped:
+                escaped = False
+            elif character == delimiter:
+                # Any further non-whitespace text leaves the boundary uncertain.
+                if line[index + 1 :].strip():
+                    return False
+                delimiter = None
+                break
+            elif character == "\\":
+                escaped = True
+        # A literal newline separates lines; it cannot escape the next character.
+        escaped = False
+    return delimiter is None
 
 
 def _recognized_skus(text: str) -> set[str]:

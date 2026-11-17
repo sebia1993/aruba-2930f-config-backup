@@ -1,0 +1,23 @@
+Status and Configuration Information for port 13
+
+ Power Enable    : Yes                PoE Port Status : Delivering
+ PLC Class/Type  : 4/2                Priority Config : low
+ DLC Class/Type  : 4/2                Pre-std Detect : off
+ Alloc By Config : usage              Configured Type : fictional
+ Alloc By Actual : lldp               PoE Value Config : n/a
+
+ PoE Counter Information
+
+ Over Current Cnt   : 0               MPS Absent Cnt : 0
+ Power Denied Cnt   : 0               Short Cnt : 0
+
+ LLDP Information
+
+ PSE Allocated Power Value : 25.5 W    PSE TLV Configured : dot3, MED
+ PD Requested Power Value : 25.5 W    PSE TLV Sent Type : dot3
+ MED LLDP Detect : Disabled           PD TLV Sent Type : dot3
+
+ Power Information
+
+ PSE Voltage : 54.9 V                 PSE Reserved Power : 9.4 W
+ PD Amperage Draw : 158 mA            PD Power Draw : 8.7 W

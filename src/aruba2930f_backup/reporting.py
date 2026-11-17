@@ -66,6 +66,7 @@ class ReportSummary:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     cancelled: bool = False
+    warnings: tuple[str, ...] = ()
 
 
 def _object_mapping(value: object) -> Mapping[str, Any]:
@@ -241,6 +242,8 @@ def write_result_workbook(
     )
     for field, value in summary_values:
         summary_sheet.append((field, neutralize_excel_text(value)))
+    for warning in report_summary.warnings:
+        summary_sheet.append(("Warning", neutralize_excel_text(warning)))
     _style_sheet(summary_sheet, widths=(24, 64))
 
     devices_sheet = workbook.create_sheet("Devices")

@@ -96,3 +96,25 @@ def test_legacy_release_notes_keep_the_original_read_only_scope() -> None:
     assert "설정 모드에 진입하거나 장비 구성을 변경하는 명령은 실행하지 않습니다." in notes
     assert "설정 복원 및 장비 구성 변경 기능은 제공하지 않습니다." in notes
     assert "포트 제어" not in notes
+
+
+@pytest.mark.parametrize("version", ["0.3.0", "0.10.0", "1.0.0"])
+def test_grouped_query_notes_explain_profiles_and_read_only_scope(version: str) -> None:
+    render = run_path(str(ROOT / "tools" / "release_notes.py"))["_render"]
+    notes = render(version, "### 추가\n\n- 다중 스위치 전력 조회\n")
+
+    assert "**포트 전력 조회**" in notes
+    assert "스위치별로 지정한 포트" in notes
+    assert "조회 대상 목록" in notes
+    assert "암호를 저장하지 않습니다" in notes
+    assert "CSV" in notes
+    assert "docs/POE_QUERY_KO.md" in notes
+    assert "PoE OFF/ON" in notes
+
+
+def test_older_notes_do_not_advertise_grouped_query() -> None:
+    render = run_path(str(ROOT / "tools" / "release_notes.py"))["_render"]
+    for version in ("0.1.8", "0.2.0", "0.2.1"):
+        notes = render(version, "### 추가\n\n- 기존 기능\n")
+        assert "**포트 전력 조회**" not in notes
+        assert "docs/POE_QUERY_KO.md" not in notes

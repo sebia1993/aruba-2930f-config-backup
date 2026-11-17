@@ -270,3 +270,34 @@ def test_prompt_failure_details_are_stable(prompt: str, detail: DiagnosticDetail
         require_valid_prompt(prompt)
 
     assert captured.value.diagnostic_detail is detail
+
+
+@pytest.mark.parametrize(
+    "banner",
+    [
+        "banner motd ^\nedge-lab#",
+        'banner motd "unfinished',
+        'banner motd "escaped closing quote\\"',
+        "banner motd",
+    ],
+)
+def test_unclosed_banner_cannot_be_normalized_as_a_successful_backup(banner) -> None:
+    with pytest.raises(CollectionFailure) as captured:
+        normalize_config_text(f'hostname "edge-lab"\n{banner}\n')
+    assert captured.value.code is ErrorCode.PROMPT_PARSE_FAILED
+
+
+@pytest.mark.parametrize(
+    "banner",
+    [
+        'banner motd "Welcome"',
+        'banner motd "Welcome\\" operator\\nnext line"',
+        'banner motd "Welcome\nedge-lab#\nclosing text"',
+        "banner motd ^Welcome^",
+        "banner motd ^\nWelcome\n^",
+        "banner motd #Welcome#",
+        "no banner motd",
+    ],
+)
+def test_supported_banner_forms_are_preserved_by_normalization(banner) -> None:
+    assert normalize_config_text(banner) == banner.replace("\n", "\r\n") + "\r\n"

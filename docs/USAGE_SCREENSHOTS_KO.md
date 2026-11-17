@@ -34,12 +34,27 @@
 - **읽을 값:** `MODEL_UNSUPPORTED`는 모델 검증 경계, `COMMAND_TIMEOUT`과 백업 `4/4`는 재시도 소진 예시다.
 - **주의·다음 행동:** 모델 차단을 해제하려고 무조건 재실행하지 않는다. 대상 모델을 확인하고, 타임아웃 장비는 연결·명령 응답과 진단 정보를 확인한 다음 재실행 범위를 정한다. [문제 해결](TROUBLESHOOTING.md)와 [오류 코드](ERROR_CODES.md)를 함께 읽는다.
 
+## 5. 스위치별 여러 포트의 전력·LLDP 조회
+
+![스위치별로 묶인 여러 포트의 전력과 오류](images/poe-query.png)
+
+- **행동:** 메인 화면의 `포트 전력 조회…`를 열고 IP·인터페이스 목록 두 칸을 입력한다.
+  표 붙여넣기와 JSON 대상 목록 저장·불러오기를 사용할 수 있다. 비기본 SSH 포트는
+  고급 설정에 표시된다.
+- **읽을 값:** 묶음마다 IP와 실제 호스트네임이 표시된다. 예시의 `.10`에는 12·24번,
+  `.20`에는 3·7번 포트가 있다. AP 이름·현재 W·공급 판정을 포트별로 읽는다.
+  8.7 W의 낮은 실측값 자체는 부족 판정이 아니며 요청/할당 근거를 상세에서 확인한다.
+  LLDP 오류 행에도 먼저 수집한 전력값이 남아 있는지 확인한다.
+- **다음 행동:** 확인 필요·주의·오류 행의 상세 근거를 읽고 필요한 스위치나 포트만
+  다시 조회한다. PoE와 LLDP의 시각을 함께 확인하고 CSV로 저장한다. 판정의 의미와
+  공식 출처는 [전력 조회 안내](POE_QUERY_KO.md)에 있다.
+
 ## 캡처 출처와 재현
 
-- 앱 버전: `0.1.8`. 캡처 OS: Windows GitHub Actions, Python 3.14, Qt offscreen + Noto Sans KR.
-- 캡처 소스 SHA: `11db79d33f98c01cb923ef9544f9d3792d45472f`. [Windows 캡처 실행](https://github.com/sebia1993/aruba-2930f-config-backup/actions/runs/34175884087).
-- 전체 메타데이터: [capture-manifest.json](images/capture-manifest.json). PNG별 SHA-256도 이 파일에 기록한다.
+- 앱 버전: `0.3.0`. 이 페이지의 캡처 환경은 Linux, Python 3.14.10, Qt offscreen + Noto Sans CJK다.
+- 캡처 소스 SHA·OS·Python 및 PNG별 SHA-256은 [capture-manifest.json](images/capture-manifest.json)에 기록한다.
+- Windows CI도 동일한 렌더링 도구를 실행하며, 해당 실행의 별도 캡처를 Actions 아티팩트로 제공한다.
 - 도구: [render_docs_screenshots.py](../tools/render_docs_screenshots.py), [Windows 캡처 workflow](../.github/workflows/docs-screenshots.yml).
 - 합성 입력: RFC 5737 주소·LAB 장비명·가상 지문. 실제 장비·계정 접속 없음. 소켓 연결 시도는 도구에서 차단한다.
 
-Windows에서 저장소의 잠금 의존성 설치 후 `python tools/render_docs_screenshots.py --output artifacts/docs-screenshots`로 재현한다. 한글 폰트까지 같은 조건은 workflow가 구성한다. macOS Qt offscreen에서도 렌더링할 수 있으나 Windows 캡처와 구분한다. 이 자료는 GUI 상태 표시의 증거이며 실제 장비 성공률이나 현장 호환성의 증거는 아니다.
+저장소의 잠금 의존성 설치 후 `python tools/render_docs_screenshots.py --output artifacts/docs-screenshots`로 재현한다. `DOCS_FONT_PATH`에 한글 폰트 파일을 지정할 수 있으며 Windows workflow는 고정된 Noto Sans KR 파일을 사용한다. 운영체제와 폰트에 따라 렌더링 차이가 생길 수 있다. 이 자료는 GUI 상태 표시의 증거이며 실제 장비 성공률이나 현장 호환성의 증거는 아니다.
