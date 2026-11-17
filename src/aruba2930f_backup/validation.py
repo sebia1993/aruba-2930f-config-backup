@@ -358,6 +358,7 @@ def _config_banners_closed(text: str) -> bool:
     """Reject incomplete or ambiguous AOS-S MOTD banner delimiters."""
     return _config_lines_outside_banners(text) is not None
 
+
 def _recognized_skus(text: str) -> set[str]:
     reported = _all_skus(text)
     return reported & ARUBA_2930F_MODELS.keys()
