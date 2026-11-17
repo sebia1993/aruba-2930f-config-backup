@@ -425,11 +425,11 @@ class NetworkManagerWindow(QMainWindow):
         root.setSpacing(7)
         self.port_target_toggle = QToolButton(port)
         self.port_target_toggle.setObjectName("portTargetsToggle")
-        self.port_target_toggle.setText("조회 대상 · SSH 접속 설정 펼치기/접기")
+        self.port_target_toggle.setText("조회 대상 입력 · 펼치기/접기")
         self.port_target_toggle.setCheckable(True)
-        self.port_target_toggle.setChecked(False)
+        self.port_target_toggle.setChecked(True)
         self.port_target_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.port_target_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.port_target_toggle.setArrowType(Qt.ArrowType.DownArrow)
         # Excel IP/port paste stays accessible while target/SSH settings are collapsed.
         target_action.removeWidget(port.paste_button)
         port.paste_button.setText("IP·포트 2열 붙여넣기…")
@@ -444,7 +444,9 @@ class NetworkManagerWindow(QMainWindow):
         target_container = QWidget(port)
         target_layout = QVBoxLayout(target_container)
         target_layout.setContentsMargins(8, 8, 8, 8)
-        target_layout.addWidget(port.targets_table)
+        port.targets_table.setMinimumHeight(175)
+        port.targets_table.setMaximumHeight(16777215)
+        target_layout.addWidget(port.targets_table, 1)
         target_layout.addWidget(port.advanced_toggle)
         _attach(target_layout, target_action)
         target_layout.addLayout(credential_form)
@@ -460,18 +462,19 @@ class NetworkManagerWindow(QMainWindow):
         self.port_target_scroll = QScrollArea(port)
         self.port_target_scroll.setObjectName("portTargetSettings")
         self.port_target_scroll.setWidgetResizable(True)
-        self.port_target_scroll.setMaximumHeight(275)
+        self.port_target_scroll.setMinimumHeight(175)
         self.port_target_scroll.setWidget(target_container)
-        self.port_target_scroll.setVisible(False)
         self.port_target_toggle.toggled.connect(self._toggle_port_targets)
-        root.addWidget(self.port_target_scroll)
-
         _attach(root, query_action)
         # The operator requested that the per-port detail pane stop consuming
         # horizontal space. Keep the original read-only detail widget alive for
         # older standalone APIs, but never display it in this embedded view.
         details_scroll.hide()
-        root.addWidget(search_group)
+        result_panel = QWidget(port)
+        result_layout = QVBoxLayout(result_panel)
+        result_layout.setContentsMargins(0, 0, 0, 0)
+        result_layout.setSpacing(5)
+        result_layout.addWidget(search_group)
         port.result_tree.setColumnHidden(4, True)  # timestamps stay in CSV/history
         port.result_tree.setColumnWidth(0, 235)  # hostname and IP together
         port.result_tree.setColumnWidth(1, 190)  # LLDP AP
@@ -479,7 +482,19 @@ class NetworkManagerWindow(QMainWindow):
         port.result_tree.setColumnWidth(3, 220)  # port administration and link
         port.result_tree.setColumnWidth(5, 190)  # PoE setting and delivery
         # Full-width central table; no side splitter or selected-port details.
-        root.addWidget(port.result_tree, 1)
+        result_layout.addWidget(port.result_tree, 1)
+        result_panel.setMinimumHeight(220)
+        # Resize the input area vertically without sacrificing the full-width
+        # port result table; collapsing input releases all available space.
+        self.port_vertical_splitter = QSplitter(Qt.Orientation.Vertical, port)
+        self.port_vertical_splitter.setObjectName("portVerticalSplitter")
+        self.port_vertical_splitter.setChildrenCollapsible(False)
+        self.port_vertical_splitter.addWidget(self.port_target_scroll)
+        self.port_vertical_splitter.addWidget(result_panel)
+        self.port_vertical_splitter.setStretchFactor(0, 1)
+        self.port_vertical_splitter.setStretchFactor(1, 3)
+        self.port_vertical_splitter.setSizes([280, 520])
+        root.addWidget(self.port_vertical_splitter, 1)
 
         self._layout_port_control_buttons(control_group)
         self.port_advanced_toggle = QToolButton(port)
@@ -567,6 +582,11 @@ class NetworkManagerWindow(QMainWindow):
     @Slot(bool)
     def _toggle_port_targets(self, expanded: bool) -> None:
         self.port_target_scroll.setVisible(expanded)
+        if expanded:
+            # Restore a useful editor height even after the panel was collapsed.
+            sizes = self.port_vertical_splitter.sizes()
+            total = sum(sizes)
+            self.port_vertical_splitter.setSizes([max(200, total // 3), max(220, total * 2 // 3)])
         self.port_target_toggle.setArrowType(
             Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         )
