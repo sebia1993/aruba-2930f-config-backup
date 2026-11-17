@@ -5,7 +5,25 @@
 
 ## [Unreleased]
 
-## [0.5.0] - Unreleased
+## [0.6.0] - Unreleased
+
+### 추가
+
+- 포트 통합 관리에서 바로 여는 엑셀 기본 2열(스위치 IP / 포트) 붙여넣기 및 미리보기, 기존 목록 교체/추가 선택
+- 스위치 IP·포트 두 열의 한글 머리글 인식, 동일 스위치 포트 자동 병합, 오류 행 번호 안내
+- 조회 전체·현재 스위치·검색 결과 범위 전체 선택, 제어 가능 대상만 선택, 제외/미확인 카운터
+- PoE 재가동 단계형 마법사: 선택 AP-535 포트 OFF → 결과 확인 → 동일 포트 재조회 → 독립 승인 ON → 복구 재조회
+- 전력 재가동 순서·실패·부분 완료·결과 불확실 상태를 재현하는 오프라인 테스트
+
+### 변경
+
+- 붙여넣기 창의 기본 선택을 기존 대상 **교체**로 설정하며 기존 목록 추가는 명시적으로만 허용
+- 전체 선택은 조회 행 선택과 제어 안전 검사를 구분하며 일괄 제어 한도 300포트를 유지
+- 재가동 중 자동 ON/재시도/롤백 없이 기존 10개 포트마다 승인, SSH 지문·호스트네임·포트 상태 재검증, JSONL 이력 사용
+- LLDP AP-535 미확인 포트의 일괄 OFF/Down 금지 정책 유지
+- 기존 컨피그 백업·단일 포트 제어·JSON 목록·CSV/Excel 결과는 계속 지원
+
+## [0.5.0] - 2026-11-17
 
 ### 추가
 
@@ -295,7 +313,8 @@
 - 자격증명과 장비 목록을 세션에만 유지하고 운영 로그에서 민감정보 제거
 - 실제 2930F 미검증 및 미서명 바이너리임을 사전릴리즈에 명시
 
-[Unreleased]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.2.0...v0.3.0

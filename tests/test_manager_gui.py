@@ -266,3 +266,15 @@ def test_port_journals_use_recorded_state_and_latest_file_mtime(
     assert first.text(4).endswith("a-latest.jsonl")
     assert window.history_table.topLevelItemCount() == 30
     window.close()
+
+
+def test_port_paste_entry_is_visible_without_expanding_ssh_settings(
+    app: QApplication,
+) -> None:
+    window = make_window(app)
+    window.navigate(2)
+    assert window.port_page.paste_button.isVisible()
+    assert not window.port_target_scroll.isVisible()
+    assert "2열" in window.port_page.paste_button.text()
+    assert window.port_page.cycle_button.isVisible()
+    window.close()

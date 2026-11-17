@@ -100,9 +100,20 @@ def _check_quotes(text: str, delimiter: str) -> None:
 
 def _is_header(row: list[str]) -> bool:
     aliases = (
-        {"ip", "sw ip", "switch ip", "ip 주소"},
+        {"ip", "sw ip", "switch ip", "ip 주소", "스위치 ip", "스위치ip", "스위치 ip 주소"},
         {"ssh port", "ssh_port", "ssh 포트"},
-        {"interfaces", "interface", "interface list", "ports", "인터페이스", "인터페이스 목록"},
+        {
+            "interfaces",
+            "interface",
+            "interface list",
+            "ports",
+            "port",
+            "포트",
+            "포트 번호",
+            "포트번호",
+            "인터페이스",
+            "인터페이스 목록",
+        },
         {"label", "name", "이름", "이름(선택)"},
     )
     selected = (aliases[0], aliases[2]) if len(row) == 2 else aliases[: len(row)]
@@ -126,7 +137,8 @@ def _parse_table(text: str, delimiter: str) -> tuple[PoETarget, ...]:
     # A header declares column meaning for the whole block. Without a header,
     # the first row establishes the same schema; never reinterpret later rows.
     basic_schema = len(rows[0]) == 2
-    if _is_header(rows[0]):
+    has_header = _is_header(rows[0])
+    if has_header:
         rows = rows[1:]
     if not rows:
         raise ValueError("조회할 대상을 입력하세요.")
@@ -135,14 +147,35 @@ def _parse_table(text: str, delimiter: str) -> tuple[PoETarget, ...]:
         raise ValueError(
             "한 표에는 IP / 인터페이스 2열과 SSH 포트를 포함한 3~4열을 섞을 수 없습니다."
         )
-    return merge_targets(
-        [
-            make_target(row[0], 22, row[1])
-            if basic_schema
-            else make_target(row[0], row[1], row[2], row[3] if len(row) == 4 else "")
-            for row in rows
-        ]
-    )
+    parsed: list[PoETarget] = []
+    for line_number, row in enumerate(rows, start=2 if has_header else 1):
+        try:
+            target = (
+                make_target(row[0], 22, row[1])
+                if basic_schema
+                else make_target(row[0], row[1], row[2], row[3] if len(row) == 4 else "")
+            )
+        except ValueError as exc:
+            raise ValueError(f"{line_number}행: {exc}") from exc
+        parsed.append(target)
+    return merge_targets(parsed)
+
+
+def _has_unquoted_tab(text: str) -> bool:
+    """Classify Excel TSV without mistaking tabs inside quoted CSV labels."""
+    in_quotes = False
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character == '"':
+            if in_quotes and index + 1 < len(text) and text[index + 1] == '"':
+                index += 2
+                continue
+            in_quotes = not in_quotes
+        elif character == "\t" and not in_quotes:
+            return True
+        index += 1
+    return False
 
 
 def parse_pasted_targets(text: str) -> tuple[PoETarget, ...]:
@@ -150,14 +183,10 @@ def parse_pasted_targets(text: str) -> tuple[PoETarget, ...]:
     if not isinstance(text, str) or len(text) > MAX_PASTE_CHARACTERS:
         raise ValueError("붙여넣기는 최대 100,000자입니다.")
     text = text.removeprefix("\ufeff")
-    error: ValueError | None = None
-    for delimiter in ("\t", ","):
-        try:
-            return _parse_table(text, delimiter)
-        except ValueError as exc:
-            error = exc
-    assert error is not None
-    raise error
+    # Excel clipboard data uses tabs even when the interface cell has commas.
+    # Never reinterpret an invalid TSV block as comma-separated CSV.
+    delimiter = "\t" if _has_unquoted_tab(text) else ","
+    return _parse_table(text, delimiter)
 
 
 def _atomic_write_bytes(path: Path, content: bytes) -> None:
