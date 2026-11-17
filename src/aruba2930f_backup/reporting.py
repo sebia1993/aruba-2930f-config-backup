@@ -263,6 +263,11 @@ def write_result_workbook(
     partial_path = report_path.with_name(f"{report_path.name}.part")
     try:
         workbook.save(partial_path)
+        # openpyxl has closed its ZIP writer. Commit the finished sibling
+        # file to disk before replacing a possibly existing result.xlsx.
+        # Windows requires a writable descriptor for os.fsync/_commit.
+        with partial_path.open("r+b") as stream:
+            os.fsync(stream.fileno())
         os.replace(partial_path, report_path)
     except BaseException:
         partial_path.unlink(missing_ok=True)
@@ -302,10 +307,13 @@ def sanitize_log_event(
         value = _plain(source[key])
         if key == "message":
             sanitized[key] = _sanitize_message(value, secrets)
-        elif isinstance(value, (str, int, float, bool)) or value is None:
+        elif isinstance(value, (int, float, bool)) or value is None:
             sanitized[key] = value
         else:
-            sanitized[key] = str(value)
+            # The allowlist limits *field names*, not field values. A malformed
+            # event may place target addresses or secrets in status/stage too.
+            # Sanitize strings and object representations through one boundary.
+            sanitized[key] = _sanitize_message(value, secrets)
     return sanitized
 
 

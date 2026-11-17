@@ -51,6 +51,7 @@ def make_target(ip: str, ssh_port: str | int, interfaces: str, label: str = "") 
 def merge_targets(targets: Sequence[PoETarget]) -> tuple[PoETarget, ...]:
     """Merge matching endpoints only; reject conflicting nonempty labels."""
     merged: dict[DeviceTarget, PoETarget] = {}
+    total_interfaces = 0
     for group in targets:
         if not isinstance(group, PoETarget):
             raise ValueError("올바른 조회 대상이 필요합니다.")
@@ -58,15 +59,19 @@ def merge_targets(targets: Sequence[PoETarget]) -> tuple[PoETarget, ...]:
         if previous is not None:
             if previous.label and group.label and previous.label != group.label:
                 raise ValueError("같은 접속 대상의 이름이 서로 다릅니다.")
-            group = PoETarget(
-                group.target,
-                tuple(dict.fromkeys((*previous.interfaces, *group.interfaces))),
-                previous.label or group.label,
+            merged_interfaces = tuple(
+                dict.fromkeys((*previous.interfaces, *group.interfaces))
             )
+            total_interfaces += len(merged_interfaces) - len(previous.interfaces)
+            group = PoETarget(
+                group.target, merged_interfaces, previous.label or group.label
+            )
+        else:
+            total_interfaces += len(group.interfaces)
         merged[group.target] = group
         if len(merged) > MAX_TARGETS:
             raise ValueError("접속 대상은 최대 300개입니다.")
-        if sum(len(item.interfaces) for item in merged.values()) > MAX_TOTAL_INTERFACES:
+        if total_interfaces > MAX_TOTAL_INTERFACES:
             raise ValueError("전체 인터페이스는 최대 14,400개입니다.")
     return tuple(merged.values())
 
