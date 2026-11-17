@@ -536,6 +536,7 @@ def test_legacy_format_rejects_configuration_format_fields(extra: str) -> None:
 
 def test_bulk_off_requires_current_lldp_identity_in_the_write_session(setup: Any) -> None:
     service, d, _ = setup
+    d.link_status = "Up"
     snapshot = inspect(service, d)
     identity = (d.lldp_chassis, d.lldp_port)
     result = service.apply(
@@ -555,6 +556,7 @@ def test_bulk_off_rejects_rewired_missing_or_unverified_lldp_before_write(
     setup: Any, change: str
 ) -> None:
     service, d, _ = setup
+    d.link_status = "Up"
     snapshot = inspect(service, d)
     expected = (d.lldp_chassis, d.lldp_port)
     if change == "chassis":
@@ -591,3 +593,41 @@ def test_lldp_expectation_is_not_accepted_for_on_operation(setup: Any) -> None:
             expected_lldp_identity=(d.lldp_chassis, d.lldp_port),
         )
     assert not d.mutations
+
+
+def test_cached_lldp_on_link_down_is_rejected_before_any_change(setup: Any) -> None:
+    from aruba2930f_backup.port_control import PreMutationRejected
+
+    service, device, _ = setup
+    device.link_status = "Up"
+    snapshot = inspect(service, device)
+    device.link_status = "Down"
+    # The switch still returns the old AP-535 from its cached LLDP table.
+    with pytest.raises(PreMutationRejected, match="Link Up"):
+        service.apply(
+            snapshot,
+            PortAction.POE_OFF,
+            CREDENTIALS,
+            confirmation=snapshot.confirmation_text,
+            expected_lldp_identity=(device.lldp_chassis, device.lldp_port),
+        )
+    assert device.mutations == []
+
+
+def test_prewrite_lldp_identity_change_has_distinct_safe_failure_type(setup: Any) -> None:
+    from aruba2930f_backup.port_control import PreMutationRejected
+
+    service, device, _ = setup
+    device.link_status = "Up"
+    snapshot = inspect(service, device)
+    expected = (device.lldp_chassis, device.lldp_port)
+    device.lldp_chassis = "66:77:88:99:aa:bb"
+    with pytest.raises(PreMutationRejected, match="LLDP"):
+        service.apply(
+            snapshot,
+            PortAction.POE_OFF,
+            CREDENTIALS,
+            confirmation=snapshot.confirmation_text,
+            expected_lldp_identity=expected,
+        )
+    assert not device.mutations

@@ -297,3 +297,53 @@ def test_300_switches_and_14400_selected_ports_fit_and_301_stops() -> None:
     assert sum(len(target.interfaces) for target in merge_targets(targets)) == 14_400
     with pytest.raises(ValueError, match="300"):
         merge_targets([*targets, make_target("203.0.113.250", 22, "1")])
+
+
+def test_cached_lldp_ap_is_not_enough_when_port_link_is_down() -> None:
+    checked = row("7")
+    assert checked.snapshot is not None
+    disconnected = replace(checked, snapshot=replace(checked.snapshot, link_status="Down"))
+    for action in (PortAction.POE_OFF, PortAction.DISABLE):
+        with pytest.raises(BatchControlError, match="Link Up"):
+            create_batch_plan([disconnected], action)
+    assert create_batch_plan([disconnected], PortAction.POE_ON).targets
+
+
+def test_known_prewrite_failure_is_recorded_without_stopping_other_ports(tmp_path: Path) -> None:
+    from aruba2930f_backup.models import ErrorCode
+    from aruba2930f_backup.port_control import PreMutationRejected
+
+    class RejectFirst(FakeControl):
+        def apply(
+            self,
+            snapshot: PortSnapshot,
+            action: PortAction,
+            credentials: Credentials,
+            *,
+            confirmation: str,
+            expected_lldp_identity: tuple[str, str] | None = None,
+        ) -> PortOperationResult:
+            if snapshot.interface == "1":
+                raise PreMutationRejected(ErrorCode.INPUT_INVALID, "사전 LLDP 확인 실패")
+            return super().apply(
+                snapshot,
+                action,
+                credentials,
+                confirmation=confirmation,
+                expected_lldp_identity=expected_lldp_identity,
+            )
+
+    fake = RejectFirst()
+    plan = create_batch_plan([row("1"), row("2")], PortAction.POE_OFF)
+    outcome = BatchPortController(
+        controller_factory=lambda: fake, journal_directory=tmp_path
+    ).execute(plan, CREDS)
+    assert [result.status for result in outcome.results] == [
+        BatchStatus.PREFLIGHT_FAILED,
+        BatchStatus.VERIFIED,
+    ]
+    assert fake.applied == [("2", PortAction.POE_OFF)]
+    assert journal_states(outcome.journal_path) == {
+        0: "preflight_failed",
+        1: "verified",
+    }

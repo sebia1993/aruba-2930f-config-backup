@@ -956,3 +956,45 @@ def test_large_query_flush_updates_each_switch_header_once_per_batch(
     assert dialog._items[(group.target.endpoint, "1")].text(5) == "조회 실패"
     assert dialog._items[(group.target.endpoint, "2")].text(5) == "조회 실패"
     dialog.close()
+
+
+@pytest.mark.parametrize("switch_count", [30, 100, 200, 300])
+def test_realistic_two_ports_per_switch_coalesces_large_query(
+    app: QApplication, qtbot: object, switch_count: int
+) -> None:
+    from aruba2930f_backup.models import DeviceTarget
+
+    dialog = PoEQueryDialog(username="operator", password="test-password")
+    qtbot.addWidget(dialog)
+    groups = tuple(
+        PoETarget(
+            DeviceTarget(
+                f"192.0.2.{index + 1}"
+                if index < 250
+                else f"198.51.100.{index - 249}"
+            ),
+            ("1", "2"),
+        )
+        for index in range(switch_count)
+    )
+    dialog._build_results(groups)
+    dialog._run_total = switch_count * 2
+    results = [
+        PoEQueryResult(group, interface, QueryStatus.FAILED, complete=True)
+        for group in groups
+        for interface in group.interfaces
+    ]
+    for observation in results:
+        dialog._on_result(observation)
+    if switch_count >= 100:
+        assert len(dialog._render_queue) == len(results)
+        while dialog._render_queue:
+            dialog._flush_result_queue()
+    else:
+        assert dialog._render_queue == []
+    assert len(dialog._results) == switch_count * 2
+    for group in groups:
+        for interface in group.interfaces:
+            key = (group.target.endpoint, interface)
+            assert dialog._items[key].text(5) == "조회 실패"
+    dialog.close()
