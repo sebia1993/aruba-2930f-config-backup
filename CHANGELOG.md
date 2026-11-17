@@ -5,7 +5,24 @@
 
 ## [Unreleased]
 
-## [0.3.0] - Unreleased
+## [0.4.0] - Unreleased
+
+### 추가
+
+- 포트 전력·LLDP 조회와 기존 PoE OFF/ON·포트 Down/Up을 하나의 통합 관리 창에서 사용
+- 최대 300개 스위치·총 14,400개 명시 포트의 읽기 전용 조회 및 스위치별 인터페이스 목록 재사용
+- 포트 다중 선택, 최대 300개 작업의 고정 실행 계획, 작업 시작 전 전체 대상 확인 문자열
+- 작업별 독립적인 장비·SSH 지문·설정 재검증, 10개마다 사용자 재승인하는 순차 실행
+- 명령 전 사전 기록, 포트별 결과 추적, 작업 중지와 불확실한 결과의 자동 재실행 방지
+- 통합 화면에서 기존 단일 포트 직접 제어 접근 유지
+
+### 변경
+
+- 스위치별 `show interfaces brief`를 한 번만 수집해 선택 포트에 대응시켜 불필요한 SSH 명령 감소
+- 이전 v0.3.0 JSON 대상 목록, CSV 출력, 기존 백업·단일 포트 제어 코드를 계속 지원
+- 자동 변경은 `write memory`를 실행하지 않으며 PoE OFF 후 자동 ON도 실행하지 않음
+
+## [0.3.0] - 2026-11-17
 
 ### 추가
 
@@ -261,7 +278,8 @@
 - 자격증명과 장비 목록을 세션에만 유지하고 운영 로그에서 민감정보 제거
 - 실제 2930F 미검증 및 미서명 바이너리임을 사전릴리즈에 명시
 
-[Unreleased]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.7...v0.1.8
