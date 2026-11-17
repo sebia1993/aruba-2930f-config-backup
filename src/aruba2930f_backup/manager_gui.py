@@ -388,7 +388,7 @@ class NetworkManagerWindow(QMainWindow):
                 credential_form = item.layout()
                 root.takeAt(index)
                 break
-        if credential_form is None:
+        if not isinstance(credential_form, QFormLayout):
             raise RuntimeError("Could not relocate the existing SSH credential form")
         search_group = port.search_input.parentWidget()
         control_group = port.batch_progress.parentWidget()
