@@ -4,8 +4,8 @@ import hashlib
 import os
 import stat
 from datetime import datetime
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
