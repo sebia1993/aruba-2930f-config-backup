@@ -270,8 +270,9 @@ class NetworkManagerWindow(QMainWindow):
             ("컨피그 백업", "running-config 수집 / 결과", 1),
             ("포트 통합 관리", "LLDP·PoE 조회 / 포트 제어", 2),
             ("작업 이력", "백업·포트 변경 기록", 3),
-            ("설정", "SSH 지문·저장 위치", 4),
         )
+        # Advanced SSH trust management and backup folder settings remain
+        # accessible through the sidebar, not the daily-task shortcuts.
         cards = QGridLayout()
         cards.setSpacing(10)
         for position, (title, description, index) in enumerate(shortcuts):
@@ -279,7 +280,7 @@ class NetworkManagerWindow(QMainWindow):
             button.setObjectName(f"homeShortcut{index}")
             button.setMinimumHeight(92)
             button.clicked.connect(lambda checked=False, target=index: self.navigate(target))
-            cards.addWidget(button, position // 2, position % 2)
+            cards.addWidget(button, 0, position)
         layout.addLayout(cards)
         layout.addSpacing(12)
         self.home_backup_status = QLabel("백업 작업 · 실행 전", page)
