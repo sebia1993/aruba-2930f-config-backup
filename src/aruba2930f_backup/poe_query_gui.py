@@ -45,6 +45,7 @@ from .poe_power import (
     PowerEvidence,
 )
 from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
+from .port_power_diagnosis import diagnose_port_power
 from .poe_query_report import write_query_csv
 from .poe_targets import (
     load_target_profile,
@@ -269,6 +270,7 @@ class PoEQueryDialog(QDialog):
                 "PoE 판정",
                 "조회 시각 (로컬)",
                 "조회 상태",
+                "포트 / PoE 상태",
             ]
         )
         self.result_tree.setColumnWidth(0, 230)
@@ -276,6 +278,10 @@ class PoEQueryDialog(QDialog):
         self.result_tree.setColumnWidth(2, 95)
         self.result_tree.setColumnWidth(3, 135)
         self.result_tree.setColumnWidth(4, 185)
+        self.result_tree.setColumnWidth(6, 185)
+        # Keep the operator-facing explanation next to the measured wattage.
+        # Logical column IDs 0..5 remain unchanged for existing UI workflows.
+        self.result_tree.header().moveSection(6, 3)
         self.result_tree.setAlternatingRowColors(True)
         self.result_tree.setMinimumHeight(160)
         self.result_tree.currentItemChanged.connect(self._selection_changed)
@@ -583,7 +589,7 @@ class PoEQueryDialog(QDialog):
         for key in self._pending:
             self._results.pop(key, None)
             item = self._items[key]
-            for column in range(1, 6):
+            for column in range(1, self.result_tree.columnCount()):
                 item.setText(column, "")
                 item.setToolTip(column, "")
             item.setText(5, "대기")
@@ -702,6 +708,9 @@ class PoEQueryDialog(QDialog):
         item.setToolTip(
             5, _tooltip(" · ".join(filter(None, (result.message, lldp.message if lldp else ""))))
         )
+        diagnosis = diagnose_port_power(snapshot)
+        item.setText(6, diagnosis.label if snapshot is not None or result.complete else "조회 중")
+        item.setToolTip(6, _tooltip(diagnosis.reason))
         for group in self._groups:
             if group.target.endpoint == key[0]:
                 self._update_group(group)
@@ -765,6 +774,8 @@ class PoEQueryDialog(QDialog):
                 )
                 details += f"\n장비명: {snapshot.hostname} · 스위치 모델: {snapshot.model} · 관리 설정: {'켜짐' if snapshot.enabled else '꺼짐'}"
                 details += f"\n링크: {snapshot.link_status} · PoE 설정: {poe_setting} · 공급 상태: {snapshot.poe_status}"
+                diagnosis = diagnose_port_power(snapshot)
+                details += f"\n포트/PoE 관리 상태: {diagnosis.label} · {diagnosis.reason}"
                 details += f"\n실측 전력: {'확인 안 됨' if snapshot.watts is None else f'{snapshot.watts:g} W'} · 측정: {_local_time(snapshot.observed_at)}"
             details += f"\nPoE 수집 시각: {_local_time(result.poe_finished_at) or '확인 안 됨'} · 레코드 완료: {_local_time(result.finished_at) or '대기'}"
             assessment = result.assessment
