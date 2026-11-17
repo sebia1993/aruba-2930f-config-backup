@@ -849,7 +849,7 @@ def test_large_query_gui_batches_result_signals_without_losing_final_state(
 ) -> None:
     from aruba2930f_backup.models import DeviceTarget
 
-    dialog = PoEQueryDialog(username="operator", password="fixture")
+    dialog = PoEQueryDialog(username="operator", password="test-password")
     qtbot.addWidget(dialog)
     group = PoETarget(DeviceTarget("192.0.2.10"), ("24",))
     dialog._build_results((group,))
