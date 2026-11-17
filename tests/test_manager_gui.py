@@ -395,3 +395,49 @@ def test_ssh_session_controls_reject_changes_during_active_backup(
         window.backup_page._thread = None
         fake_thread.deleteLater()
     window.close()
+
+
+def test_common_ssh_account_dialog_is_shared_and_reprompts_after_clear(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aruba2930f_backup.manager_gui as manager_gui
+
+    from aruba2930f_backup.models import Credentials
+
+    window = make_window(app)
+    calls: list[str] = []
+
+    class FakeCredentialDialog:
+        def __init__(self, _parent: object, *, username: str = "") -> None:
+            calls.append(username)
+
+        def exec(self) -> object:
+            return manager_gui.QDialog.DialogCode.Accepted
+
+        def take_credentials(self) -> Credentials:
+            return Credentials("network-operator", "shared-secret", "shared-enable")
+
+        def deleteLater(self) -> None:
+            return
+
+    monkeypatch.setattr(manager_gui, "SessionCredentialDialog", FakeCredentialDialog)
+    credential = window._require_ssh_credentials()
+    assert credential.username == "network-operator"
+    assert credential.password == "shared-secret"
+    assert window._require_ssh_credentials() is credential
+    assert calls == [""]
+    assert window.ssh_session_status.text().startswith("SSH 계정: network-operator")
+    assert "shared-secret" not in window.ssh_session_status.text()
+
+    window.port_page._build_results(
+        (PoETarget(DeviceTarget("192.0.2.10"), ("12",)),)
+    )
+    assert window.port_page.result_tree.topLevelItemCount() == 1
+    assert window._configure_ssh_session()
+    assert calls == ["", "network-operator"]
+    assert window.port_page.result_tree.topLevelItemCount() == 0
+    window._clear_ssh_session()
+    assert not window._ssh_credentials.configured
+    assert window._require_ssh_credentials().username == "network-operator"
+    assert len(calls) == 3
+    window.close()
