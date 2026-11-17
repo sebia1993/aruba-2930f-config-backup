@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from openpyxl import load_workbook
 
 from aruba2930f_backup.reporting import (
@@ -215,3 +217,72 @@ def test_result_workbook_persists_safe_warnings_as_text(tmp_path: Path) -> None:
     assert ("Warning", "로그 저장 실패: 출력 경로를 확인하세요.") in rows
     assert ("Warning", "'=unsafe") in rows
     workbook.close()
+
+
+def test_report_fsync_completes_before_result_is_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_fsync = os.fsync
+    observations: list[tuple[bool, bool, int]] = []
+
+    def observe(fd: int) -> None:
+        observations.append(
+            (
+                (tmp_path / "result.xlsx.part").is_file(),
+                (tmp_path / "result.xlsx").exists(),
+                os.fstat(fd).st_size,
+            )
+        )
+        real_fsync(fd)
+
+    monkeypatch.setattr("aruba2930f_backup.reporting.os.fsync", observe)
+    result = write_result_workbook(tmp_path, [{"status": "success"}])
+
+    assert result == tmp_path / "result.xlsx"
+    assert len(observations) == 1
+    assert observations[0][0] is True
+    assert observations[0][1] is False
+    assert observations[0][2] > 0
+    assert not (tmp_path / "result.xlsx.part").exists()
+    workbook = load_workbook(result, read_only=True)
+    assert workbook.sheetnames == ["Summary", "Devices"]
+    workbook.close()
+
+
+def test_report_fsync_failure_never_replaces_existing_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "result.xlsx"
+    destination.write_bytes(b"already-published-report")
+
+    def fail_sync(_fd: int) -> None:
+        raise OSError("simulated durable-write failure")
+
+    monkeypatch.setattr("aruba2930f_backup.reporting.os.fsync", fail_sync)
+    with pytest.raises(OSError, match="durable-write failure"):
+        write_result_workbook(tmp_path, [{"status": "success"}])
+
+    assert destination.read_bytes() == b"already-published-report"
+    assert not (tmp_path / "result.xlsx.part").exists()
+
+
+def test_jsonl_allowlisted_metadata_cannot_bypass_secret_redaction(tmp_path: Path) -> None:
+    logger = SanitizedJsonlLogger(
+        tmp_path / "operation.jsonl",
+        sensitive_values=("session-password", "operator"),
+    )
+    logged = logger.log(
+        phase="operator",
+        stage="connecting session-password",
+        status="192.0.2.10",
+        error_code={"internal": "session-password"},
+        message="safe",
+    )
+    serialized = (tmp_path / "operation.jsonl").read_text(encoding="utf-8")
+
+    assert logged["phase"] == "<redacted>"
+    assert logged["status"] == "<redacted-ip>"
+    assert logged["message"] == "safe"
+    assert "operator" not in serialized
+    assert "192.0.2.10" not in serialized
+    assert "session-password" not in serialized
