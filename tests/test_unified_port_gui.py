@@ -642,5 +642,6 @@ def test_changed_target_input_clears_old_checks(app: QApplication) -> None:
     assert dialog._checked_port_keys
     dialog.targets_table.item(0, 0).setText("192.0.2.99")
     assert not dialog._checked_port_keys
-    assert dialog._items[(TARGET.endpoint, "1")].checkState(0) is Qt.CheckState.Unchecked
+    assert (TARGET.endpoint, "1") not in dialog._items
+    assert dialog._batch_plan is None
     dialog.close()
