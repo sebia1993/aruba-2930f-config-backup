@@ -388,3 +388,18 @@ def test_replace_two_column_paste_cleans_incomplete_placeholder_atomically(
         dialog.paste_targets("192.0.2.10\tall", replace=True)
     assert dialog.targets_table.item(0, 2).text() == "12,24"
     dialog.close()
+
+
+def test_cycle_eligible_button_uses_ap535_and_current_poe_on_not_generic_on(
+    app: QApplication,
+) -> None:
+    dialog = setup_dialog()
+    dialog.show()
+    dialog._on_result(queried("2", model="Aruba 2930F"))
+    # Default generic PoE ON permits non-AP neighbors. Cycle candidacy must not.
+    assert dialog.action_combo.currentData() == PortAction.POE_ON.value
+    dialog.select_cycle_eligible_button.click()
+    assert dialog._items[(TARGET.endpoint, "1")].isSelected()
+    assert not dialog._items[(TARGET.endpoint, "2")].isSelected()
+    assert len(dialog._selected_rows()) == 1
+    dialog.close()

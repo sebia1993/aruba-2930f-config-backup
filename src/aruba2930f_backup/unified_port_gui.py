@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from PySide6.QtCore import QSignalBlocker, QObject, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QSignalBlocker, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -49,8 +49,8 @@ from .poe_cycle import (
 from .poe_query_gui import PoEQueryDialog, PoEQueryServiceProtocol
 from .poe_query_models import PoEQueryResult, PoETarget
 from .poe_targets import merge_targets, parse_pasted_targets
-from .port_paste_dialog import PortTargetPasteDialog
 from .port_control import PortAction
+from .port_paste_dialog import PortTargetPasteDialog
 from .storage import default_output_directory
 
 ACTION_TITLES: dict[PortAction, str] = {
@@ -275,6 +275,13 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             "현재 선택한 PoE/포트 명령의 안전 검증을 통과한 포트만 선택합니다."
         )
         selection_row.addWidget(self.select_eligible_button)
+        self.select_cycle_eligible_button = QPushButton("재가동 가능만", container)
+        self.select_cycle_eligible_button.setObjectName("unifiedSelectCycleEligible")
+        self.select_cycle_eligible_button.setToolTip(
+            "현재 범위에서 실제 PoE ON 및 LLDP AP-535가 확인된 포트만 선택합니다."
+        )
+        self.select_cycle_eligible_button.clicked.connect(self._select_scope_cycle_eligible)
+        selection_row.addWidget(self.select_cycle_eligible_button)
         self.clear_selection_button = QPushButton("선택 해제", container)
         self.clear_selection_button.setObjectName("unifiedClearSelection")
         self.clear_selection_button.clicked.connect(self._clear_selection)
@@ -334,7 +341,21 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
     def _select_scope_eligible(self) -> None:
         self._select_scope(eligible_only=True)
 
-    def _select_scope(self, *, eligible_only: bool) -> None:
+    @Slot()
+    def _select_scope_cycle_eligible(self) -> None:
+        self._select_scope(
+            eligible_only=True,
+            action_override=PortAction.POE_OFF,
+            require_powered=True,
+        )
+
+    def _select_scope(
+        self,
+        *,
+        eligible_only: bool,
+        action_override: PortAction | None = None,
+        require_powered: bool = False,
+    ) -> None:
         if self.is_busy:
             return
         candidates = self._scope_items()
@@ -342,12 +363,16 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             return
         chosen = candidates
         if eligible_only:
-            action = PortAction(str(self.action_combo.currentData()))
+            action = action_override or PortAction(str(self.action_combo.currentData()))
             chosen = []
             for item in candidates:
                 key = cast(tuple[str, str] | None, item.data(0, Qt.ItemDataRole.UserRole))
                 result = self._results.get(key) if key is not None else None
                 if result is None:
+                    continue
+                if require_powered and (
+                    result.snapshot is None or result.snapshot.poe_enabled is not True
+                ):
                     continue
                 try:
                     validate_batch_target(result, action)
@@ -597,12 +622,12 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             self._update_control_buttons()
 
     def _invalidate(self) -> None:
-        if getattr(self, "_cycle", None) is not None:
-            if self._cycle.phase not in (
-                PowerCyclePhase.COMPLETE,
-                PowerCyclePhase.INTERRUPTED,
-            ):
-                self._cycle.interrupt()
+        cycle = getattr(self, "_cycle", None)
+        if cycle is not None and cycle.phase not in (
+            PowerCyclePhase.COMPLETE,
+            PowerCyclePhase.INTERRUPTED,
+        ):
+            cycle.interrupt()
         if hasattr(self, "_batch_plan"):
             self._batch_plan = None
         super()._invalidate()
@@ -656,6 +681,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 self.selection_scope,
                 self.select_all_button,
                 self.select_eligible_button,
+                self.select_cycle_eligible_button,
                 self.clear_selection_button,
             ):
                 button.setEnabled(not busy and not locked)
