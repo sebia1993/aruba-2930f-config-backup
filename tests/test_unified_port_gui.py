@@ -733,3 +733,39 @@ def test_quick_off_rejects_unsafe_selected_port_even_in_direct_mode(
     assert dialog._batch_plan is None
     assert messages and "AP-535" in messages[0]
     dialog.close()
+
+
+def test_admin_disabled_filter_is_distinct_from_poe_off(
+    app: QApplication,
+) -> None:
+    from dataclasses import replace
+
+    dialog = setup_dialog()
+    result = queried("2")
+    assert result.snapshot is not None
+    dialog._on_result(replace(result, snapshot=replace(result.snapshot, enabled=False)))
+    dialog.filter_combo.setCurrentIndex(dialog.filter_combo.findData("port_disabled"))
+    dialog._apply_search_filter()
+    first = dialog._items[(TARGET.endpoint, "1")]
+    second = dialog._items[(TARGET.endpoint, "2")]
+    assert first.isHidden()
+    assert not second.isHidden()
+    assert second.text(6).startswith("포트 Disable")
+    dialog.close()
+
+
+def test_switch_admin_disable_does_not_disable_poe_quick_buttons(
+    app: QApplication,
+) -> None:
+    from dataclasses import replace
+
+    dialog = setup_dialog()
+    result = queried("1")
+    assert result.snapshot is not None
+    dialog._on_result(replace(result, snapshot=replace(result.snapshot, enabled=False)))
+    item = dialog._items[(TARGET.endpoint, "1")]
+    item.setCheckState(0, Qt.CheckState.Checked)
+    assert "PoE 공급 중" in item.text(6)
+    assert dialog.quick_on_button.isEnabled()
+    assert dialog.quick_off_button.isEnabled()
+    dialog.close()
