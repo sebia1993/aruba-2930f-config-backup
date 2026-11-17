@@ -95,7 +95,6 @@ def diagnose_port_power(snapshot: PortSnapshot | None) -> PortPowerDiagnosis:
     return PortPowerDiagnosis(prefix + supply, port_reason + explanation)
 
 
-
 def port_admin_link_label(snapshot: PortSnapshot | None) -> str:
     """The port admin setting is not interchangeable with the link state."""
     if snapshot is None:
