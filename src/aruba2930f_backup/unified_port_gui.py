@@ -719,6 +719,67 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         parent_layout = cast(QVBoxLayout, self.layout())
         parent_layout.insertWidget(parent_layout.count() - 2, group)
 
+    def _build_quick_bar(self) -> None:
+        """Pinned OFF/ON/cycle actions, all using the existing approval engine."""
+        self.quick_action_bar = QFrame(self)
+        self.quick_action_bar.setObjectName("poeQuickActionBar")
+        self.quick_action_bar.setStyleSheet(
+            "QFrame#poeQuickActionBar { border: 1px solid palette(mid); "
+            "border-radius: 7px; background: palette(base); }"
+        )
+        layout = QHBoxLayout(self.quick_action_bar)
+        layout.setContentsMargins(9, 7, 9, 7)
+        layout.setSpacing(8)
+        self.quick_summary = QLabel("체크 0개 · 작업 대상을 선택하세요.", self.quick_action_bar)
+        self.quick_summary.setObjectName("poeQuickSummary")
+        self.quick_summary.setWordWrap(True)
+        self.quick_summary.setMinimumWidth(230)
+        layout.addWidget(self.quick_summary, 1)
+        self.quick_off_button = QPushButton("PoE OFF…", self.quick_action_bar)
+        self.quick_on_button = QPushButton("PoE ON…", self.quick_action_bar)
+        self.quick_cycle_button = QPushButton("PoE 재가동…", self.quick_action_bar)
+        for button, name in (
+            (self.quick_off_button, "poeQuickOff"),
+            (self.quick_on_button, "poeQuickOn"),
+            (self.quick_cycle_button, "poeQuickCycle"),
+        ):
+            button.setObjectName(name)
+            button.setMinimumHeight(38)
+            layout.addWidget(button)
+        self.quick_off_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_OFF))
+        self.quick_on_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_ON))
+        self.quick_cycle_button.clicked.connect(self._quick_cycle)
+        root = cast(QVBoxLayout, self.layout())
+        root.insertWidget(root.count() - 2, self.quick_action_bar)
+
+    def _quick_poe_action(self, action: PortAction) -> None:
+        """Prepare a frozen plan and open the normal EXECUTE N confirmation."""
+        if self._selection_locked() or not self._checked_port_keys:
+            return
+        index = self.action_combo.findData(action.value)
+        if index < 0:
+            return
+        self.action_combo.setCurrentIndex(index)
+        self._prepare_batch()
+        if self._batch_plan is not None and self._batch_plan.action is action:
+            self._run_batch()
+
+    @Slot()
+    def _quick_cycle(self) -> None:
+        """Advance without automatic ON; each OFF/ON has a separate approval."""
+        if self.is_busy:
+            return
+        phase = self._cycle.phase if self._cycle is not None else None
+        if phase in (PowerCyclePhase.OFF_READY, PowerCyclePhase.ON_READY):
+            if self._batch_plan is not None:
+                self._run_batch()
+            return
+        self._cycle_next()
+        phase = self._cycle.phase if self._cycle is not None else None
+        if phase in (PowerCyclePhase.OFF_READY, PowerCyclePhase.ON_READY):
+            if self._batch_plan is not None:
+                self._run_batch()
+
     def _set_busy(self, busy: bool) -> None:
         super()._set_busy(busy)
         if hasattr(self, "plan_button"):
@@ -1123,6 +1184,29 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 PowerCyclePhase.ON_RUNNING,
             )
         )
+        if hasattr(self, "quick_cycle_button"):
+            active = phase not in (None, PowerCyclePhase.COMPLETE, PowerCyclePhase.INTERRUPTED)
+            locked = self.is_busy or active
+            self.quick_off_button.setEnabled(bool(self._checked_port_keys) and not locked)
+            self.quick_on_button.setEnabled(bool(self._checked_port_keys) and not locked)
+            short_labels = {
+                PowerCyclePhase.OFF_READY: "OFF 승인…",
+                PowerCyclePhase.OFF_RUNNING: "OFF 진행 중",
+                PowerCyclePhase.REQUERY_OFF: "OFF 재조회",
+                PowerCyclePhase.ON_PREPARE: "ON 계획·승인",
+                PowerCyclePhase.ON_READY: "ON 승인…",
+                PowerCyclePhase.ON_RUNNING: "ON 진행 중",
+                PowerCyclePhase.REQUERY_ON: "복구 재조회",
+                PowerCyclePhase.VERIFY_ON: "PoE 복구 확인",
+                PowerCyclePhase.INTERRUPTED: "중단 상태 확인",
+            }
+            self.quick_cycle_button.setText(
+                short_labels.get(phase, "PoE 재가동…")
+            )
+            self.quick_cycle_button.setEnabled(
+                not self.is_busy
+                and (active or phase is PowerCyclePhase.INTERRUPTED or bool(self._checked_port_keys))
+            )
         if session is None:
             self.cycle_status.setText(
                 "포트를 선택한 뒤 OFF → 재조회 → 별도 승인 ON → 복구 재조회를 진행합니다."
