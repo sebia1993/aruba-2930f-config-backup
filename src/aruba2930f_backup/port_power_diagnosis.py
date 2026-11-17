@@ -93,3 +93,21 @@ def diagnose_port_power(snapshot: PortSnapshot | None) -> PortPowerDiagnosis:
         )
 
     return PortPowerDiagnosis(prefix + supply, port_reason + explanation)
+
+
+
+def port_admin_link_label(snapshot: PortSnapshot | None) -> str:
+    """The port admin setting is not interchangeable with the link state."""
+    if snapshot is None:
+        return "포트 상태 미확인"
+    admin = "Disable" if not snapshot.enabled else "Enable"
+    return f"포트 {admin} · Link {snapshot.link_status}"
+
+
+def poe_supply_label(snapshot: PortSnapshot | None) -> str:
+    """Show PoE configuration/delivery alone, separate from port administration."""
+    diagnosis = diagnose_port_power(snapshot)
+    prefix = "포트 Disable · "
+    if snapshot is not None and not snapshot.enabled and diagnosis.label.startswith(prefix):
+        return diagnosis.label[len(prefix) :]
+    return diagnosis.label
