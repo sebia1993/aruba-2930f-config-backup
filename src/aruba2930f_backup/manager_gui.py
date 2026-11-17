@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QMainWindow,
     QMessageBox,
@@ -65,7 +66,7 @@ def _attach(layout: QVBoxLayout, value: QWidget | object) -> None:
         layout.addLayout(value)
 
 
-def _take_layout_with(layout: QVBoxLayout, button: QWidget) -> object:
+def _take_layout_with(layout: QVBoxLayout, button: QWidget) -> QLayout:
     from PySide6.QtWidgets import QLayout
 
     for index in range(layout.count()):
