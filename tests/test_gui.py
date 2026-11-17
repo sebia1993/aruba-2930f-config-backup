@@ -1675,3 +1675,43 @@ def test_terminal_success_warning_survives_cancel_during_native_cleanup(
         _wait_until(app, lambda: window._thread is None)
         window.close()
         app.processEvents()
+
+
+def test_backup_acl_warning_is_visible_but_does_not_suppress_logging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aruba2930f_backup.gui as gui_module
+
+    monkeypatch.setattr(
+        gui_module,
+        "backup_storage_permission_warnings",
+        lambda _path: ("백업 폴더 NTFS ACL 확인 필요",),
+    )
+    collector = FakeCollector()
+    service = CollectorBackupService(collector)
+    request = BackupRequest(
+        targets=("192.0.2.10",),
+        port=22,
+        username="operator",
+        password="secret-password",
+        enable_password="enable-secret",
+        concurrency=2,
+        output_directory=tmp_path,
+    )
+    events: list[object] = []
+    outcome = service.run(
+        request,
+        BackupCallbacks(
+            on_event=events.append,
+            request_host_key_approval=lambda _checks: False,
+            cancel_event=threading.Event(),
+        ),
+    )
+    assert outcome.warnings == ("백업 폴더 NTFS ACL 확인 필요",)
+    assert any(
+        isinstance(event, dict) and event.get("stage") == "warning"
+        for event in events
+    )
+    assert (outcome.run_directory / "operation.jsonl").stat().st_size > 0
+    assert outcome.report_path.exists()
+    assert collector.result is not None and collector.result.config_path is not None
