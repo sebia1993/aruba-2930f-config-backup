@@ -198,8 +198,11 @@ def test_failure_filter_does_not_mark_unqueried_port_as_failure(app: QApplicatio
     dialog = setup_dialog()
     dialog._on_result(
         PoEQueryResult(
-            PoETarget(TARGET, ("2",)), "2", QueryStatus.FAILED,
-            message="synthetic query failed", complete=True,
+            PoETarget(TARGET, ("2",)),
+            "2",
+            QueryStatus.FAILED,
+            message="synthetic query failed",
+            complete=True,
         )
     )
     dialog.filter_combo.setCurrentIndex(dialog.filter_combo.findData("failed"))
