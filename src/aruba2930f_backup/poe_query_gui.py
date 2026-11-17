@@ -53,6 +53,11 @@ from .poe_targets import (
     parse_pasted_targets,
     save_target_profile,
 )
+from .port_power_diagnosis import (
+    diagnose_port_power,
+    poe_supply_label,
+    port_admin_link_label,
+)
 
 
 class PoEQueryServiceProtocol(Protocol):
@@ -179,6 +184,8 @@ class PoEQueryDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._service = service
+        # Injected only by the integrated manager; standalone dialog uses local fields.
+        self.session_credential_provider: Callable[[], Credentials] | None = None
         self._thread: QThread | None = None
         self._worker: _QueryWorker | None = None
         self._approval_dialog: QDialog | None = None
@@ -266,16 +273,19 @@ class PoEQueryDialog(QDialog):
                 "스위치 / 포트",
                 "AP 이름 (LLDP)",
                 "현재 전력",
-                "PoE 판정",
+                "포트 상태",
                 "조회 시각 (로컬)",
-                "조회 상태",
+                "PoE 상태",
             ]
         )
         self.result_tree.setColumnWidth(0, 230)
         self.result_tree.setColumnWidth(1, 180)
         self.result_tree.setColumnWidth(2, 95)
-        self.result_tree.setColumnWidth(3, 135)
+        self.result_tree.setColumnWidth(3, 180)
         self.result_tree.setColumnWidth(4, 185)
+        self.result_tree.setColumnWidth(5, 170)
+        # Display actionable administrative state instead of prediction or
+        # generic "query finished" fields. The query/assessment remain in data.
         self.result_tree.setAlternatingRowColors(True)
         self.result_tree.setMinimumHeight(160)
         self.result_tree.currentItemChanged.connect(self._selection_changed)
@@ -533,6 +543,9 @@ class PoEQueryDialog(QDialog):
         self._start(groups, credentials)
 
     def _credentials(self) -> Credentials:
+        provider = self.session_credential_provider
+        if provider is not None:
+            return provider()
         return Credentials(
             self.username_input.text().strip(),
             self.password_input.text(),
@@ -583,7 +596,7 @@ class PoEQueryDialog(QDialog):
         for key in self._pending:
             self._results.pop(key, None)
             item = self._items[key]
-            for column in range(1, 6):
+            for column in range(1, self.result_tree.columnCount()):
                 item.setText(column, "")
                 item.setToolTip(column, "")
             item.setText(5, "대기")
@@ -682,26 +695,46 @@ class PoEQueryDialog(QDialog):
             2,
             "확인 안 됨" if snapshot is None or snapshot.watts is None else f"{snapshot.watts:g} W",
         )
-        assessment = result.assessment
-        item.setText(3, assessment.label if assessment else "확인 필요")
-        item.setToolTip(
-            3, _tooltip(assessment.reason if assessment else "전력 판정 근거를 받지 못했습니다.")
-        )
+        diagnosis = diagnose_port_power(snapshot)
+        if snapshot is not None:
+            port_state = port_admin_link_label(snapshot)
+            poe_state = poe_supply_label(snapshot)
+            port_detail = (
+                f"관리 설정: {'Disable' if not snapshot.enabled else 'Enable'} · "
+                f"실제 링크: {snapshot.link_status}. "
+                "포트 Disable와 PoE OFF는 별개의 설정입니다."
+            )
+            poe_detail = diagnosis.reason
+        elif result.complete:
+            # A failed query is unknown, never a measured 0W or assumed OFF.
+            query_state = "취소" if result.status is QueryStatus.CANCELLED else "조회 실패"
+            port_state = query_state
+            poe_state = query_state
+            port_detail = result.message or "포트 관리 설정을 확인하지 못했습니다."
+            poe_detail = result.message or "PoE 설정과 실측 전력을 확인하지 못했습니다."
+        else:
+            port_state = "조회 중"
+            poe_state = "조회 중"
+            port_detail = "포트 관리 설정을 조회하고 있습니다."
+            poe_detail = "PoE 설정을 조회하고 있습니다."
+        item.setText(3, port_state)
+        item.setToolTip(3, _tooltip(port_detail))
         item.setText(4, _local_time(snapshot.observed_at if snapshot else result.finished_at))
-        status = {
-            QueryStatus.OK: "완료",
-            QueryStatus.UNSUPPORTED: "미지원",
-            QueryStatus.FAILED: "실패",
-            QueryStatus.CANCELLED: "취소",
-        }[result.status]
-        if not result.complete:
-            status = "PoE 수집 · LLDP 조회 중"
-        elif lldp is not None and lldp.status in (LLDPStatus.FAILED, LLDPStatus.CANCELLED):
-            status += " · LLDP " + ("실패" if lldp.status == LLDPStatus.FAILED else "취소")
-        item.setText(5, status)
-        item.setToolTip(
-            5, _tooltip(" · ".join(filter(None, (result.message, lldp.message if lldp else ""))))
+        item.setText(5, poe_state)
+        notes = " · ".join(
+            filter(
+                None,
+                (
+                    poe_detail,
+                    result.message,
+                    lldp.message if lldp else "",
+                    "LLDP 조회 중" if not result.complete else "",
+                    "LLDP 실패" if lldp is not None and lldp.status is LLDPStatus.FAILED else "",
+                    "LLDP 취소" if lldp is not None and lldp.status is LLDPStatus.CANCELLED else "",
+                ),
+            )
         )
+        item.setToolTip(5, _tooltip(notes))
         for group in self._groups:
             if group.target.endpoint == key[0]:
                 self._update_group(group)
@@ -740,11 +773,16 @@ class PoEQueryDialog(QDialog):
             )
             for r in results
         )
-        item.setText(5, f"처리 {completed}/{len(group.interfaces)} · 실패/취소 {failures}")
+        # Parent rows describe switches, not individual PoE port state.
+        item.setText(5, "")
+        summary = f"조회 진행: {completed}/{len(group.interfaces)} · 실패/취소 {failures}"
         item.setToolTip(
-            0, _tooltip(f"{name}\nSSH: {group.target.endpoint}\n별칭: {group.label or '없음'}")
+            0,
+            _tooltip(
+                f"{name}\nSSH: {group.target.endpoint}\n별칭: {group.label or '없음'}\n{summary}"
+            ),
         )
-        item.setToolTip(5, item.text(5))
+        item.setToolTip(5, "")
 
     @Slot()
     def _selection_changed(self) -> None:
@@ -765,6 +803,8 @@ class PoEQueryDialog(QDialog):
                 )
                 details += f"\n장비명: {snapshot.hostname} · 스위치 모델: {snapshot.model} · 관리 설정: {'켜짐' if snapshot.enabled else '꺼짐'}"
                 details += f"\n링크: {snapshot.link_status} · PoE 설정: {poe_setting} · 공급 상태: {snapshot.poe_status}"
+                diagnosis = diagnose_port_power(snapshot)
+                details += f"\n포트/PoE 관리 상태: {diagnosis.label} · {diagnosis.reason}"
                 details += f"\n실측 전력: {'확인 안 됨' if snapshot.watts is None else f'{snapshot.watts:g} W'} · 측정: {_local_time(snapshot.observed_at)}"
             details += f"\nPoE 수집 시각: {_local_time(result.poe_finished_at) or '확인 안 됨'} · 레코드 완료: {_local_time(result.finished_at) or '대기'}"
             assessment = result.assessment

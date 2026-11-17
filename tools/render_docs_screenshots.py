@@ -291,7 +291,10 @@ def _save_network_manager(output: Path) -> None:
     manager = NetworkManagerWindow()
     manager.resize(1320, 840)
     manager.backup_page.ip_input.setPlainText("192.0.2.10\n192.0.2.20")
-    manager.backup_page.username_input.setText("documentation-only")
+    # The real GUI must show one configured account in the global header,
+    # never duplicate credentials in the backup or port tabs.
+    manager._ssh_credentials.configure("demo-operator", "documentation-only")
+    manager._refresh_ssh_session_status()
     manager.show()
     app.processEvents()
     if not manager.grab().save(str(output / "manager-home.png"), "PNG"):
@@ -301,19 +304,25 @@ def _save_network_manager(output: Path) -> None:
     if not manager.grab().save(str(output / "manager-backup.png"), "PNG"):
         raise RuntimeError("통합 백업 화면 PNG 저장에 실패했습니다.")
     manager.navigate(2)
-    group = PoETarget(DeviceTarget("192.0.2.10", 22), ("12", "24"))
+    group = PoETarget(DeviceTarget("192.0.2.10", 22), ("12", "24", "25", "26"))
     manager.port_page._build_results((group,))
-    for interface, watts in (("12", Decimal("14.8")), ("24", Decimal("12.6"))):
+    examples = (
+        ("12", True, True, "Delivering", Decimal("14.8")),
+        ("24", False, True, "Searching", Decimal("0")),
+        ("25", True, False, "사용 안 함", None),
+        ("26", False, False, "사용 안 함", None),
+    )
+    for interface, enabled, poe_enabled, poe_status, watts in examples:
         snapshot = PortSnapshot(
             group.target,
             interface,
             "SEOUL-F1-SW-01",
             "Aruba 2930F",
-            True,
-            "Up",
-            True,
-            "Delivering",
-            watts,
+            enabled,
+            "Up" if enabled and poe_enabled else "Down",
+            poe_enabled,
+            poe_status,
+            float(watts) if watts is not None else None,
             "SHA256:documentation-demo",
         )
         manager.port_page._apply_result(
@@ -324,7 +333,9 @@ def _save_network_manager(output: Path) -> None:
                 snapshot=snapshot,
                 lldp=LLDPObservation(
                     LLDPStatus.OK,
-                    (LLDPNeighbor(system_name=f"AP-{interface}", model="AP-535"),),
+                    (LLDPNeighbor(system_name=f"AP-{interface}", model="AP-535"),)
+                    if interface == "12"
+                    else (),
                 ),
                 complete=True,
             )
@@ -339,6 +350,18 @@ def _save_network_manager(output: Path) -> None:
     app.processEvents()
     if not manager.grab().save(str(output / "manager-ports.png"), "PNG"):
         raise RuntimeError("통합 포트 관리 화면 PNG 저장에 실패했습니다.")
+    manager.port_page.result_tree.setCurrentItem(
+        manager.port_page._items[(group.target.endpoint, "24")]
+    )
+    app.processEvents()
+    if not manager.grab().save(str(output / "manager-ports-admin-disabled.png"), "PNG"):
+        raise RuntimeError("포트 Disable 및 PoE ON 비교 PNG 저장에 실패했습니다.")
+    manager.port_page.result_tree.setCurrentItem(
+        manager.port_page._items[(group.target.endpoint, "25")]
+    )
+    app.processEvents()
+    if not manager.grab().save(str(output / "manager-ports-poe-off.png"), "PNG"):
+        raise RuntimeError("PoE 설정 OFF 구분 PNG 저장에 실패했습니다.")
     # Two different checked states let the operator inspect tri-state switch
     # checkboxes and the always-visible fixed PoE control bar in actual Qt.
     manager.port_page._set_checked_keys(

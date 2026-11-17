@@ -191,8 +191,10 @@ class PortControlDialog(QDialog):
         username: str = "",
         password: str = "",
         enable_password: str = "",
+        credential_provider: Callable[[], Credentials] | None = None,
     ) -> None:
         super().__init__(parent)
+        self._credential_provider = credential_provider
         self._service = service if service is not None else PortControlService()
         self._snapshot: PortSnapshot | None = None
         self._thread: QThread | None = None
@@ -218,10 +220,12 @@ class PortControlDialog(QDialog):
         self.ssh_port_input = QSpinBox(inputs)
         self.ssh_port_input.setRange(1, 65535)
         self.ssh_port_input.setValue(ssh_port)
-        self.username_input = QLineEdit(username, inputs)
-        self.password_input = QLineEdit(password, inputs)
+        self.username_input = QLineEdit(username if credential_provider is None else "", inputs)
+        self.password_input = QLineEdit(password if credential_provider is None else "", inputs)
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.enable_password_input = QLineEdit(enable_password, inputs)
+        self.enable_password_input = QLineEdit(
+            enable_password if credential_provider is None else "", inputs
+        )
         self.enable_password_input.setEchoMode(QLineEdit.EchoMode.Password)
         form.addRow("SW IP (IPv4)", self.ip_input)
         form.addRow("인터페이스 번호", self.interface_input)
@@ -229,6 +233,15 @@ class PortControlDialog(QDialog):
         form.addRow("사용자 이름", self.username_input)
         form.addRow("비밀번호", self.password_input)
         form.addRow("Enable 암호 (선택)", self.enable_password_input)
+        if credential_provider is not None:
+            # No duplicate password input or secret copying in integrated mode.
+            inputs.setTitle("1. 대상 포트 (SSH 공통 계정 사용)")
+            for credential_field in (
+                self.username_input,
+                self.password_input,
+                self.enable_password_input,
+            ):
+                form.setRowVisible(credential_field, False)
         layout.addWidget(inputs)
         self.inspect_button = QPushButton("현재 상태 조회", self)
         self.inspect_button.setObjectName("inspectPortButton")
@@ -314,6 +327,8 @@ class PortControlDialog(QDialog):
             button.setEnabled(available)
 
     def _credentials(self) -> Credentials:
+        if self._credential_provider is not None:
+            return self._credential_provider()
         return Credentials(
             username=self.username_input.text().strip(),
             password=self.password_input.text(),

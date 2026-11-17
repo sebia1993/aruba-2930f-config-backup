@@ -102,7 +102,8 @@ def test_target_pairing_merge_group_results_and_edit_invalidation(
     assert dialog.result_tree.topLevelItemCount() == 2
     group = dialog.result_tree.topLevelItem(0)
     assert "lab-sw" in group.text(0)
-    assert "3/3" in group.text(5)
+    assert group.text(5) == ""
+    assert "3/3" in group.toolTip(0)
     assert group.child(0).text(2) == "0 W"
     assert group.child(1).text(2) == "확인 안 됨"
     assert group.child(0).text(4)
@@ -248,7 +249,8 @@ def test_failure_rows_and_same_ip_different_ssh_port_stay_separate(
     assert dialog.result_tree.topLevelItemCount() == 2
     failed = dialog.result_tree.topLevelItem(1).child(0)
     assert failed.text(2) == "확인 안 됨"
-    assert failed.text(5) == "실패"
+    assert failed.text(5) == "조회 실패"
+    assert failed.text(3) == "조회 실패"
     dialog.result_tree.setCurrentItem(failed)
     assert "인증 실패" in dialog.details_label.text()
     path = tmp_path / "results.csv"
@@ -587,7 +589,7 @@ def test_lldp_columns_details_and_incremental_completion_are_idempotent(
     assert dialog.progress_bar.value() == 0
     assert item.text(1) == "조회 중"
     assert item.text(2) == "8.7 W"
-    assert "LLDP" in item.text(5)
+    assert "LLDP 조회 중" in item.toolTip(5)
     final = phase_result(groups[0])
     dialog._on_result(final)
     dialog._on_result(final)
@@ -595,8 +597,11 @@ def test_lldp_columns_details_and_incremental_completion_are_idempotent(
     assert dialog.progress_bar.value() == 100
     assert not dialog._pending
     assert item.text(1) == "<b>AP-east</b>"
-    assert item.text(3) == "공급·협상 정상"
-    assert "충족" in item.toolTip(3)
+    assert item.text(3) == "포트 Enable · Link Up"
+    assert item.text(5) == "PoE 공급 중"
+    assert "Power Enable=Yes" in item.toolTip(5)
+    assert final.assessment is not None
+    assert final.assessment.label == "공급·협상 정상"
     assert item.text(4)
     dialog.result_tree.setCurrentItem(item)
     details = dialog.details_label.text()
@@ -627,9 +632,9 @@ def test_lldp_columns_details_and_incremental_completion_are_idempotent(
         "스위치 / 포트",
         "AP 이름 (LLDP)",
         "현재 전력",
-        "PoE 판정",
+        "포트 상태",
         "조회 시각 (로컬)",
-        "조회 상태",
+        "PoE 상태",
     ]
 
 
@@ -868,5 +873,57 @@ def test_large_query_gui_batches_result_signals_without_losing_final_state(
     assert item.text(5) == ""
     dialog._flush_result_queue()
     assert not dialog._render_queue
-    assert item.text(5) == "실패"
+    assert item.text(5) == "조회 실패"
+    dialog.close()
+
+
+def test_port_and_poe_administrative_status_are_visible_without_opening_details(
+    app: QApplication, qtbot: object
+) -> None:
+    from dataclasses import replace
+
+    dialog, _service = setup_dialog(qtbot)
+    group = dialog._validated_targets()[0]
+    dialog._build_results((group,))
+    result = phase_result(group)
+    assert result.snapshot is not None
+
+    admin_disabled = replace(
+        result,
+        snapshot=replace(
+            result.snapshot,
+            enabled=False,
+            link_status="Down",
+            poe_enabled=True,
+            poe_status="Searching",
+            watts=0.0,
+        ),
+    )
+    dialog._on_result(admin_disabled)
+    item = dialog._items[(group.target.endpoint, group.interfaces[0])]
+    assert item.text(2) == "0 W"
+    assert item.text(3) == "포트 Disable · Link Down"
+    assert item.text(5) == "PoE 대기"
+    assert "PoE OFF라고 단정할 수 없습니다" in item.toolTip(5)
+    assert dialog.result_tree.columnCount() == 6
+    assert dialog.result_tree.headerItem().text(3) == "포트 상태"
+    assert dialog.result_tree.headerItem().text(5) == "PoE 상태"
+    dialog.result_tree.setCurrentItem(item)
+    assert "포트/PoE 관리 상태" in dialog.details_label.text()
+
+    manual_poe_off = replace(
+        admin_disabled,
+        snapshot=replace(
+            result.snapshot,
+            enabled=True,
+            poe_enabled=False,
+            poe_status="사용 안 함",
+            watts=None,
+        ),
+    )
+    dialog._on_result(manual_poe_off)
+    assert item.text(2) == "확인 안 됨"
+    assert item.text(3) == "포트 Enable · Link Up"
+    assert item.text(5) == "PoE OFF(설정)"
+    assert "Power Enable=No" in item.toolTip(5)
     dialog.close()

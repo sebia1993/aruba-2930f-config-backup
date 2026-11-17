@@ -258,7 +258,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             ("전체", "all"),
             ("조회 실패", "failed"),
             ("전력 확인 필요", "unknown"),
-            ("PoE 꺼짐", "off"),
+            ("PoE 설정 OFF", "off"),
+            ("포트 Disable", "port_disabled"),
         ):
             self.filter_combo.addItem(label, code)
         row.addWidget(self.filter_combo, 1)
@@ -617,6 +618,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                         interface,
                         names,
                         item.text(1),
+                        item.text(3),
+                        item.text(5),
                     )
                 )
                 matched_term = not term or term in match_text.casefold()
@@ -634,6 +637,12 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                         result is not None
                         and result.snapshot is not None
                         and result.snapshot.poe_enabled is False
+                    )
+                elif wanted == "port_disabled":
+                    matched_status = (
+                        result is not None
+                        and result.snapshot is not None
+                        and result.snapshot.enabled is False
                     )
                 else:
                     matched_status = True
@@ -702,15 +711,16 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.cycle_button.setToolTip(
             "OFF와 ON을 자동 연속 실행하지 않습니다. 각 단계는 별도로 승인합니다."
         )
-        self.cycle_button.clicked.connect(self._cycle_next)
-        layout.addWidget(self.cycle_button)
+        # Preserve the internal state-machine interface for compatibility,
+        # but remove the redundant restart action from the operator UI.
+        self.cycle_button.hide()
         self.cycle_status = QLabel(
             "선택 포트를 OFF → 상태 재조회 → 별도 승인 후 ON → 복구 재조회합니다.",
             group,
         )
         self.cycle_status.setObjectName("unifiedPowerCycleStatus")
         self.cycle_status.setWordWrap(True)
-        layout.addWidget(self.cycle_status)
+        self.cycle_status.hide()
         self.batch_progress = QProgressBar(group)
         self.batch_progress.setObjectName("unifiedBatchProgress")
         self.batch_progress.setRange(0, 100)
@@ -746,11 +756,14 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         layout.addWidget(self.quick_summary, 1)
         self.quick_off_button = QPushButton("PoE OFF 즉시", self.quick_action_bar)
         self.quick_on_button = QPushButton("PoE ON 즉시", self.quick_action_bar)
+        # Do not offer a combined OFF→ON action: operators choose OFF and ON
+        # separately. Keep the hidden Qt field for compatible internal tests.
         self.quick_cycle_button = QPushButton("PoE 재가동", self.quick_action_bar)
+        self.quick_cycle_button.setObjectName("poeQuickCycle")
+        self.quick_cycle_button.hide()
         for button, name in (
             (self.quick_off_button, "poeQuickOff"),
             (self.quick_on_button, "poeQuickOn"),
-            (self.quick_cycle_button, "poeQuickCycle"),
         ):
             button.setObjectName(name)
             button.setMinimumHeight(38)
@@ -765,7 +778,6 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         )
         self.quick_off_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_OFF))
         self.quick_on_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_ON))
-        self.quick_cycle_button.clicked.connect(self._quick_cycle)
         vertical.addLayout(layout)
 
         # Keep stop, progress and the last result visible without expanding
@@ -1075,7 +1087,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 # Never present a pre-mutation AP identity or power value as current.
                 item.setText(1, "재조회 필요")
                 item.setText(2, "—")
-                item.setText(3, "확인 필요")
+                item.setText(3, "재조회 필요")
                 self._results.pop(key, None)
         self.batch_status.setText(
             f"일괄 작업: {self._batch_count}/{len(self._batch_plan.targets) if self._batch_plan else '?'}개 처리 · "
@@ -1126,7 +1138,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 if item is not None:
                     item.setText(1, "재조회 필요")
                     item.setText(2, "—")
-                    item.setText(3, "확인 필요")
+                    item.setText(3, "재조회 필요")
                     item.setText(5, "일괄 작업 실패 · 결과 불확실")
                     item.setToolTip(5, "작업 이력을 확인하고 수동 재조회하세요.")
         self._batch_outcome = None
@@ -1394,13 +1406,15 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         snapshot = selected[0].snapshot
         from .port_control_gui import PortControlDialog
 
+        provider = self.session_credential_provider
         dialog = PortControlDialog(
             self,
             ip=snapshot.target.ip,
             ssh_port=snapshot.target.port,
-            username=self.username_input.text(),
-            password=self.password_input.text(),
-            enable_password=self.enable_password_input.text(),
+            username=self.username_input.text() if provider is None else "",
+            password=self.password_input.text() if provider is None else "",
+            enable_password=self.enable_password_input.text() if provider is None else "",
+            credential_provider=provider,
         )
         dialog.interface_input.setText(snapshot.interface)
         try:
@@ -1413,7 +1427,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             if key in self._items:
                 self._items[key].setText(1, "재조회 필요")
                 self._items[key].setText(2, "—")
-                self._items[key].setText(3, "확인 필요")
+                self._items[key].setText(3, "재조회 필요")
                 self._items[key].setText(5, "단일 제어 종료 · 재조회 필요")
             self._batch_plan = None
             self._update_control_buttons()

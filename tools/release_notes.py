@@ -110,6 +110,19 @@ def _render(version: str, body: str) -> str:
         )
         port_control_document += "\n- [다중 스위치·포트 전력 조회](https://github.com/sebia1993/aruba-2930f-config-backup/blob/main/docs/POE_QUERY_KO.md)"
 
+    if version_parts >= (0, 4, 0):
+        # 0.4+ supports guarded bulk port operations; keep release notes
+        # consistent with the actual operator workflow.
+        configuration_limit = configuration_limit.replace(
+            "- 포트 제어는 한 번에 한 포트만 지원합니다. 자동 PoE 재시작과 일괄 제어는 제공하지 않습니다.\n",
+            "- 포트 통합 관리는 한 실행 계획에서 최대 300개 포트를 변경할 수 있습니다. "
+            "일괄 PoE OFF·포트 Down은 LLDP AP-535 확인 대상만 허용합니다.\n",
+        )
+        configuration_limit = configuration_limit.replace(
+            "자동 반복 측정·일괄 전원 제어는 포함하지 않습니다.",
+            "자동 반복 측정은 포함하지 않습니다. 일괄 변경은 사전 검증과 명시적 승인 후 실행합니다.",
+        )
+
     return f"""# Aruba 2930F 설정 백업 v{version}
 
 > **배포 상태: 사전릴리즈**

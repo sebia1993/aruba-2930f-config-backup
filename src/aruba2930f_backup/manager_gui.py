@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -38,6 +39,8 @@ from PySide6.QtWidgets import (
 
 from .batch_port_control import BatchControlError, journal_states
 from .gui import MainWindow
+from .models import Credentials
+from .session_credentials import SessionCredentialDialog, SessionCredentialStore
 from .storage import default_output_directory
 from .unified_port_gui import UnifiedPortManagementDialog
 
@@ -172,6 +175,7 @@ class NetworkManagerWindow(QMainWindow):
         self._navigation_buttons: list[QPushButton] = []
         self._page_index = 0
         self._history_paths: dict[int, Path] = {}
+        self._ssh_credentials = SessionCredentialStore()
 
         central = QWidget(self)
         root = QHBoxLayout(central)
@@ -219,6 +223,24 @@ class NetworkManagerWindow(QMainWindow):
         self.page_description = QLabel(content)
         self.page_description.setWordWrap(True)
         content_layout.addWidget(self.page_description)
+
+        # One place to set/revoke SSH credentials, shared across every action.
+        account_row = QHBoxLayout()
+        self.ssh_session_status = QLabel("SSH 계정 미설정", content)
+        self.ssh_session_status.setObjectName("sshSessionStatus")
+        self.ssh_session_status.setTextFormat(Qt.TextFormat.PlainText)
+        account_row.addWidget(self.ssh_session_status, 1)
+        self.ssh_session_button = QPushButton("SSH 계정 설정…", content)
+        self.ssh_session_button.setObjectName("sshSessionConfigure")
+        self.ssh_session_button.clicked.connect(self._configure_ssh_session)
+        account_row.addWidget(self.ssh_session_button)
+        self.ssh_session_clear_button = QPushButton("세션 해제", content)
+        self.ssh_session_clear_button.setObjectName("sshSessionClear")
+        self.ssh_session_clear_button.setEnabled(False)
+        self.ssh_session_clear_button.clicked.connect(self._clear_ssh_session)
+        account_row.addWidget(self.ssh_session_clear_button)
+        content_layout.addLayout(account_row)
+
         self.pages = QStackedWidget(content)
         self.pages.setObjectName("networkManagerPages")
         content_layout.addWidget(self.pages, 1)
@@ -234,12 +256,14 @@ class NetworkManagerWindow(QMainWindow):
         )
         self.backup_page.setWindowFlags(Qt.WindowType.Widget)
         self.backup_page.setMinimumSize(0, 0)
+        self.backup_page.session_credential_provider = self._require_ssh_credentials
         self._layout_backup()
         self.pages.addWidget(self.backup_page)
 
         self.port_page = _EmbeddedPortManagementDialog(self.pages)
         self.port_page.setWindowFlags(Qt.WindowType.Widget)
         self.port_page.setMinimumSize(0, 0)
+        self.port_page.session_credential_provider = self._require_ssh_credentials
         self._layout_port()
         self.pages.addWidget(self.port_page)
 
@@ -320,6 +344,9 @@ class NetworkManagerWindow(QMainWindow):
         settings_layout.addWidget(QLabel("대상 장비 · 접속 · 저장 옵션", settings))
         for group in (target, access, options):
             settings_layout.addWidget(group)
+        # The common SSH account is configured in the global header only.
+        # Existing inputs stay connected for standalone GUI compatibility.
+        access.hide()
         settings_layout.addStretch(1)
         scroll = QScrollArea(central)
         scroll.setObjectName("backupConfigurationScroll")
@@ -361,7 +388,7 @@ class NetworkManagerWindow(QMainWindow):
                 credential_form = item.layout()
                 root.takeAt(index)
                 break
-        if credential_form is None:
+        if not isinstance(credential_form, QFormLayout):
             raise RuntimeError("Could not relocate the existing SSH credential form")
         search_group = port.search_input.parentWidget()
         control_group = port.batch_progress.parentWidget()
@@ -398,11 +425,11 @@ class NetworkManagerWindow(QMainWindow):
         root.setSpacing(7)
         self.port_target_toggle = QToolButton(port)
         self.port_target_toggle.setObjectName("portTargetsToggle")
-        self.port_target_toggle.setText("조회 대상 · SSH 접속 설정 펼치기/접기")
+        self.port_target_toggle.setText("조회 대상 입력 · 펼치기/접기")
         self.port_target_toggle.setCheckable(True)
-        self.port_target_toggle.setChecked(False)
+        self.port_target_toggle.setChecked(True)
         self.port_target_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.port_target_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.port_target_toggle.setArrowType(Qt.ArrowType.DownArrow)
         # Excel IP/port paste stays accessible while target/SSH settings are collapsed.
         target_action.removeWidget(port.paste_button)
         port.paste_button.setText("IP·포트 2열 붙여넣기…")
@@ -417,64 +444,81 @@ class NetworkManagerWindow(QMainWindow):
         target_container = QWidget(port)
         target_layout = QVBoxLayout(target_container)
         target_layout.setContentsMargins(8, 8, 8, 8)
-        target_layout.addWidget(port.targets_table)
+        port.targets_table.setMinimumHeight(175)
+        port.targets_table.setMaximumHeight(16777215)
+        target_layout.addWidget(port.targets_table, 1)
         target_layout.addWidget(port.advanced_toggle)
         _attach(target_layout, target_action)
         target_layout.addLayout(credential_form)
+        # Standalone PoEQueryDialog retains the form, but this embedded view
+        # never copies or exposes the shared secret in duplicate QLineEdits.
+        for field in (
+            port.username_input,
+            port.password_input,
+            port.enable_password_input,
+        ):
+            credential_form.setRowVisible(field, False)
         target_layout.addStretch(1)
         self.port_target_scroll = QScrollArea(port)
         self.port_target_scroll.setObjectName("portTargetSettings")
         self.port_target_scroll.setWidgetResizable(True)
-        self.port_target_scroll.setMaximumHeight(275)
+        self.port_target_scroll.setMinimumHeight(175)
         self.port_target_scroll.setWidget(target_container)
-        self.port_target_scroll.setVisible(False)
         self.port_target_toggle.toggled.connect(self._toggle_port_targets)
-        root.addWidget(self.port_target_scroll)
-
         _attach(root, query_action)
-        body = QSplitter(Qt.Orientation.Horizontal, port)
-        body.setObjectName("portResultDetailSplitter")
-        center = QWidget(body)
-        center_layout = QVBoxLayout(center)
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.addWidget(search_group)
-        port.result_tree.setColumnHidden(4, True)  # timestamps remain in Details
-        port.result_tree.setColumnWidth(0, 255)  # hostname and IP together
-        center_layout.addWidget(port.result_tree, 1)
-        detail = QWidget(body)
-        detail_layout = QVBoxLayout(detail)
-        detail_layout.setContentsMargins(5, 0, 0, 0)
-        detail_layout.addWidget(QLabel("선택 포트 상세", detail))
-        detail_layout.addWidget(details_scroll)
+        # The operator requested that the per-port detail pane stop consuming
+        # horizontal space. Keep the original read-only detail widget alive for
+        # older standalone APIs, but never display it in this embedded view.
+        details_scroll.hide()
+        result_panel = QWidget(port)
+        result_layout = QVBoxLayout(result_panel)
+        result_layout.setContentsMargins(0, 0, 0, 0)
+        result_layout.setSpacing(5)
+        result_layout.addWidget(search_group)
+        port.result_tree.setColumnHidden(4, True)  # timestamps stay in CSV/history
+        port.result_tree.setColumnWidth(0, 235)  # hostname and IP together
+        port.result_tree.setColumnWidth(1, 190)  # LLDP AP
+        port.result_tree.setColumnWidth(2, 105)  # watts
+        port.result_tree.setColumnWidth(3, 220)  # port administration and link
+        port.result_tree.setColumnWidth(5, 190)  # PoE setting and delivery
+        # Full-width central table; no side splitter or selected-port details.
+        result_layout.addWidget(port.result_tree, 1)
+        result_panel.setMinimumHeight(220)
+        # Resize the input area vertically without sacrificing the full-width
+        # port result table; collapsing input releases all available space.
+        self.port_vertical_splitter = QSplitter(Qt.Orientation.Vertical, port)
+        self.port_vertical_splitter.setObjectName("portVerticalSplitter")
+        self.port_vertical_splitter.setChildrenCollapsible(False)
+        self.port_vertical_splitter.addWidget(self.port_target_scroll)
+        self.port_vertical_splitter.addWidget(result_panel)
+        self.port_vertical_splitter.setStretchFactor(0, 1)
+        self.port_vertical_splitter.setStretchFactor(1, 3)
+        self.port_vertical_splitter.setSizes([280, 520])
+        root.addWidget(self.port_vertical_splitter, 1)
+
         self._layout_port_control_buttons(control_group)
-        self.port_advanced_toggle = QToolButton(detail)
+        self.port_advanced_toggle = QToolButton(port)
         self.port_advanced_toggle.setObjectName("portAdvancedControlToggle")
-        self.port_advanced_toggle.setText("고급 제어 · 단일 포트 / 기존 계획 기능")
+        self.port_advanced_toggle.setText("고급 제어 · 기존 포트 Up/Down 및 계획 기능")
         self.port_advanced_toggle.setToolTip(
-            "일반 PoE 작업은 화면 하단 버튼만 사용하세요. "
-            "포트 Up/Down·단일 포트 상세 제어·기존 계획 승인은 여기서 사용할 수 있습니다."
+            "일반 PoE 작업은 아래 OFF/ON 두 버튼을 사용하세요. "
+            "포트 Up/Down 및 기존 작업 계획은 필요할 때만 펼칩니다."
         )
         self.port_advanced_toggle.setCheckable(True)
         self.port_advanced_toggle.setChecked(False)
         self.port_advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.port_advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
         self.port_advanced_toggle.toggled.connect(self._toggle_port_advanced)
-        detail_layout.addWidget(self.port_advanced_toggle)
-        control_group.setVisible(False)
-        detail_layout.addWidget(control_group)
-        detail_layout.addStretch(1)
-        right = QScrollArea(port)
-        right.setObjectName("portDetailsAndControl")
-        right.setWidgetResizable(True)
-        right.setMinimumWidth(260)
-        right.setWidget(detail)
-        body.addWidget(center)
-        body.addWidget(right)
-        body.setChildrenCollapsible(False)
-        body.setSizes([730, 350])
-        root.addWidget(body, 1)
-        # Fixed below the scrolling results and details: always show checked targets
-        # and guarded OFF / ON / power-cycle actions, independent of detail scroll.
+        root.addWidget(self.port_advanced_toggle)
+        self.port_advanced_scroll = QScrollArea(port)
+        self.port_advanced_scroll.setObjectName("portAdvancedControls")
+        self.port_advanced_scroll.setWidgetResizable(True)
+        self.port_advanced_scroll.setMaximumHeight(270)
+        self.port_advanced_scroll.setWidget(control_group)
+        self.port_advanced_scroll.setVisible(False)
+        root.addWidget(self.port_advanced_scroll)
+
+        # Fixed OFF/ON actions, progress and stop remain visible at the bottom.
         root.addWidget(quick_bar)
         root.addWidget(port.progress_bar)
         root.addWidget(port.status_label)
@@ -530,9 +574,7 @@ class NetworkManagerWindow(QMainWindow):
 
     @Slot(bool)
     def _toggle_port_advanced(self, expanded: bool) -> None:
-        group = self.port_page.batch_progress.parentWidget()
-        if group is not None:
-            group.setVisible(expanded)
+        self.port_advanced_scroll.setVisible(expanded)
         self.port_advanced_toggle.setArrowType(
             Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         )
@@ -540,6 +582,11 @@ class NetworkManagerWindow(QMainWindow):
     @Slot(bool)
     def _toggle_port_targets(self, expanded: bool) -> None:
         self.port_target_scroll.setVisible(expanded)
+        if expanded:
+            # Restore a useful editor height even after the panel was collapsed.
+            sizes = self.port_vertical_splitter.sizes()
+            total = sum(sizes)
+            self.port_vertical_splitter.setSizes([max(200, total // 3), max(220, total * 2 // 3)])
         self.port_target_toggle.setArrowType(
             Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         )
@@ -684,6 +731,58 @@ class NetworkManagerWindow(QMainWindow):
         return page
 
     @Slot()
+    def _configure_ssh_session(self) -> bool:
+        if self._is_busy():
+            QMessageBox.information(
+                self, "SSH 계정 변경 불가", "작업 진행 중에는 SSH 계정을 변경할 수 없습니다."
+            )
+            return False
+        dialog = SessionCredentialDialog(self, username=self._ssh_credentials.username or "")
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return False
+            credentials = dialog.take_credentials()
+            if credentials is None:
+                return False
+            was_configured = self._ssh_credentials.configured
+            self._ssh_credentials.configure(
+                credentials.username, credentials.password, credentials.enable_secret
+            )
+            if was_configured:
+                # Account changes must invalidate any previously inspected
+                # switch/port state before further destructive operations.
+                self.port_page._invalidate()
+            self._refresh_ssh_session_status()
+            return True
+        finally:
+            dialog.deleteLater()
+
+    @Slot()
+    def _clear_ssh_session(self) -> None:
+        if self._is_busy():
+            QMessageBox.information(
+                self, "SSH 세션 해제 불가", "작업 진행 중에는 SSH 세션을 해제할 수 없습니다."
+            )
+            return
+        if self._ssh_credentials.configured:
+            self._ssh_credentials.clear()
+            self.port_page._invalidate()
+        self._refresh_ssh_session_status()
+
+    def _require_ssh_credentials(self) -> Credentials:
+        if not self._ssh_credentials.configured and not self._configure_ssh_session():
+            raise ValueError("SSH 공통 계정 설정을 취소했습니다.")
+        return self._ssh_credentials.require()
+
+    def _refresh_ssh_session_status(self) -> None:
+        username = self._ssh_credentials.username
+        self.ssh_session_status.setText(
+            f"SSH 계정: {username} · 현재 실행에만 사용" if username else "SSH 계정 미설정"
+        )
+        self.ssh_session_button.setText("계정 변경…" if username else "SSH 계정 설정…")
+        self.ssh_session_clear_button.setEnabled(username is not None and not self._is_busy())
+
+    @Slot()
     def _apply_output(self) -> None:
         if self._is_busy():
             QMessageBox.information(self, "저장 위치", "작업 중에는 저장 위치를 바꾸지 마세요.")
@@ -728,16 +827,8 @@ class NetworkManagerWindow(QMainWindow):
                 )
                 if ips:
                     port._replace_targets_rows(tuple((ip, "22", "", "") for ip in ips))
-            # Reuse in-memory session credentials only when the port fields are
-            # empty. Never persist or silently overwrite separately set credentials.
-            backup = self.backup_page
-            for source, destination in (
-                (backup.username_input, port.username_input),
-                (backup.password_input, port.password_input),
-                (backup.enable_password_input, port.enable_password_input),
-            ):
-                if not destination.text() and source.text():
-                    destination.setText(source.text())
+            # Port actions read one common session; never copy passwords
+            # between the hidden legacy backup/port input widgets.
             if not port.isVisible():
                 port.show()
         if index == 3:
@@ -756,7 +847,10 @@ class NetworkManagerWindow(QMainWindow):
         backup = self.backup_page
         self.home_backup_status.setText("컨피그 백업 · " + backup.status_label.text())
         self.home_port_status.setText("포트 통합 관리 · " + self.port_page.status_label.text())
-        if self._is_busy():
+        busy = self._is_busy()
+        self.ssh_session_button.setEnabled(not busy)
+        self.ssh_session_clear_button.setEnabled(self._ssh_credentials.configured and not busy)
+        if busy:
             self.sidebar_status.setText("작업 진행 중 · 현재 화면에서 확인")
         else:
             self.sidebar_status.setText("작업 상태 · 대기")
@@ -776,4 +870,6 @@ class NetworkManagerWindow(QMainWindow):
         self.backup_page.close()
         self.port_page._shell_allows_close = True
         self.port_page.close()
+        self._ssh_credentials.clear()
+        self._refresh_ssh_session_status()
         super().closeEvent(event)

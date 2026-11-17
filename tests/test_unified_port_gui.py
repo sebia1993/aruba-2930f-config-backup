@@ -560,30 +560,37 @@ def test_quick_off_starts_with_an_internal_plan_but_no_extra_plan_button(
     dialog.close()
 
 
-def test_quick_cycle_still_requires_distinct_off_on_operator_approvals(
+def test_quick_bar_exposes_only_independent_poe_off_and_on(
     app: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from aruba2930f_backup.poe_cycle import PowerCyclePhase
-
     dialog = setup_dialog()
+    bar_layout = dialog.quick_action_bar.layout()
+    assert bar_layout is not None
+    button_row_item = bar_layout.itemAt(0)
+    assert button_row_item is not None
+    button_row = button_row_item.layout()
+    assert button_row is not None
+    assert button_row.count() == 3  # selection summary + OFF + ON
+    assert button_row.itemAt(1).widget() is dialog.quick_off_button
+    assert button_row.itemAt(2).widget() is dialog.quick_on_button
+    assert not dialog.quick_off_button.isHidden()
+    assert not dialog.quick_on_button.isHidden()
+    assert dialog.quick_cycle_button.isHidden()
+    assert dialog.cycle_button.isHidden()
+    assert dialog.cycle_status.isHidden()
+
     dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
-    reviewed: list[PortAction] = []
+    executed: list[PortAction] = []
 
     def capture(*, quick: bool = False) -> None:
         assert quick
         if dialog._batch_plan is not None:
-            reviewed.append(dialog._batch_plan.action)
+            executed.append(dialog._batch_plan.action)
 
     monkeypatch.setattr(dialog, "_run_batch", capture)
-    dialog.quick_cycle_button.click()
-    assert reviewed == [PortAction.POE_OFF]
-    assert dialog._cycle is not None
-    assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
-    assert not dialog.quick_off_button.isEnabled()
-    assert not dialog.quick_on_button.isEnabled()
-    dialog.quick_cycle_button.click()
-    assert reviewed == [PortAction.POE_OFF, PortAction.POE_OFF]
-    assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
+    dialog.quick_off_button.click()
+    dialog.quick_on_button.click()
+    assert executed == [PortAction.POE_OFF, PortAction.POE_ON]
     dialog.close()
 
 
@@ -732,4 +739,42 @@ def test_quick_off_rejects_unsafe_selected_port_even_in_direct_mode(
     assert dialog._batch_thread is None
     assert dialog._batch_plan is None
     assert messages and "AP-535" in messages[0]
+    dialog.close()
+
+
+def test_admin_disabled_filter_is_distinct_from_poe_off(
+    app: QApplication,
+) -> None:
+    from dataclasses import replace
+
+    dialog = setup_dialog()
+    result = queried("2")
+    assert result.snapshot is not None
+    dialog._on_result(replace(result, snapshot=replace(result.snapshot, enabled=False)))
+    dialog.filter_combo.setCurrentIndex(dialog.filter_combo.findData("port_disabled"))
+    dialog._apply_search_filter()
+    first = dialog._items[(TARGET.endpoint, "1")]
+    second = dialog._items[(TARGET.endpoint, "2")]
+    assert first.isHidden()
+    assert not second.isHidden()
+    assert second.text(3).startswith("포트 Disable")
+    assert second.text(5) == "PoE 공급 중"
+    dialog.close()
+
+
+def test_switch_admin_disable_does_not_disable_poe_quick_buttons(
+    app: QApplication,
+) -> None:
+    from dataclasses import replace
+
+    dialog = setup_dialog()
+    result = queried("1")
+    assert result.snapshot is not None
+    dialog._on_result(replace(result, snapshot=replace(result.snapshot, enabled=False)))
+    item = dialog._items[(TARGET.endpoint, "1")]
+    item.setCheckState(0, Qt.CheckState.Checked)
+    assert item.text(3).startswith("포트 Disable")
+    assert item.text(5) == "PoE 공급 중"
+    assert dialog.quick_on_button.isEnabled()
+    assert dialog.quick_off_button.isEnabled()
     dialog.close()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QTimer, Slot
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -35,8 +36,8 @@ class PortTargetPasteDialog(QDialog):
         self._existing_targets = existing_targets
         self.proposed_targets: tuple[PoETarget, ...] | None = None
         self.setWindowTitle("스위치 IP · 포트 2열 붙여넣기")
-        self.resize(760, 580)
-        self.setMinimumSize(560, 420)
+        self.resize(1120, 750)
+        self.setMinimumSize(720, 480)
         layout = QVBoxLayout(self)
         explanation = QLabel(
             "엑셀의 '스위치 IP / 포트' 두 열을 선택하고 Ctrl+C → Ctrl+V 하세요.\n"
@@ -64,17 +65,38 @@ class PortTargetPasteDialog(QDialog):
         self.pasted_text.setPlaceholderText(
             "스위치 IP\t포트\n192.0.2.10\t12\n192.0.2.10\t24\n192.0.2.20\t1/12,1/24"
         )
-        self.pasted_text.setMinimumHeight(135)
-        layout.addWidget(self.pasted_text, 2)
+        self.pasted_text.setMinimumWidth(270)
+        self.pasted_text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.preview_status = QLabel("표를 붙여넣으면 대상 개수와 오류를 확인합니다.", self)
         self.preview_status.setObjectName("pastePreviewStatus")
         self.preview_status.setWordWrap(True)
-        layout.addWidget(self.preview_status)
         self.preview_table = QPlainTextEdit(self)
         self.preview_table.setObjectName("pastePreviewTable")
         self.preview_table.setReadOnly(True)
+        self.preview_table.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.preview_table.setPlaceholderText("스위치 IP | 포트 목록 미리보기")
-        layout.addWidget(self.preview_table, 1)
+        self.preview_table.setMinimumWidth(270)
+
+        # Side-by-side editors make large Excel paste blocks and the validated
+        # preview visible simultaneously; the splitter is user-resizable.
+        input_panel = QWidget(self)
+        input_layout = QVBoxLayout(input_panel)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.addWidget(QLabel("① 엑셀 IP · 포트 입력", input_panel))
+        input_layout.addWidget(self.pasted_text, 1)
+        preview_panel = QWidget(self)
+        preview_layout = QVBoxLayout(preview_panel)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.addWidget(QLabel("② 검증된 대상 미리보기", preview_panel))
+        preview_layout.addWidget(self.preview_table, 1)
+        self.paste_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.paste_splitter.setObjectName("pastePreviewSplitter")
+        self.paste_splitter.setChildrenCollapsible(False)
+        self.paste_splitter.addWidget(input_panel)
+        self.paste_splitter.addWidget(preview_panel)
+        self.paste_splitter.setSizes([560, 560])
+        layout.addWidget(self.paste_splitter, 1)
+        layout.addWidget(self.preview_status)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
         self.apply_button = QPushButton("검증된 대상 적용", self)
@@ -130,10 +152,8 @@ class PortTargetPasteDialog(QDialog):
         )
         preview = [
             f"{group.target.ip}:{group.target.port}\t{','.join(group.interfaces)}"
-            for group in groups[:40]
+            for group in groups
         ]
-        if len(groups) > 40:
-            preview.append(f"… 나머지 {len(groups) - 40}개 스위치")
         self.preview_table.setPlainText("\n".join(preview))
 
     def accept(self) -> None:
