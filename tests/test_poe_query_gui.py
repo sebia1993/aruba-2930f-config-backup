@@ -968,11 +968,7 @@ def test_realistic_two_ports_per_switch_coalesces_large_query(
     qtbot.addWidget(dialog)
     groups = tuple(
         PoETarget(
-            DeviceTarget(
-                f"192.0.2.{index + 1}"
-                if index < 250
-                else f"198.51.100.{index - 249}"
-            ),
+            DeviceTarget(f"192.0.2.{index + 1}" if index < 250 else f"198.51.100.{index - 249}"),
             ("1", "2"),
         )
         for index in range(switch_count)
