@@ -173,4 +173,3 @@ def write_query_csv(path: Path, results: Sequence[PoEQueryResult]) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-
