@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Sequence
+from pathlib import Path
 from typing import cast
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
@@ -13,12 +15,14 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -33,11 +37,13 @@ from .batch_port_control import (
     BatchResult,
     BatchStatus,
     create_batch_plan,
+    journal_states,
 )
 from .models import Credentials
 from .poe_query_gui import PoEQueryDialog, PoEQueryServiceProtocol
 from .poe_query_models import PoEQueryResult, PoETarget
 from .port_control import PortAction
+from .storage import default_output_directory
 
 ACTION_TITLES: dict[PortAction, str] = {
     PortAction.POE_ON: "PoE 전원 ON",
@@ -251,7 +257,16 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.cancel_batch_button.setObjectName("unifiedBatchStop")
         self.cancel_batch_button.clicked.connect(self._cancel_batch)
         row2.addWidget(self.cancel_batch_button)
+        self.history_button = QPushButton("작업 이력 확인…", group)
+        self.history_button.setObjectName("unifiedBatchHistory")
+        self.history_button.clicked.connect(self._show_history)
+        row2.addWidget(self.history_button)
         layout.addLayout(row2)
+        self.batch_progress = QProgressBar(group)
+        self.batch_progress.setObjectName("unifiedBatchProgress")
+        self.batch_progress.setRange(0, 100)
+        self.batch_progress.setValue(0)
+        layout.addWidget(self.batch_progress)
         self.batch_status = QLabel(
             "실행 전 대상별 재검증 · 10개마다 다음 묶음 승인 · 설정 저장(write memory) 없음",
             group,
@@ -305,6 +320,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.run_button.setEnabled(not busy and self._batch_plan is not None)
         self.cancel_batch_button.setEnabled(self._batch_thread is not None)
         self.action_combo.setEnabled(not busy)
+        self.history_button.setEnabled(not busy)
 
     @Slot()
     def _prepare_batch(self) -> None:
@@ -357,6 +373,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self._batch_thread, self._batch_worker = thread, worker
         self._batch_count = 0
         self._batch_outcome = None
+        self.batch_progress.setRange(0, len(plan.targets))
+        self.batch_progress.setValue(0)
         self.batch_status.setText(f"일괄 작업 실행 중 · 0/{len(plan.targets)}개 완료")
         self._set_busy(True)
         thread.start()
@@ -365,6 +383,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
     def _batch_progress(self, value: object) -> None:
         index, result = cast(tuple[int, BatchResult], value)
         self._batch_count = index + 1
+        self.batch_progress.setValue(self._batch_count)
         key = (result.target.target.endpoint, result.target.interface)
         if key in self._items:
             item: QTreeWidgetItem = self._items[key]
@@ -487,6 +506,55 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 self._items[key].setText(5, "단일 제어 종료 · 재조회 필요")
             self._batch_plan = None
             self._update_control_buttons()
+
+    @Slot()
+    def _show_history(self) -> None:
+        if self.is_busy:
+            return
+        directory = default_output_directory() / "port-control" / "batch"
+        path_text, _selected_filter = QFileDialog.getOpenFileName(
+            self, "일괄 제어 작업 이력 열기", str(directory), "작업 이력 (*.jsonl)"
+        )
+        if not path_text:
+            return
+        path = Path(path_text)
+        try:
+            states = journal_states(path)
+            header_line = path.read_text(encoding="utf-8").splitlines()[0]
+            header = json.loads(header_line)
+            if not isinstance(header, dict) or not isinstance(header.get("items"), list):
+                raise BatchControlError("작업 대상 정보가 손상되었습니다.")
+            items = header["items"]
+            lines = []
+            for index, item in enumerate(items):
+                if not isinstance(item, dict):
+                    raise BatchControlError("작업 이력의 대상 행이 올바르지 않습니다.")
+                lines.append(
+                    f"{index + 1:03d}. {item.get('endpoint', '')} / "
+                    f"{item.get('interface', '')} · {item.get('hostname', '')} · "
+                    f"{states.get(index, 'result_unknown')}"
+                )
+        except (BatchControlError, OSError, UnicodeError, ValueError) as exc:
+            QMessageBox.warning(self, "작업 이력 읽기 실패", str(exc))
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("일괄 포트 제어 결과·중단 이력")
+        dialog.resize(720, 520)
+        layout = QVBoxLayout(dialog)
+        note = QLabel(
+            "result_unknown은 변경 명령의 전송 여부를 확인하지 못한 상태입니다. "
+            "자동 재시도하지 말고 장비를 직접 재조회하세요.", dialog
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        display = QPlainTextEdit(dialog)
+        display.setReadOnly(True)
+        display.setPlainText("\n".join(lines))
+        layout.addWidget(display)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def stop(self) -> None:
         if self._batch_thread is not None:
