@@ -401,7 +401,6 @@ def test_common_ssh_account_dialog_is_shared_and_reprompts_after_clear(
     app: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import aruba2930f_backup.manager_gui as manager_gui
-
     from aruba2930f_backup.models import Credentials
 
     window = make_window(app)
