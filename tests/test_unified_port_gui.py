@@ -298,14 +298,23 @@ def test_select_all_scope_and_eligible_only_keep_unsafe_ports_unselected(
     dialog._on_result(queried("2", model="Aruba 2930F"))
     dialog.action_combo.setCurrentIndex(dialog.action_combo.findData(PortAction.POE_OFF.value))
     dialog.select_all_button.click()
-    assert first.checkState(0) is Qt.CheckState.Checked and second.checkState(0) is Qt.CheckState.Checked
+    assert (
+        first.checkState(0) is Qt.CheckState.Checked
+        and second.checkState(0) is Qt.CheckState.Checked
+    )
     assert "체크 2개" in dialog.selection_summary.text()
     assert "가능 1개" in dialog.selection_summary.text()
     dialog.select_eligible_button.click()
-    assert first.checkState(0) is Qt.CheckState.Checked and second.checkState(0) is Qt.CheckState.Unchecked
+    assert (
+        first.checkState(0) is Qt.CheckState.Checked
+        and second.checkState(0) is Qt.CheckState.Unchecked
+    )
     assert len(dialog._selected_rows()) == 1
     dialog.clear_selection_button.click()
-    assert first.checkState(0) is Qt.CheckState.Unchecked and second.checkState(0) is Qt.CheckState.Unchecked
+    assert (
+        first.checkState(0) is Qt.CheckState.Unchecked
+        and second.checkState(0) is Qt.CheckState.Unchecked
+    )
     dialog.close()
 
 
@@ -319,17 +328,26 @@ def test_select_current_switch_and_filter_results_without_selecting_group_parent
     dialog.result_tree.setCurrentItem(first)
     dialog.selection_scope.setCurrentIndex(dialog.selection_scope.findData("switch"))
     dialog.select_all_button.click()
-    assert first.checkState(0) is Qt.CheckState.Checked and second.checkState(0) is Qt.CheckState.Checked
+    assert (
+        first.checkState(0) is Qt.CheckState.Checked
+        and second.checkState(0) is Qt.CheckState.Checked
+    )
     assert dialog._parents[TARGET.endpoint].checkState(0) is Qt.CheckState.Checked
     dialog.search_input.setText("AP-2")
     dialog._apply_search_filter()
     dialog.selection_scope.setCurrentIndex(dialog.selection_scope.findData("filtered"))
     dialog.select_all_button.click()
-    assert first.checkState(0) is Qt.CheckState.Unchecked and second.checkState(0) is Qt.CheckState.Checked
+    assert (
+        first.checkState(0) is Qt.CheckState.Unchecked
+        and second.checkState(0) is Qt.CheckState.Checked
+    )
     dialog.selection_scope.setCurrentIndex(dialog.selection_scope.findData("all"))
     dialog.select_all_button.click()
     assert dialog.search_input.text() == "AP-2"
-    assert first.checkState(0) is Qt.CheckState.Checked and second.checkState(0) is Qt.CheckState.Checked
+    assert (
+        first.checkState(0) is Qt.CheckState.Checked
+        and second.checkState(0) is Qt.CheckState.Checked
+    )
     dialog.close()
 
 
