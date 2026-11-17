@@ -102,7 +102,8 @@ def test_target_pairing_merge_group_results_and_edit_invalidation(
     assert dialog.result_tree.topLevelItemCount() == 2
     group = dialog.result_tree.topLevelItem(0)
     assert "lab-sw" in group.text(0)
-    assert "3/3" in group.text(5)
+    assert group.text(5) == ""
+    assert "3/3" in group.toolTip(0)
     assert group.child(0).text(2) == "0 W"
     assert group.child(1).text(2) == "확인 안 됨"
     assert group.child(0).text(4)
