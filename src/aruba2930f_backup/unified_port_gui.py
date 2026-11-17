@@ -1406,13 +1406,15 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         snapshot = selected[0].snapshot
         from .port_control_gui import PortControlDialog
 
+        provider = self.session_credential_provider
         dialog = PortControlDialog(
             self,
             ip=snapshot.target.ip,
             ssh_port=snapshot.target.port,
-            username=self.username_input.text(),
-            password=self.password_input.text(),
-            enable_password=self.enable_password_input.text(),
+            username=self.username_input.text() if provider is None else "",
+            password=self.password_input.text() if provider is None else "",
+            enable_password=self.enable_password_input.text() if provider is None else "",
+            credential_provider=provider,
         )
         dialog.interface_input.setText(snapshot.interface)
         try:
