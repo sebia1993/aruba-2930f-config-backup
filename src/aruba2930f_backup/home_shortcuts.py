@@ -27,11 +27,7 @@ _ICON_PATHS = {
         '<path d="M12 6.5v5M4.5 17.5v-3.5a2.5 2.5 0 0 1 2.5-2.5h10'
         'a2.5 2.5 0 0 1 2.5 2.5v3.5"/>'
     ),
-    "history": (
-        '<path d="M3 9a9 9 0 1 1 .4 7"/>'
-        '<path d="M3 3v6h6"/>'
-        '<path d="M12 7v5l3 2"/>'
-    ),
+    "history": ('<path d="M3 9a9 9 0 1 1 .4 7"/><path d="M3 3v6h6"/><path d="M12 7v5l3 2"/>'),
 }
 
 _CARD_STYLE = """
@@ -65,7 +61,7 @@ def _render_icon(name: str, color: str) -> QPixmap:
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"'
         f' fill="none" stroke="{color}" stroke-width="1.9"'
         ' stroke-linecap="round" stroke-linejoin="round">'
-        f'{paths}</svg>'
+        f"{paths}</svg>"
     )
     renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
     if not renderer.isValid():
@@ -84,9 +80,7 @@ def _render_icon(name: str, color: str) -> QPixmap:
 class HomeShortcutButton(QPushButton):
     """Full-surface accessible button displaying an icon above a short title."""
 
-    def __init__(
-        self, title: str, description: str, icon_name: str, parent: QWidget
-    ) -> None:
+    def __init__(self, title: str, description: str, icon_name: str, parent: QWidget) -> None:
         super().__init__(parent)
         self.setText("")
         self.setAccessibleName(title)
