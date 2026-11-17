@@ -245,7 +245,7 @@ def test_journal_failure_before_intent_prevents_write_and_stops_batch(
 def test_300_switches_and_14400_selected_ports_fit_and_301_stops() -> None:
     targets = [
         make_target(
-            f"10.0.{i // 254}.{i % 254 + 1}",
+            f"{'192.0.2' if i < 250 else '198.51.100'}.{i % 250 + 1}",
             22,
             ",".join(str(port) for port in range(1, 49)),
         )
@@ -254,4 +254,4 @@ def test_300_switches_and_14400_selected_ports_fit_and_301_stops() -> None:
     assert len(merge_targets(targets)) == 300
     assert sum(len(target.interfaces) for target in merge_targets(targets)) == 14_400
     with pytest.raises(ValueError, match="300"):
-        merge_targets([*targets, make_target("10.100.0.1", 22, "1")])
+        merge_targets([*targets, make_target("203.0.113.250", 22, "1")])
