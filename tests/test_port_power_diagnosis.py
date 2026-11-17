@@ -8,7 +8,11 @@ import pytest
 
 from aruba2930f_backup.models import DeviceTarget
 from aruba2930f_backup.port_control import PortSnapshot
-from aruba2930f_backup.port_power_diagnosis import diagnose_port_power
+from aruba2930f_backup.port_power_diagnosis import (
+    diagnose_port_power,
+    poe_supply_label,
+    port_admin_link_label,
+)
 
 
 BASE = PortSnapshot(
@@ -102,3 +106,17 @@ def test_disabled_interface_can_still_deliver_power() -> None:
     result = diagnose_port_power(replace(BASE, enabled=False, link_status="Down"))
     assert result.label == "포트 Disable · PoE 공급 중"
     assert "PoE OFF라고 단정" in result.reason
+
+
+
+def test_short_operator_labels_preserve_independent_port_and_poe_states() -> None:
+    admin_disabled = replace(
+        BASE, enabled=False, link_status="Down", poe_status="Delivering", watts=13.2
+    )
+    assert port_admin_link_label(admin_disabled) == "포트 Disable · Link Down"
+    assert poe_supply_label(admin_disabled) == "PoE 공급 중"
+    poe_off = replace(BASE, enabled=True, poe_enabled=False, poe_status="사용 안 함", watts=None)
+    assert port_admin_link_label(poe_off) == "포트 Enable · Link Up"
+    assert poe_supply_label(poe_off) == "PoE OFF(설정)"
+    assert poe_supply_label(None) == "조회 확인 필요"
+    assert port_admin_link_label(None) == "포트 상태 미확인"
