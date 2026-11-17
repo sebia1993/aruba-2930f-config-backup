@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLineEdit
 
-from aruba2930f_backup.models import Credentials
 from aruba2930f_backup.port_control_gui import PortControlDialog
-from aruba2930f_backup.session_credentials import SessionCredentialDialog, SessionCredentialStore
+from aruba2930f_backup.session_credentials import (
+    SessionCredentialDialog,
+    SessionCredentialStore,
+)
 
 
 @pytest.fixture(scope="module")
