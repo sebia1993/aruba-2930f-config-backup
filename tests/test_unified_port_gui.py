@@ -166,9 +166,7 @@ def test_unified_tree_accepts_300_switches_with_14400_ports(app: QApplication) -
     dialog = UnifiedPortManagementDialog(username="operator", password="test-password")
     groups = tuple(
         PoETarget(
-            DeviceTarget(
-                f"{'192.0.2' if i < 250 else '198.51.100'}.{i % 250 + 1}", 22
-            ),
+            DeviceTarget(f"{'192.0.2' if i < 250 else '198.51.100'}.{i % 250 + 1}", 22),
             tuple(str(number) for number in range(1, 49)),
         )
         for i in range(300)
