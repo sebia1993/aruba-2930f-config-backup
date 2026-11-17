@@ -432,53 +432,43 @@ class NetworkManagerWindow(QMainWindow):
         root.addWidget(self.port_target_scroll)
 
         _attach(root, query_action)
-        body = QSplitter(Qt.Orientation.Horizontal, port)
-        body.setObjectName("portResultDetailSplitter")
-        center = QWidget(body)
-        center_layout = QVBoxLayout(center)
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.addWidget(search_group)
-        port.result_tree.setColumnHidden(4, True)  # timestamps remain in Details
-        port.result_tree.setColumnWidth(0, 225)  # hostname and IP together
-        port.result_tree.setColumnWidth(1, 155)  # LLDP AP
-        port.result_tree.setColumnWidth(2, 92)  # watts
-        port.result_tree.setColumnWidth(3, 175)  # port administration and link
-        port.result_tree.setColumnWidth(5, 160)  # PoE setting and delivery
-        center_layout.addWidget(port.result_tree, 1)
-        detail = QWidget(body)
-        detail_layout = QVBoxLayout(detail)
-        detail_layout.setContentsMargins(5, 0, 0, 0)
-        detail_layout.addWidget(QLabel("선택 포트 상세", detail))
-        detail_layout.addWidget(details_scroll)
+        # The operator requested that the per-port detail pane stop consuming
+        # horizontal space. Keep the original read-only detail widget alive for
+        # older standalone APIs, but never display it in this embedded view.
+        details_scroll.hide()
+        root.addWidget(search_group)
+        port.result_tree.setColumnHidden(4, True)  # timestamps stay in CSV/history
+        port.result_tree.setColumnWidth(0, 235)  # hostname and IP together
+        port.result_tree.setColumnWidth(1, 190)  # LLDP AP
+        port.result_tree.setColumnWidth(2, 105)  # watts
+        port.result_tree.setColumnWidth(3, 220)  # port administration and link
+        port.result_tree.setColumnWidth(5, 190)  # PoE setting and delivery
+        # Full-width central table; no side splitter or selected-port details.
+        root.addWidget(port.result_tree, 1)
+
         self._layout_port_control_buttons(control_group)
-        self.port_advanced_toggle = QToolButton(detail)
+        self.port_advanced_toggle = QToolButton(port)
         self.port_advanced_toggle.setObjectName("portAdvancedControlToggle")
-        self.port_advanced_toggle.setText("고급 제어 · 단일 포트 / 기존 계획 기능")
+        self.port_advanced_toggle.setText("고급 제어 · 기존 포트 Up/Down 및 계획 기능")
         self.port_advanced_toggle.setToolTip(
-            "일반 PoE 작업은 화면 하단 버튼만 사용하세요. "
-            "포트 Up/Down·단일 포트 상세 제어·기존 계획 승인은 여기서 사용할 수 있습니다."
+            "일반 PoE 작업은 아래 OFF/ON 두 버튼을 사용하세요. "
+            "포트 Up/Down 및 기존 작업 계획은 필요할 때만 펼칩니다."
         )
         self.port_advanced_toggle.setCheckable(True)
         self.port_advanced_toggle.setChecked(False)
         self.port_advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.port_advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
         self.port_advanced_toggle.toggled.connect(self._toggle_port_advanced)
-        detail_layout.addWidget(self.port_advanced_toggle)
-        control_group.setVisible(False)
-        detail_layout.addWidget(control_group)
-        detail_layout.addStretch(1)
-        right = QScrollArea(port)
-        right.setObjectName("portDetailsAndControl")
-        right.setWidgetResizable(True)
-        right.setMinimumWidth(260)
-        right.setWidget(detail)
-        body.addWidget(center)
-        body.addWidget(right)
-        body.setChildrenCollapsible(False)
-        body.setSizes([730, 350])
-        root.addWidget(body, 1)
-        # Fixed below the scrolling results and details: always show checked targets
-        # and guarded OFF / ON / power-cycle actions, independent of detail scroll.
+        root.addWidget(self.port_advanced_toggle)
+        self.port_advanced_scroll = QScrollArea(port)
+        self.port_advanced_scroll.setObjectName("portAdvancedControls")
+        self.port_advanced_scroll.setWidgetResizable(True)
+        self.port_advanced_scroll.setMaximumHeight(270)
+        self.port_advanced_scroll.setWidget(control_group)
+        self.port_advanced_scroll.setVisible(False)
+        root.addWidget(self.port_advanced_scroll)
+
+        # Fixed OFF/ON actions, progress and stop remain visible at the bottom.
         root.addWidget(quick_bar)
         root.addWidget(port.progress_bar)
         root.addWidget(port.status_label)
@@ -534,9 +524,7 @@ class NetworkManagerWindow(QMainWindow):
 
     @Slot(bool)
     def _toggle_port_advanced(self, expanded: bool) -> None:
-        group = self.port_page.batch_progress.parentWidget()
-        if group is not None:
-            group.setVisible(expanded)
+        self.port_advanced_scroll.setVisible(expanded)
         self.port_advanced_toggle.setArrowType(
             Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         )
