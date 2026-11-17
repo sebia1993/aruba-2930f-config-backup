@@ -6,6 +6,7 @@ import csv
 import io
 import json
 import os
+import tracemalloc
 from decimal import Decimal
 from pathlib import Path
 
@@ -396,3 +397,21 @@ def test_csv_explains_admin_disabled_and_poe_off_separately(tmp_path: Path) -> N
     assert entries[1]["poe_enabled"] == "no"
     assert entries[1]["port_poe_state"] == "PoE OFF(설정)"
     assert entries[1]["watts"] == ""
+
+
+def test_large_csv_uses_bounded_heap_without_changing_bytes(tmp_path: Path) -> None:
+    group = make_target("192.0.2.10", 22, "1")
+    result = PoEQueryResult(group, "1", QueryStatus.FAILED, message="x" * 2048)
+    destination = tmp_path / "large.csv"
+
+    tracemalloc.start()
+    try:
+        write_query_csv(destination, [result] * 4096)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert destination.stat().st_size > 8 * 1024 * 1024
+    assert peak < 8 * 1024 * 1024
+    with destination.open("rb") as handle:
+        assert handle.read(3) == b"\xef\xbb\xbf"

@@ -927,3 +927,70 @@ def test_port_and_poe_administrative_status_are_visible_without_opening_details(
     assert item.text(5) == "PoE OFF(설정)"
     assert "Power Enable=No" in item.toolTip(5)
     dialog.close()
+
+
+def test_large_query_flush_updates_each_switch_header_once_per_batch(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch, qtbot: object
+) -> None:
+    from aruba2930f_backup.models import DeviceTarget
+
+    dialog = PoEQueryDialog(username="operator", password="test-password")
+    qtbot.addWidget(dialog)
+    group = PoETarget(DeviceTarget("192.0.2.78"), ("1", "2"))
+    dialog._build_results((group,))
+    dialog._run_total = 1000
+    calls: list[str] = []
+    original = dialog._update_group
+
+    def count(group_value: PoETarget) -> None:
+        calls.append(group_value.target.endpoint)
+        original(group_value)
+
+    monkeypatch.setattr(dialog, "_update_group", count)
+    dialog._on_result(PoEQueryResult(group, "1", QueryStatus.FAILED, complete=True))
+    dialog._on_result(PoEQueryResult(group, "2", QueryStatus.FAILED, complete=True))
+    assert len(dialog._render_queue) == 2
+    assert calls == []
+    dialog._flush_result_queue()
+    assert calls == [group.target.endpoint]
+    assert dialog._items[(group.target.endpoint, "1")].text(5) == "조회 실패"
+    assert dialog._items[(group.target.endpoint, "2")].text(5) == "조회 실패"
+    dialog.close()
+
+
+@pytest.mark.parametrize("switch_count", [30, 100, 200, 300])
+def test_realistic_two_ports_per_switch_coalesces_large_query(
+    app: QApplication, qtbot: object, switch_count: int
+) -> None:
+    from aruba2930f_backup.models import DeviceTarget
+
+    dialog = PoEQueryDialog(username="operator", password="test-password")
+    qtbot.addWidget(dialog)
+    groups = tuple(
+        PoETarget(
+            DeviceTarget(f"192.0.2.{index + 1}" if index < 250 else f"198.51.100.{index - 249}"),
+            ("1", "2"),
+        )
+        for index in range(switch_count)
+    )
+    dialog._build_results(groups)
+    dialog._run_total = switch_count * 2
+    results = [
+        PoEQueryResult(group, interface, QueryStatus.FAILED, complete=True)
+        for group in groups
+        for interface in group.interfaces
+    ]
+    for observation in results:
+        dialog._on_result(observation)
+    if switch_count >= 100:
+        assert len(dialog._render_queue) == len(results)
+        while dialog._render_queue:
+            dialog._flush_result_queue()
+    else:
+        assert dialog._render_queue == []
+    assert len(dialog._results) == switch_count * 2
+    for group in groups:
+        for interface in group.interfaces:
+            key = (group.target.endpoint, interface)
+            assert dialog._items[key].text(5) == "조회 실패"
+    dialog.close()

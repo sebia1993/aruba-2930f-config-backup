@@ -420,3 +420,41 @@ def test_quoted_csv_alias_with_embedded_tab_remains_supported() -> None:
 def test_reported_error_line_accounts_for_excel_header() -> None:
     with pytest.raises(ValueError, match="3행"):
         parse_pasted_targets("스위치 IP\t포트\n192.0.2.10\t12\n192.0.2.20\tall")
+
+
+def test_many_repeated_switch_rows_keep_existing_merge_order_and_limits() -> None:
+    rows = []
+    for index in range(300):
+        ip = f"{'192.0.2' if index < 250 else '198.51.100'}.{index % 250 + 1}"
+        rows.extend(
+            (
+                make_target(ip, 22, "1,2"),
+                make_target(ip, 22, "2,3", "단말"),
+                make_target(ip, 22, "3"),
+            )
+        )
+    merged = merge_targets(rows)
+    assert len(merged) == 300
+    assert all(group.interfaces == ("1", "2", "3") for group in merged)
+    assert all(group.label == "단말" for group in merged)
+    assert merged[0].target.ip == "192.0.2.1"
+    assert merged[-1].target.ip == "198.51.100.50"
+
+
+def test_unique_interface_cap_is_not_consumed_by_repeated_rows() -> None:
+    initial = make_target("192.0.2.1", 22, ",".join(str(i) for i in range(1, 385)))
+    repeats = [initial] * 100
+    assert merge_targets(repeats) == (initial,)
+    remaining = [
+        make_target(f"198.51.100.{index}", 22, ",".join(str(i) for i in range(1, 385)))
+        for index in range(1, 37)
+    ]
+    assert sum(len(item.interfaces) for item in merge_targets([*repeats, *remaining])) == 14_208
+    with pytest.raises(ValueError, match="14,400"):
+        merge_targets(
+            [
+                *repeats,
+                *remaining,
+                make_target("203.0.113.1", 22, ",".join(str(i) for i in range(1, 194))),
+            ]
+        )

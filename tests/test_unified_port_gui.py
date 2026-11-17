@@ -17,6 +17,7 @@ from aruba2930f_backup.batch_port_control import BatchOutcome, BatchResult, Batc
 from aruba2930f_backup.models import DeviceTarget
 from aruba2930f_backup.poe_power import LLDPNeighbor, LLDPObservation, LLDPStatus
 from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
+from aruba2930f_backup.poe_quick_review_dialog import QuickPoEReviewDialog
 from aruba2930f_backup.port_control import PortAction, PortSnapshot
 from aruba2930f_backup.unified_port_gui import (
     BatchConfirmationDialog,
@@ -45,7 +46,17 @@ def queried(port: str, *, model: str = "AP-535") -> PoEQueryResult:
         13.2,
         "SHA256:test-verified",
     )
-    lldp = LLDPObservation(LLDPStatus.OK, (LLDPNeighbor(system_name=f"AP-{port}", model=model),))
+    lldp = LLDPObservation(
+        LLDPStatus.OK,
+        (
+            LLDPNeighbor(
+                system_name=f"AP-{port}",
+                model=model,
+                chassis_id=f"chassis-{port}",
+                port_id=f"eth-{port}",
+            ),
+        ),
+    )
     return PoEQueryResult(group, port, QueryStatus.OK, snapshot=snapshot, lldp=lldp)
 
 
@@ -553,6 +564,7 @@ def test_quick_off_starts_with_an_internal_plan_but_no_extra_plan_button(
             dispatched.append(dialog._batch_plan.action)
 
     monkeypatch.setattr(dialog, "_run_batch", capture)
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
     dialog.quick_off_button.click()
     assert dispatched == [PortAction.POE_OFF]
     assert dialog._batch_plan is not None
@@ -588,6 +600,7 @@ def test_quick_bar_exposes_only_independent_poe_off_and_on(
             executed.append(dialog._batch_plan.action)
 
     monkeypatch.setattr(dialog, "_run_batch", capture)
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
     dialog.quick_off_button.click()
     dialog.quick_on_button.click()
     assert executed == [PortAction.POE_OFF, PortAction.POE_ON]
@@ -669,6 +682,7 @@ def test_quick_single_port_off_executes_without_typed_confirmation(
         raise AssertionError("Quick action must not open EXECUTE N dialog")
 
     monkeypatch.setattr(BatchConfirmationDialog, "exec", forbid_typed_confirmation)
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
     dialog.quick_off_button.click()
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and dialog._batch_thread is not None:
@@ -681,23 +695,24 @@ def test_quick_single_port_off_executes_without_typed_confirmation(
     dialog.close()
 
 
-def test_quick_bulk_off_requires_one_cancellable_confirmation(
+def test_quick_bulk_off_requires_one_cancellable_target_review(
     app: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dialog = setup_dialog()
     dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
-    shown: list[str] = []
+    seen: list[str] = []
 
-    def deny(_parent: object, _title: str, message: str, *_args: object) -> object:
-        shown.append(message)
-        return QMessageBox.StandardButton.No
+    def reject_review(self: QuickPoEReviewDialog) -> QDialog.DialogCode:
+        seen.append(self.summary.text())
+        assert self.approve_button.isEnabled()
+        return QDialog.DialogCode.Rejected
 
-    monkeypatch.setattr(QMessageBox, "question", deny)
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", reject_review)
     dialog.quick_off_button.click()
-    assert shown and "2개 포트" in shown[0]
+    assert seen and "전체 2포트" in seen[0]
     assert dialog._batch_thread is None
     assert dialog._batch_outcome is None
-    assert dialog._batch_plan is not None
+    assert dialog._batch_plan is None
     dialog.close()
 
 
@@ -723,22 +738,25 @@ def test_quick_chunk_continues_without_extra_operator_dialog(
     assert not worker._wait_for_checkpoint(20, 30)
 
 
-def test_quick_off_rejects_unsafe_selected_port_even_in_direct_mode(
+def test_quick_off_shows_unsafe_ap_as_explicitly_excluded(
     app: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dialog = setup_dialog()
     dialog._on_result(queried("2", model="Aruba 2930F"))
     dialog._items[(TARGET.endpoint, "2")].setCheckState(0, Qt.CheckState.Checked)
-    messages: list[str] = []
-    monkeypatch.setattr(
-        QMessageBox,
-        "warning",
-        lambda _parent, _title, message: messages.append(message) or QMessageBox.StandardButton.Ok,
-    )
+    reasons: list[str] = []
+
+    def inspect_review(self: QuickPoEReviewDialog) -> QDialog.DialogCode:
+        assert self.approve_button.isEnabled() is False
+        assert self.table.topLevelItemCount() == 1
+        reasons.append(self.table.topLevelItem(0).text(3))
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", inspect_review)
     dialog.quick_off_button.click()
     assert dialog._batch_thread is None
     assert dialog._batch_plan is None
-    assert messages and "AP-535" in messages[0]
+    assert reasons and "AP-535" in reasons[0]
     dialog.close()
 
 
@@ -778,3 +796,199 @@ def test_switch_admin_disable_does_not_disable_poe_quick_buttons(
     assert dialog.quick_on_button.isEnabled()
     assert dialog.quick_off_button.isEnabled()
     dialog.close()
+
+
+def test_quick_readonly_requery_requests_only_missing_checked_port(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
+    dialog._results.pop((TARGET.endpoint, "2"))
+    collected: list[tuple[PoETarget, ...]] = []
+
+    def record_read(groups: tuple[PoETarget, ...], _credentials: object) -> None:
+        collected.append(groups)
+
+    monkeypatch.setattr(dialog, "_start", record_read)
+    dialog.quick_off_button.click()
+    assert len(collected) == 1
+    assert collected[0][0].interfaces == ("2",)
+    assert dialog._quick_requery_pending == (
+        PortAction.POE_OFF,
+        frozenset({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")}),
+    )
+    assert dialog._batch_plan is None  # no mutation from a read request
+    dialog.stop()  # user cancellation invalidates pending action
+    assert dialog._quick_requery_pending is None
+    dialog.close()
+
+
+def test_failed_lldp_requeries_only_for_off_not_on(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    from dataclasses import replace
+
+    dialog._on_result(
+        replace(queried("2"), lldp=LLDPObservation(LLDPStatus.FAILED, message="LLDP 오류"))
+    )
+    dialog._set_checked_keys({(TARGET.endpoint, "2")})
+    requested: list[tuple[PoETarget, ...]] = []
+    monkeypatch.setattr(dialog, "_start", lambda groups, _auth: requested.append(groups))
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Rejected)
+    dialog.quick_off_button.click()
+    assert requested and requested[0][0].interfaces == ("2",)
+    dialog.stop()
+    requested.clear()
+    dialog.quick_on_button.click()
+    assert requested == []  # ON requires port state, but not AP LLDP identity
+    assert dialog._batch_plan is None
+    dialog.close()
+
+
+def test_partial_review_cannot_execute_until_exclusion_is_acknowledged(
+    app: QApplication,
+) -> None:
+    dialog = QuickPoEReviewDialog(
+        PortAction.POE_OFF,
+        [queried("1")],
+        [(TARGET.endpoint, "2", "SSH 연결 실패")],
+    )
+    assert dialog.table.topLevelItemCount() == 2
+    assert "제외 1포트" in dialog.summary.text()
+    assert not dialog.approve_button.isEnabled()
+    dialog._approve()
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    dialog.exclusion_ack.setChecked(True)
+    assert dialog.approve_button.isEnabled()
+    dialog._approve()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    dialog.close()
+
+
+def test_no_valid_targets_cannot_be_confirmed(
+    app: QApplication,
+) -> None:
+    dialog = QuickPoEReviewDialog(
+        PortAction.POE_ON,
+        [],
+        [(TARGET.endpoint, "2", "포트 상태 없음")],
+    )
+    dialog.exclusion_ack.setChecked(True)
+    assert not dialog.approve_button.isEnabled()
+    dialog._approve()
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    dialog.close()
+
+
+def test_requery_finishes_with_partial_review_and_only_ready_plan(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class OfflineReadOnlyService:
+        def collect(
+            self,
+            groups: tuple[PoETarget, ...],
+            _credentials: object,
+            *,
+            approve_host_key: object,
+            on_result: object = None,
+            cancel_event: object = None,
+        ) -> tuple[PoEQueryResult, ...]:
+            del approve_host_key, cancel_event
+            assert len(groups) == 1
+            assert groups[0].interfaces == ("2",)
+            row = PoEQueryResult(
+                groups[0],
+                "2",
+                QueryStatus.FAILED,
+                message="연결 오류 (가상)",
+                complete=True,
+            )
+            if callable(on_result):
+                on_result(row)
+            return (row,)
+
+    dialog = UnifiedPortManagementDialog(
+        username="operator", password="test-password", service=OfflineReadOnlyService()
+    )
+    dialog._build_results((PoETarget(TARGET, ("1", "2")),))
+    dialog._on_result(queried("1"))
+    dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
+    accepted: list[tuple[int, int]] = []
+    executed: list[tuple[PortAction, tuple[str, ...]]] = []
+
+    def approve_partial(self: QuickPoEReviewDialog) -> QDialog.DialogCode:
+        accepted.append((self._ready_count, self._blocked_count))
+        assert not self.approve_button.isEnabled()
+        self.exclusion_ack.setChecked(True)
+        assert self.approve_button.isEnabled()
+        return QDialog.DialogCode.Accepted
+
+    def capture_execution(*, quick: bool = False) -> None:
+        assert quick
+        assert dialog._batch_plan is not None
+        executed.append(
+            (
+                dialog._batch_plan.action,
+                tuple(item.interface for item in dialog._batch_plan.targets),
+            )
+        )
+
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", approve_partial)
+    monkeypatch.setattr(dialog, "_run_batch", capture_execution)
+    dialog.quick_off_button.click()
+    assert dialog._batch_plan is None
+    assert dialog._thread is not None
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and dialog._thread is not None:
+        app.processEvents()
+        time.sleep(0.01)
+    assert dialog._thread is None
+    assert accepted == [(1, 1)]
+    assert executed == [(PortAction.POE_OFF, ("1",))]
+    dialog.close()
+
+
+def test_approved_bulk_off_does_not_ask_duplicate_confirmation(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    dialog._batch_controller = OfflineBatch()  # type: ignore[assignment]
+    dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
+
+    def forbid_duplicate_popup(*_args: object) -> None:
+        raise AssertionError("The operator already approved the complete target review")
+
+    monkeypatch.setattr(QMessageBox, "question", forbid_duplicate_popup)
+    dialog.quick_off_button.click()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and dialog._batch_thread is not None:
+        app.processEvents()
+        time.sleep(0.01)
+    assert dialog._batch_thread is None
+    assert dialog._batch_outcome is not None
+    assert len(dialog._batch_outcome.results) == 2
+    dialog.close()
+
+
+def test_large_quick_review_requires_explicit_bulk_ack_without_repeated_prompts(
+    app: QApplication,
+) -> None:
+    ready = [queried(str(port)) for port in range(1, 12)]
+    dialog = QuickPoEReviewDialog(PortAction.POE_OFF, ready, [])
+    try:
+        assert dialog.large_action_ack.isVisible() is False or dialog.large_action_ack.isEnabled()
+        assert dialog.approve_button.isEnabled() is False
+        dialog.large_action_ack.setChecked(True)
+        assert dialog.approve_button.isEnabled() is True
+    finally:
+        dialog.close()
+
+
+def test_small_quick_review_keeps_existing_single_approval(app: QApplication) -> None:
+    dialog = QuickPoEReviewDialog(PortAction.POE_OFF, [queried("1")], [])
+    try:
+        assert dialog.approve_button.isEnabled() is True
+    finally:
+        dialog.close()

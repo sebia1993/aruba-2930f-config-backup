@@ -726,3 +726,52 @@ def test_power_evidence_uses_single_poe_read_and_survives_lldp_rejection(tmp_pat
     assert row.status.value == "ok" and row.complete
     assert row.assessment is not None
     assert network.connections[0].writes.count(command) == 1
+
+
+def test_slow_host_key_probes_do_not_serialize_other_switches(tmp_path: Path) -> None:
+    """Probe I/O must not occupy the shared, operator-approval-only lock."""
+    from aruba2930f_backup.poe_query import PoEQueryService
+
+    class ParallelProbe:
+        def __init__(self) -> None:
+            self.barrier = threading.Barrier(2)
+            self.lock = threading.Lock()
+            self.active = 0
+            self.peak = 0
+
+        def probe(self, target: DeviceTarget, *, timeout: float = 15.0) -> HostKeyObservation:
+            del timeout
+            with self.lock:
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+            try:
+                self.barrier.wait(timeout=3)
+            finally:
+                with self.lock:
+                    self.active -= 1
+            return HostKeyObservation(
+                target, "ssh-ed25519", sha256_fingerprint(target.ip.encode("ascii"))
+            )
+
+    probe = ParallelProbe()
+    service = PoEQueryService(
+        host_key_store=HostKeyStore(tmp_path / "known_hosts.json"), host_key_probe=probe
+    )
+    failures: list[Exception] = []
+    endpoints = (DeviceTarget("192.0.2.71"), DeviceTarget("192.0.2.72"))
+
+    def check(target: DeviceTarget) -> None:
+        try:
+            service._trusted_key(target, lambda _check: True, threading.Event())
+        except Exception as exc:
+            failures.append(exc)
+
+    threads = [threading.Thread(target=check, args=(endpoint,)) for endpoint in endpoints]
+    for worker in threads:
+        worker.start()
+    for worker in threads:
+        worker.join(4)
+    assert not any(worker.is_alive() for worker in threads)
+    assert not failures
+    assert probe.peak == 2
+    assert len(service.host_key_store.list_approved()) == 2

@@ -67,6 +67,7 @@ from .models import (
 from .reporting import ReportSummary, SanitizedJsonlLogger, write_result_workbook
 from .storage import (
     FilenameMode,
+    backup_storage_permission_warnings,
     create_run_directory,
     default_output_directory,
     device_config_path,
@@ -346,6 +347,11 @@ class CollectorBackupService:
             option_args["retry_delays_seconds"] = self._retry_delays_seconds
         options = CollectionOptions(**option_args)
         warnings: list[str] = []
+        # ACL warnings must not suppress diagnostic logs or discard successful
+        # backup results. Store them independently from logger I/O failures.
+        storage_warnings = backup_storage_permission_warnings(run_directory)
+        for message in storage_warnings:
+            callbacks.on_event({"stage": "warning", "phase": "report_storage", "message": message})
         log_lock = threading.Lock()
 
         def log_safely(event: object | None = None, **fields: Any) -> None:
@@ -650,7 +656,7 @@ class CollectorBackupService:
                     started_at=started_at,
                     finished_at=finished_at,
                     cancelled=cancelled,
-                    warnings=tuple(warnings),
+                    warnings=(*storage_warnings, *warnings),
                 ),
             )
         except Exception as exc:
@@ -676,7 +682,7 @@ class CollectorBackupService:
             results=tuple(records),
             report_path=report_path,
             cancelled=cancelled,
-            warnings=tuple(warnings),
+            warnings=(*storage_warnings, *warnings),
         )
 
 

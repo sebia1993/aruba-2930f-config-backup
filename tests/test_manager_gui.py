@@ -463,3 +463,26 @@ def test_port_vertical_splitter_expands_input_and_preserves_results(app: QApplic
     assert window.port_target_scroll.isVisible()
     assert port.result_tree.isVisible()
     window.close()
+
+
+def test_port_input_focus_preserves_checked_port_state(
+    app: QApplication,
+) -> None:
+    window = make_window(app)
+    assert window.navigate(2)
+    port = window.port_page
+    group = PoETarget(DeviceTarget("192.0.2.10", 22), ("12", "24"))
+    port._build_results((group,))
+    port._set_checked_keys({(group.target.endpoint, "24")})
+    assert port.result_tree.topLevelItemCount() == 1
+
+    window.port_input_focus_button.click()
+    assert window.port_target_scroll.isVisible()
+    assert not port.result_tree.isVisible()
+    window.port_input_focus_button.click()
+    assert port.result_tree.isVisible()
+    window.port_target_toggle.click()
+    assert not window.port_target_scroll.isVisible()
+    assert port.result_tree.topLevelItemCount() == 1
+    assert (group.target.endpoint, "24") in port._checked_port_keys
+    window.close()

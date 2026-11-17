@@ -11,7 +11,7 @@ from html import escape
 from pathlib import Path
 from typing import Protocol, cast
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QSignalBlocker, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -195,6 +195,9 @@ class PoEQueryDialog(QDialog):
         self._results: dict[tuple[str, str], PoEQueryResult] = {}
         self._items: dict[tuple[str, str], QTreeWidgetItem] = {}
         self._parents: dict[str, QTreeWidgetItem] = {}
+        self._group_index: dict[str, PoETarget] = {}
+        self._dirty_groups: set[str] = set()
+        self._coalescing_groups = False
         self._pending: set[tuple[str, str]] = set()
         self._run_total = 0
         self._render_queue: list[PoEQueryResult] = []
@@ -379,6 +382,8 @@ class PoEQueryDialog(QDialog):
     @Slot()
     def _invalidate(self) -> None:
         self._groups = ()
+        self._group_index.clear()
+        self._dirty_groups.clear()
         self._pending.clear()
         self._run_total = 0
         self._results.clear()
@@ -516,6 +521,8 @@ class PoEQueryDialog(QDialog):
         self._parents.clear()
         self._results.clear()
         self._groups = groups
+        self._group_index = {g.target.endpoint: g for g in groups}
+        self._dirty_groups.clear()
         for group in groups:
             parent = QTreeWidgetItem(self.result_tree)
             parent.setData(0, Qt.ItemDataRole.UserRole, (group.target.endpoint, ""))
@@ -650,7 +657,9 @@ class PoEQueryDialog(QDialog):
     def _on_result(self, value: object) -> None:
         # Large jobs deliver up to two observations per port. Coalescing GUI
         # writes keeps the main event loop responsive even at 14,400 ports.
-        if self._run_total > 750:
+        # The operator typically queries just 1-2 ports on each of many
+        # switches. Coalesce by switch count as well as raw port count.
+        if self._run_total > 750 or len(self._groups) >= 100:
             self._render_queue.append(cast(PoEQueryResult, value))
             if not self._render_timer.isActive():
                 self._render_timer.start()
@@ -661,8 +670,19 @@ class PoEQueryDialog(QDialog):
     def _flush_result_queue(self) -> None:
         batch = self._render_queue[:120]
         del self._render_queue[:120]
-        for result in batch:
-            self._apply_result(result)
+        # Large queries may deliver two results per port. Refresh each switch
+        # header once per GUI batch instead of once per individual observation.
+        self._coalescing_groups = True
+        try:
+            for result in batch:
+                self._apply_result(result)
+        finally:
+            self._coalescing_groups = False
+            for endpoint in self._dirty_groups:
+                group = self._group_index.get(endpoint)
+                if group is not None:
+                    self._update_group(group)
+            self._dirty_groups.clear()
         if not self._render_queue:
             self._render_timer.stop()
 
@@ -690,55 +710,66 @@ class PoEQueryDialog(QDialog):
                 LLDPStatus.FAILED: "조회 실패",
                 LLDPStatus.CANCELLED: "조회 취소",
             }[lldp.status]
-        item.setText(1, ap_name)
-        item.setText(
-            2,
-            "확인 안 됨" if snapshot is None or snapshot.watts is None else f"{snapshot.watts:g} W",
-        )
-        diagnosis = diagnose_port_power(snapshot)
-        if snapshot is not None:
-            port_state = port_admin_link_label(snapshot)
-            poe_state = poe_supply_label(snapshot)
-            port_detail = (
-                f"관리 설정: {'Disable' if not snapshot.enabled else 'Enable'} · "
-                f"실제 링크: {snapshot.link_status}. "
-                "포트 Disable와 PoE OFF는 별개의 설정입니다."
+        # Qt itemChanged is not an observation event: avoid thousands of
+        # redundant checkbox callbacks when merely painting measured values.
+        with QSignalBlocker(self.result_tree):
+            item.setText(1, ap_name)
+            item.setText(
+                2,
+                "확인 안 됨"
+                if snapshot is None or snapshot.watts is None
+                else f"{snapshot.watts:g} W",
             )
-            poe_detail = diagnosis.reason
-        elif result.complete:
-            # A failed query is unknown, never a measured 0W or assumed OFF.
-            query_state = "취소" if result.status is QueryStatus.CANCELLED else "조회 실패"
-            port_state = query_state
-            poe_state = query_state
-            port_detail = result.message or "포트 관리 설정을 확인하지 못했습니다."
-            poe_detail = result.message or "PoE 설정과 실측 전력을 확인하지 못했습니다."
+            diagnosis = diagnose_port_power(snapshot)
+            if snapshot is not None:
+                port_state = port_admin_link_label(snapshot)
+                poe_state = poe_supply_label(snapshot)
+                port_detail = (
+                    f"관리 설정: {'Disable' if not snapshot.enabled else 'Enable'} · "
+                    f"실제 링크: {snapshot.link_status}. "
+                    "포트 Disable와 PoE OFF는 별개의 설정입니다."
+                )
+                poe_detail = diagnosis.reason
+            elif result.complete:
+                # A failed query is unknown, never a measured 0W or assumed OFF.
+                query_state = "취소" if result.status is QueryStatus.CANCELLED else "조회 실패"
+                port_state = query_state
+                poe_state = query_state
+                port_detail = result.message or "포트 관리 설정을 확인하지 못했습니다."
+                poe_detail = result.message or "PoE 설정과 실측 전력을 확인하지 못했습니다."
+            else:
+                port_state = "조회 중"
+                poe_state = "조회 중"
+                port_detail = "포트 관리 설정을 조회하고 있습니다."
+                poe_detail = "PoE 설정을 조회하고 있습니다."
+            item.setText(3, port_state)
+            item.setToolTip(3, _tooltip(port_detail))
+            item.setText(4, _local_time(snapshot.observed_at if snapshot else result.finished_at))
+            item.setText(5, poe_state)
+            notes = " · ".join(
+                filter(
+                    None,
+                    (
+                        poe_detail,
+                        result.message,
+                        lldp.message if lldp else "",
+                        "LLDP 조회 중" if not result.complete else "",
+                        "LLDP 실패"
+                        if lldp is not None and lldp.status is LLDPStatus.FAILED
+                        else "",
+                        "LLDP 취소"
+                        if lldp is not None and lldp.status is LLDPStatus.CANCELLED
+                        else "",
+                    ),
+                )
+            )
+            item.setToolTip(5, _tooltip(notes))
+        if self._coalescing_groups:
+            self._dirty_groups.add(key[0])
         else:
-            port_state = "조회 중"
-            poe_state = "조회 중"
-            port_detail = "포트 관리 설정을 조회하고 있습니다."
-            poe_detail = "PoE 설정을 조회하고 있습니다."
-        item.setText(3, port_state)
-        item.setToolTip(3, _tooltip(port_detail))
-        item.setText(4, _local_time(snapshot.observed_at if snapshot else result.finished_at))
-        item.setText(5, poe_state)
-        notes = " · ".join(
-            filter(
-                None,
-                (
-                    poe_detail,
-                    result.message,
-                    lldp.message if lldp else "",
-                    "LLDP 조회 중" if not result.complete else "",
-                    "LLDP 실패" if lldp is not None and lldp.status is LLDPStatus.FAILED else "",
-                    "LLDP 취소" if lldp is not None and lldp.status is LLDPStatus.CANCELLED else "",
-                ),
-            )
-        )
-        item.setToolTip(5, _tooltip(notes))
-        for group in self._groups:
-            if group.target.endpoint == key[0]:
+            group = self._group_index.get(key[0])
+            if group is not None:
                 self._update_group(group)
-                break
         completed = self._run_total - len(self._pending)
         if self._run_total:
             self.progress_bar.setValue(round(completed * 100 / self._run_total))
@@ -862,7 +893,7 @@ class PoEQueryDialog(QDialog):
         cancelled = self._worker is not None and self._worker.cancel_event.is_set()
         # A broken service must never leave pending rows looking measured.
         for endpoint, interface in tuple(self._pending):
-            group = next(g for g in self._groups if g.target.endpoint == endpoint)
+            group = self._group_index[endpoint]
             now = datetime.now().astimezone().isoformat()
             message = "조회가 중지되었습니다." if cancelled else "조회 결과를 받지 못했습니다."
             previous = self._results.get((endpoint, interface))

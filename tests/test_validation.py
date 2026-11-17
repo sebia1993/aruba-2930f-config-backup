@@ -301,3 +301,39 @@ def test_unclosed_banner_cannot_be_normalized_as_a_successful_backup(banner) -> 
 )
 def test_supported_banner_forms_are_preserved_by_normalization(banner) -> None:
     assert normalize_config_text(banner) == banner.replace("\n", "\r\n") + "\r\n"
+
+
+@pytest.mark.parametrize(
+    "banner",
+    [
+        "banner motd ^\nInvalid input: a training example\n^",
+        "banner motd ^\nPermission denied (illustration)\n^",
+        'banner motd "Invalid input: example"',
+    ],
+)
+def test_running_config_cli_error_words_inside_complete_banner_are_literal(banner: str) -> None:
+    config = f"hostname edge\n{banner}\ninterface 1\n"
+    # The same words outside the banner still indicate a rejected command.
+    assert validate_cli_response("show running-config", config) is None
+    with pytest.raises(CollectionFailure) as caught:
+        validate_cli_response("show running-config", config + "% Invalid input: actual error\n")
+    assert caught.value.code is ErrorCode.COMMAND_REJECTED
+
+
+def test_running_config_hostname_ignores_unindented_banner_content() -> None:
+    assert (
+        hostname_from_running_config(
+            "Running configuration:\nbanner motd ^\nhostname forged-device\n^\n"
+        )
+        is None
+    )
+    assert (
+        hostname_from_running_config(
+            "hostname legitimate\nbanner motd ^\nhostname forged-device\n^\n"
+        )
+        == "legitimate"
+    )
+    assert (
+        hostname_from_running_config('banner motd "hostname forged-device"\nhostname legitimate\n')
+        == "legitimate"
+    )

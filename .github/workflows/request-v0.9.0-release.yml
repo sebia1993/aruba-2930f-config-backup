@@ -1,0 +1,68 @@
+name: Request approved v0.9.0 release
+
+# A deliberately scoped one-time release request. It runs only when this
+# workflow file first lands in main, never for ordinary application pushes.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/request-v0.9.0-release.yml
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: aruba2930f-v0.9.0-release-request
+  cancel-in-progress: false
+
+jobs:
+  request-verified-release:
+    if: github.repository == 'sebia1993/aruba-2930f-config-backup'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout approved main revision without stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify exact v0.9.0 source then create annotated tag and dispatch release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: v0.9.0
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python tools/check_version.py --tag "$RELEASE_TAG"
+
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          test "$main_sha" = "$GITHUB_SHA"
+
+          # GitHub's release workflow performs an independent remote tag/main
+          # SHA check, Windows tests, SHA256/SBOM verification and asset publish.
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; refusing duplicate publication."
+            exit 0
+          fi
+
+          if tag_object=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha' 2>/dev/null); then
+            kind=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.type')
+            test "$kind" = "tag"
+            target=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq '.object.sha')
+            test "$target" = "$GITHUB_SHA"
+          else
+            tag_object=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+              -f tag="$RELEASE_TAG" -f message="Release $RELEASE_TAG" \
+              -f object="$GITHUB_SHA" -f type="commit" --jq '.sha')
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$RELEASE_TAG" -f sha="$tag_object" >/dev/null
+          fi
+
+          # Events created with GITHUB_TOKEN do not trigger other push
+          # workflows. Explicit workflow_dispatch is supported and required.
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/dispatches" \
+            -f ref="$RELEASE_TAG" >/dev/null
+          echo "Requested existing audited Release workflow for $RELEASE_TAG."

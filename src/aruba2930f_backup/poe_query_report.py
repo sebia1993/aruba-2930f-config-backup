@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import csv
-import io
 import json
+import os
+import tempfile
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -13,7 +14,6 @@ from pathlib import Path
 
 from .poe_power import AP535_REFERENCE_ID, AP535_REFERENCE_URL
 from .poe_query_models import PoEQueryResult, QueryStatus
-from .poe_targets import _atomic_write_bytes
 from .port_power_diagnosis import diagnose_port_power
 
 _FIELDS = (
@@ -122,34 +122,56 @@ def _detail_cells(result: PoEQueryResult) -> tuple[str, ...]:
 
 def write_query_csv(path: Path, results: Sequence[PoEQueryResult]) -> None:
     """Write one row per result, preserving missing watts and original row times."""
-    output = io.StringIO(newline="")
-    writer = csv.writer(output)
-    writer.writerow(_FIELDS)
-    for result in results:
-        snapshot = result.snapshot
-        identity = result.identity
-        watts = snapshot.watts if snapshot and result.status is QueryStatus.OK else None
-        row: tuple[str | int, ...] = (
-            result.group.target.ip,
-            result.group.target.port,
-            result.group.label,
-            (snapshot.hostname if snapshot else "")
-            or (identity.hostname or "" if identity else ""),
-            (snapshot.model if snapshot else "") or (identity.model if identity else ""),
-            result.interface,
-            result.status.value,
-            _setting(snapshot.enabled) if snapshot else "",
-            snapshot.link_status if snapshot else "",
-            _setting(snapshot.poe_enabled) if snapshot else "",
-            snapshot.poe_status if snapshot else "",
-            "" if watts is None else "0" if watts == 0 else str(watts),
-            _utc_timestamp(snapshot.observed_at) if snapshot else "",
-            _utc_timestamp(result.finished_at),
-            result.error_code.value if result.error_code else "",
-            result.message,
-            *_detail_cells(result),
-            diagnose_port_power(snapshot).label,
-            diagnose_port_power(snapshot).reason,
-        )
-        writer.writerow(_safe_string(cell) if isinstance(cell, str) else cell for cell in row)
-    _atomic_write_bytes(path, output.getvalue().encode("utf-8-sig"))
+    # Stream large exports straight to one exclusive temporary file. This
+    # retains utf-8-sig BOM, csv.writer's CRLF dialect and the existing schema.
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8-sig",
+            newline="",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            writer = csv.writer(output)
+            writer.writerow(_FIELDS)
+            for result in results:
+                snapshot = result.snapshot
+                identity = result.identity
+                watts = snapshot.watts if snapshot and result.status is QueryStatus.OK else None
+                row: tuple[str | int, ...] = (
+                    result.group.target.ip,
+                    result.group.target.port,
+                    result.group.label,
+                    (snapshot.hostname if snapshot else "")
+                    or (identity.hostname or "" if identity else ""),
+                    (snapshot.model if snapshot else "") or (identity.model if identity else ""),
+                    result.interface,
+                    result.status.value,
+                    _setting(snapshot.enabled) if snapshot else "",
+                    snapshot.link_status if snapshot else "",
+                    _setting(snapshot.poe_enabled) if snapshot else "",
+                    snapshot.poe_status if snapshot else "",
+                    "" if watts is None else "0" if watts == 0 else str(watts),
+                    _utc_timestamp(snapshot.observed_at) if snapshot else "",
+                    _utc_timestamp(result.finished_at),
+                    result.error_code.value if result.error_code else "",
+                    result.message,
+                    *_detail_cells(result),
+                    diagnose_port_power(snapshot).label,
+                    diagnose_port_power(snapshot).reason,
+                )
+                writer.writerow(
+                    _safe_string(cell) if isinstance(cell, str) else cell for cell in row
+                )
+            output.flush()
+            os.fsync(output.fileno())
+        if temporary is None:
+            raise OSError("CSV temporary file was not created.")
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)

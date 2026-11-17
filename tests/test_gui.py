@@ -1097,6 +1097,9 @@ def _mixed_backup_request(tmp_path: Path) -> BackupRequest:
 def test_log_permission_error_preserves_completed_batch_and_warns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        "aruba2930f_backup.gui.backup_storage_permission_warnings", lambda _path: ()
+    )
     original = SanitizedJsonlLogger.log
     failed_calls = 0
 
@@ -1456,6 +1459,10 @@ def test_trust_remove_button_refreshes_actual_store_after_failure(
 def test_log_failure_does_not_hide_primary_storage_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, primary_storage: str
 ) -> None:
+    monkeypatch.setattr(
+        "aruba2930f_backup.gui.backup_storage_permission_warnings", lambda _path: ()
+    )
+
     def fail_write(*args: object, **kwargs: object) -> None:
         raise PermissionError("secret-password /private/output")
 
@@ -1675,3 +1682,40 @@ def test_terminal_success_warning_survives_cancel_during_native_cleanup(
         _wait_until(app, lambda: window._thread is None)
         window.close()
         app.processEvents()
+
+
+def test_backup_acl_warning_is_visible_but_does_not_suppress_logging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aruba2930f_backup.gui as gui_module
+
+    monkeypatch.setattr(
+        gui_module,
+        "backup_storage_permission_warnings",
+        lambda _path: ("백업 폴더 NTFS ACL 확인 필요",),
+    )
+    collector = FakeCollector()
+    service = CollectorBackupService(collector)
+    request = BackupRequest(
+        targets=("192.0.2.10",),
+        port=22,
+        username="operator",
+        password="secret-password",
+        enable_password="enable-secret",
+        concurrency=2,
+        output_directory=tmp_path,
+    )
+    events: list[object] = []
+    outcome = service.run(
+        request,
+        BackupCallbacks(
+            on_event=events.append,
+            request_host_key_approval=lambda _checks: False,
+            cancel_event=threading.Event(),
+        ),
+    )
+    assert outcome.warnings == ("백업 폴더 NTFS ACL 확인 필요",)
+    assert any(isinstance(event, dict) and event.get("stage") == "warning" for event in events)
+    assert (outcome.run_directory / "operation.jsonl").stat().st_size > 0
+    assert outcome.report_path.exists()
+    assert collector.result is not None and collector.result.config_path is not None

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
@@ -260,12 +261,27 @@ def write_result_workbook(
         for cell in row:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
 
-    partial_path = report_path.with_name(f"{report_path.name}.part")
+    # Keep the temporary handle exclusive through openpyxl's ZIP write.
+    # A fixed .part path could overwrite another writer or follow a symlink.
+    partial_path: Path | None = None
     try:
-        workbook.save(partial_path)
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=f".{report_path.name}.",
+            suffix=".part",
+            dir=report_path.parent,
+            delete=False,
+        ) as stream:
+            partial_path = Path(stream.name)
+            workbook.save(stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if partial_path is None:
+            raise OSError("Excel temporary file was not created.")
         os.replace(partial_path, report_path)
     except BaseException:
-        partial_path.unlink(missing_ok=True)
+        if partial_path is not None:
+            partial_path.unlink(missing_ok=True)
         raise
     finally:
         workbook.close()
@@ -302,10 +318,13 @@ def sanitize_log_event(
         value = _plain(source[key])
         if key == "message":
             sanitized[key] = _sanitize_message(value, secrets)
-        elif isinstance(value, (str, int, float, bool)) or value is None:
+        elif isinstance(value, (int, float, bool)) or value is None:
             sanitized[key] = value
         else:
-            sanitized[key] = str(value)
+            # The allowlist limits *field names*, not field values. A malformed
+            # event may place target addresses or secrets in status/stage too.
+            # Sanitize strings and object representations through one boundary.
+            sanitized[key] = _sanitize_message(value, secrets)
     return sanitized
 
 
