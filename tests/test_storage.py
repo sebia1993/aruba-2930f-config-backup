@@ -264,3 +264,24 @@ def test_windows_acl_unknown_is_warning_not_false_security_assurance(
     assert (
         "자동 확인하지 못했습니다" in backup_storage_permission_warnings(tmp_path, platform="nt")[0]
     )
+
+def test_backup_write_does_not_overwrite_an_existing_partial_name(tmp_path: Path) -> None:
+    existing_partial = tmp_path / "switch.txt.part"
+    existing_partial.write_bytes(b"someone else's incomplete file")
+    result = write_config_atomic(tmp_path / "switch.txt", "hostname edge\\n")
+    assert result.path.read_bytes() == b"hostname edge\\r\\n"
+    assert existing_partial.read_bytes() == b"someone else's incomplete file"
+
+
+def test_backup_write_refuses_to_follow_preexisting_partial_symlink(tmp_path: Path) -> None:
+    sentinel = tmp_path / "sentinel.txt"
+    sentinel.write_bytes(b"protected")
+    link = tmp_path / "switch.txt.part"
+    try:
+        link.symlink_to(sentinel)
+    except (OSError, NotImplementedError):
+        pytest.skip("Test filesystem cannot create symbolic links")
+    result = write_config_atomic(tmp_path / "switch.txt", "hostname edge\\n")
+    assert result.path.read_bytes() == b"hostname edge\\r\\n"
+    assert sentinel.read_bytes() == b"protected"
+    assert link.is_symlink()
