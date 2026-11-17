@@ -10,9 +10,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
+from zipfile import BadZipFile
 
 from openpyxl import load_workbook
-from zipfile import BadZipFile
 from PySide6.QtCore import Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .batch_port_control import BatchControlError, journal_states
 from .gui import MainWindow
 from .storage import default_output_directory
 from .unified_port_gui import UnifiedPortManagementDialog
@@ -131,6 +132,24 @@ def report_device_rows(path: Path, *, limit: int = 200) -> list[tuple[str, str, 
         workbook.close()
 
 
+class _EmbeddedPortManagementDialog(UnifiedPortManagementDialog):
+    """Do not let Escape or a hidden QDialog Close action discard a workspace."""
+
+    def __init__(self, parent: QWidget) -> None:
+        self._shell_allows_close = False
+        super().__init__(parent)
+
+    def reject(self) -> None:
+        if self._shell_allows_close:
+            super().reject()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._shell_allows_close:
+            super().closeEvent(event)
+        else:
+            event.ignore()
+
+
 class NetworkManagerWindow(QMainWindow):
     """Single top-level window; the old GUI modules stay usable independently."""
 
@@ -211,7 +230,7 @@ class NetworkManagerWindow(QMainWindow):
         self._layout_backup()
         self.pages.addWidget(self.backup_page)
 
-        self.port_page = UnifiedPortManagementDialog(self.pages)
+        self.port_page = _EmbeddedPortManagementDialog(self.pages)
         self.port_page.setWindowFlags(Qt.WindowType.Widget)
         self.port_page.setMinimumSize(0, 0)
         self._layout_port()
@@ -465,10 +484,18 @@ class NetworkManagerWindow(QMainWindow):
                 self._history_paths[row_count] = report
                 row_count += 1
         journal_root = default_output_directory() / "port-control" / "batch"
+        dated_journals: list[tuple[int, Path]] = []
         try:
-            journals = sorted(journal_root.glob("*.jsonl"), reverse=True)[:30]
+            for candidate in journal_root.glob("*.jsonl"):
+                try:
+                    dated_journals.append((candidate.stat().st_mtime_ns, candidate))
+                except OSError:
+                    continue
         except OSError:
-            journals = []
+            pass
+        journals = [
+            path for _, path in sorted(dated_journals, reverse=True)[:30]
+        ]
         for journal in journals:
             try:
                 if journal.stat().st_size > 2_000_000:
@@ -477,21 +504,24 @@ class NetworkManagerWindow(QMainWindow):
                     record = json.loads(handle.readline())
                 if not isinstance(record, dict) or not isinstance(record.get("items"), list):
                     continue
-                for entry in record["items"][:300]:
+                states = journal_states(journal)
+                for index, entry in enumerate(record["items"][:300]):
                     if not isinstance(entry, dict):
                         continue
                     endpoint = str(entry.get("endpoint", ""))
                     ip = endpoint.rsplit(":", 1)[0]
                     hostname = str(entry.get("hostname", "") or "확인 불가")
+                    state = states.get(index, "queued")
                     item = QTreeWidgetItem(self.history_table, [
-                        "포트 변경", hostname, ip,
-                        str(record.get("action", "")),
+                        "포트 제어 이력", hostname, ip,
+                        f"{record.get('action', '')} · {state}",
                         str(journal),
                     ])
+                    item.setToolTip(3, "confirmed/unknown/queued states come from saved journal")
                     item.setToolTip(4, str(journal))
                     self._history_paths[row_count] = journal
                     row_count += 1
-            except (OSError, ValueError, UnicodeError):
+            except (OSError, ValueError, UnicodeError, BatchControlError):
                 continue
         if row_count == 0:
             QTreeWidgetItem(self.history_table, [
@@ -615,5 +645,6 @@ class NetworkManagerWindow(QMainWindow):
         self._status_timer.stop()
         # The old controllers clear sensitive inputs in their own close paths.
         self.backup_page.close()
+        self.port_page._shell_allows_close = True
         self.port_page.close()
         super().closeEvent(event)

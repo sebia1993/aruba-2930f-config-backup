@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -191,4 +192,66 @@ def test_credential_fields_are_not_persisted_in_view_settings(app: QApplication)
     window.navigate(4)
     assert "sensitive-test" not in window.settings_status.text()
     assert "another-sensitive-test" not in window.settings_status.text()
+    window.close()
+
+
+def test_esc_and_direct_reject_cannot_hide_embedded_port_workspace(
+    app: QApplication,
+) -> None:
+    window = make_window(app)
+    assert window.navigate(2)
+    port = window.port_page
+    assert port.isVisible()
+    port.reject()
+    QApplication.processEvents()
+    assert port.isVisible()
+    assert window.pages.currentIndex() == 2
+    port.close()
+    QApplication.processEvents()
+    assert port.isVisible()
+    window.close()
+
+
+def test_port_journals_use_recorded_state_and_latest_file_mtime(
+    app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aruba2930f_backup.manager_gui as manager_gui
+
+    root = tmp_path / "backups"
+    journal_dir = root / "port-control" / "batch"
+    journal_dir.mkdir(parents=True)
+    monkeypatch.setattr(manager_gui, "default_output_directory", lambda: root)
+    header = {
+        "event": "plan",
+        "schema": 1,
+        "action": "poe_off",
+        "items": [
+            {"endpoint": "192.0.2.10:22", "hostname": "SEOUL-SW-01", "interface": "12"}
+        ],
+    }
+    for number in range(31):
+        path = journal_dir / f"z{number:02d}.jsonl"
+        path.write_text(
+            json.dumps(header) + "\n"
+            + json.dumps({"event": "result", "index": 0, "status": "verified"}) + "\n",
+            encoding="utf-8",
+        )
+        os.utime(path, (100 + number, 100 + number))
+    latest = journal_dir / "a-latest.jsonl"
+    latest.write_text(
+        json.dumps(header) + "\n"
+        + json.dumps({"event": "intent", "index": 0}) + "\n",
+        encoding="utf-8",
+    )
+    os.utime(latest, (500, 500))
+
+    window = make_window(app)
+    window.backup_page.output_input.setText(str(root))
+    window.navigate(3)
+    first = window.history_table.topLevelItem(0)
+    assert first.text(1) == "SEOUL-SW-01"
+    assert first.text(2) == "192.0.2.10"
+    assert "result_unknown" in first.text(3)
+    assert first.text(4).endswith("a-latest.jsonl")
+    assert window.history_table.topLevelItemCount() == 30
     window.close()
