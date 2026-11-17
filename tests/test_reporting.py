@@ -286,3 +286,32 @@ def test_jsonl_allowlisted_metadata_cannot_bypass_secret_redaction(tmp_path: Pat
     assert "operator" not in serialized
     assert "192.0.2.10" not in serialized
     assert "session-password" not in serialized
+
+
+def test_existing_xlsx_partial_file_is_not_overwritten(tmp_path: Path) -> None:
+    stale = tmp_path / "result.xlsx.part"
+    stale.write_bytes(b"other writer or previous run")
+    result = write_result_workbook(tmp_path, [{"status": "success"}])
+
+    assert stale.read_bytes() == b"other writer or previous run"
+    workbook = load_workbook(result, read_only=True)
+    assert workbook["Summary"]["A1"].value == "Field"
+    workbook.close()
+
+
+def test_existing_xlsx_partial_symlink_cannot_modify_another_file(tmp_path: Path) -> None:
+    sentinel = tmp_path / "protected.xlsx"
+    sentinel.write_bytes(b"not a report")
+    link = tmp_path / "result.xlsx.part"
+    try:
+        link.symlink_to(sentinel)
+    except OSError, NotImplementedError:
+        pytest.skip("Symlinks not available on this Windows runner")
+
+    result = write_result_workbook(tmp_path, [{"status": "success"}])
+
+    assert sentinel.read_bytes() == b"not a report"
+    assert link.is_symlink()
+    workbook = load_workbook(result, read_only=True)
+    assert workbook["Devices"]["D2"].value == "success"
+    workbook.close()
