@@ -373,12 +373,10 @@ def test_csv_rejects_naive_phase_time_without_replacing_existing_file(
 def test_csv_explains_admin_disabled_and_poe_off_separately(tmp_path: Path) -> None:
     group = make_target("192.0.2.10", 22, "12,24")
     administrative_disable = PortSnapshot(
-        group.target, "12", "LAB-SW-10", "Aruba 2930F",
-        False, "Down", True, "Searching", 0.0
+        group.target, "12", "LAB-SW-10", "Aruba 2930F", False, "Down", True, "Searching", 0.0
     )
     manual_power_off = PortSnapshot(
-        group.target, "24", "LAB-SW-10", "Aruba 2930F",
-        True, "Down", False, "사용 안 함", None
+        group.target, "24", "LAB-SW-10", "Aruba 2930F", True, "Down", False, "사용 안 함", None
     )
     out = tmp_path / "causes.csv"
     write_query_csv(
