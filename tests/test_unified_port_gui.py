@@ -46,7 +46,7 @@ def queried(port: str, *, model: str = "AP-535") -> PoEQueryResult:
         13.2,
         "SHA256:test-verified",
     )
-    lldp = LLDPObservation(LLDPStatus.OK, (LLDPNeighbor(system_name=f"AP-{port}", model=model),))
+    lldp = LLDPObservation(LLDPStatus.OK, (LLDPNeighbor(system_name=f"AP-{port}", model=model, chassis_id=f"chassis-{port}", port_id=f"eth-{port}"),))
     return PoEQueryResult(group, port, QueryStatus.OK, snapshot=snapshot, lldp=lldp)
 
 
