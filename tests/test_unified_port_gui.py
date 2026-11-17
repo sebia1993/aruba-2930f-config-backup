@@ -210,3 +210,37 @@ def test_failure_filter_does_not_mark_unqueried_port_as_failure(app: QApplicatio
     dialog._apply_search_filter()
     assert not dialog._items[(TARGET.endpoint, "1")].isHidden()
     dialog.close()
+
+
+def test_filter_hides_and_deselects_ports_and_invalidates_batch_plan(app: QApplication) -> None:
+    dialog = setup_dialog()
+    first = dialog._items[(TARGET.endpoint, "1")]
+    second = dialog._items[(TARGET.endpoint, "2")]
+    dialog.result_tree.setCurrentItem(first)
+    first.setSelected(True)
+    second.setSelected(True)
+    dialog._prepare_batch()
+    assert dialog._batch_plan is not None
+    assert len(dialog._batch_plan.targets) == 2
+    dialog.search_input.setText("AP-2")
+    assert dialog._batch_plan is None
+    dialog._apply_search_filter()
+    assert first.isHidden()
+    assert not first.isSelected()
+    assert not second.isHidden()
+    assert tuple(row.interface for row in dialog._selected_rows()) == ("2",)
+    assert not dialog.run_button.isEnabled()
+    dialog.close()
+
+
+def test_change_action_after_plan_forces_new_explicit_approval(app: QApplication) -> None:
+    dialog = setup_dialog()
+    dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
+    dialog._prepare_batch()
+    assert dialog._batch_plan is not None
+    dialog.action_combo.setCurrentIndex(
+        dialog.action_combo.findData(PortAction.POE_OFF.value)
+    )
+    assert dialog._batch_plan is None
+    assert not dialog.run_button.isEnabled()
+    dialog.close()
