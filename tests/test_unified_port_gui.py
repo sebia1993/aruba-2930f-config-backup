@@ -560,30 +560,37 @@ def test_quick_off_starts_with_an_internal_plan_but_no_extra_plan_button(
     dialog.close()
 
 
-def test_quick_cycle_still_requires_distinct_off_on_operator_approvals(
+def test_quick_bar_exposes_only_independent_poe_off_and_on(
     app: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from aruba2930f_backup.poe_cycle import PowerCyclePhase
-
     dialog = setup_dialog()
+    bar_layout = dialog.quick_action_bar.layout()
+    assert bar_layout is not None
+    button_row_item = bar_layout.itemAt(0)
+    assert button_row_item is not None
+    button_row = button_row_item.layout()
+    assert button_row is not None
+    assert button_row.count() == 3  # selection summary + OFF + ON
+    assert button_row.itemAt(1).widget() is dialog.quick_off_button
+    assert button_row.itemAt(2).widget() is dialog.quick_on_button
+    assert not dialog.quick_off_button.isHidden()
+    assert not dialog.quick_on_button.isHidden()
+    assert dialog.quick_cycle_button.isHidden()
+    assert dialog.cycle_button.isHidden()
+    assert dialog.cycle_status.isHidden()
+
     dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
-    reviewed: list[PortAction] = []
+    executed: list[PortAction] = []
 
     def capture(*, quick: bool = False) -> None:
         assert quick
         if dialog._batch_plan is not None:
-            reviewed.append(dialog._batch_plan.action)
+            executed.append(dialog._batch_plan.action)
 
     monkeypatch.setattr(dialog, "_run_batch", capture)
-    dialog.quick_cycle_button.click()
-    assert reviewed == [PortAction.POE_OFF]
-    assert dialog._cycle is not None
-    assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
-    assert not dialog.quick_off_button.isEnabled()
-    assert not dialog.quick_on_button.isEnabled()
-    dialog.quick_cycle_button.click()
-    assert reviewed == [PortAction.POE_OFF, PortAction.POE_OFF]
-    assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
+    dialog.quick_off_button.click()
+    dialog.quick_on_button.click()
+    assert executed == [PortAction.POE_OFF, PortAction.POE_ON]
     dialog.close()
 
 
