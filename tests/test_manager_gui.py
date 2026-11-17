@@ -69,6 +69,9 @@ def test_backup_settings_and_results_are_in_distinct_splitter_panes(
     assert window.backup_page.result_table.isVisible()
     assert window.backup_page.start_button.isVisible()
     assert window.backup_page.poe_query_button.isHidden()
+    assert not window.backup_page.username_input.isVisible()
+    assert not window.backup_page.password_input.isVisible()
+    assert window.ssh_session_button.isVisible()
     window.close()
 
 
@@ -95,7 +98,8 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     window.port_target_toggle.click()
     assert window.port_target_scroll.isVisible()
     assert port.targets_table.isVisible()
-    assert port.username_input.isVisible()
+    assert not port.username_input.isVisible()
+    assert not port.password_input.isVisible()
     assert not window.port_advanced_scroll.isVisible()
     window.port_advanced_toggle.click()
     assert window.port_advanced_scroll.isVisible()
@@ -298,25 +302,96 @@ def test_port_paste_entry_is_visible_without_expanding_ssh_settings(
     window.close()
 
 
-def test_switch_to_port_reuses_only_empty_in_memory_credentials(app: QApplication) -> None:
+def test_ssh_account_is_shared_without_copying_passwords_to_feature_views(
+    app: QApplication,
+) -> None:
     window = make_window(app)
-    backup = window.backup_page
-    port = window.port_page
-    backup.username_input.setText("backup-operator")
-    backup.password_input.setText("ephemeral-demo-password")
-    backup.enable_password_input.setText("optional-enable")
-    assert window.navigate(2)
-    assert port.username_input.text() == "backup-operator"
-    assert port.password_input.text() == "ephemeral-demo-password"
-    assert port.enable_password_input.text() == "optional-enable"
+    session = window._ssh_credentials
+    assert not session.configured
+    assert "미설정" in window.ssh_session_status.text()
+    session.configure("operator", "session-password", "enable-secret")
+    window._refresh_ssh_session_status()
+    assert window.ssh_session_status.text().startswith("SSH 계정: operator")
+    assert "session-password" not in window.ssh_session_status.text()
 
-    # A port-specific account must never be overwritten by backup credentials.
-    port.username_input.setText("port-operator")
-    port.password_input.setText("different-secret")
-    assert window.navigate(1)
-    backup.username_input.setText("new-backup-account")
-    backup.password_input.setText("new-backup-secret")
+    backup = window.backup_page
+    backup.ip_input.setPlainText("192.0.2.10")
+    request = backup.build_request()
+    assert request.username == "operator"
+    assert request.password == "session-password"
+    assert request.enable_password == "enable-secret"
+    assert backup.password_input.text() == ""
+    assert backup.username_input.text() == ""
+
+    # Backup's legacy per-run clear must not revoke the integrated session.
+    backup._finalize_completed_run()
     assert window.navigate(2)
-    assert port.username_input.text() == "port-operator"
-    assert port.password_input.text() == "different-secret"
+    port = window.port_page
+    assert port._credentials() is session.require()
+    assert port.password_input.text() == ""
+    assert port.enable_password_input.text() == ""
+    assert window.ssh_session_clear_button.isEnabled()
+    window.close()
+    assert not session.configured
+
+
+def test_ssh_session_change_revokes_stale_port_rows(app: QApplication) -> None:
+    window = make_window(app)
+    window._ssh_credentials.configure("first", "first-pass")
+    window.port_page._build_results(
+        (PoETarget(DeviceTarget("192.0.2.10"), ("12",)),)
+    )
+    assert window.port_page.result_tree.topLevelItemCount() == 1
+    # Changing account must invalidate old query state, but preserve target input.
+    window._ssh_credentials.configure("second", "second-pass")
+    window.port_page._invalidate()
+    assert window.port_page.result_tree.topLevelItemCount() == 0
+    assert window.port_page._batch_plan is None
+    window.close()
+
+
+def test_ssh_session_clear_and_missing_account_block_actions(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = make_window(app)
+    window._ssh_credentials.configure("operator", "demo-password")
+    window._refresh_ssh_session_status()
+    window._clear_ssh_session()
+    assert not window._ssh_credentials.configured
+    assert not window.ssh_session_clear_button.isEnabled()
+    assert "미설정" in window.ssh_session_status.text()
+
+    monkeypatch.setattr(window, "_configure_ssh_session", lambda: False)
+    with pytest.raises(ValueError, match="취소"):
+        window._require_ssh_credentials()
+    window.close()
+
+
+def test_ssh_session_controls_reject_changes_during_active_backup(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtCore import QThread
+
+    window = make_window(app)
+    window._ssh_credentials.configure("operator", "session-secret")
+    window._refresh_ssh_session_status()
+    notices: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "information",
+        lambda _parent, _title, message: notices.append(message)
+        or QMessageBox.StandardButton.Ok,
+    )
+    fake_thread = QThread(window)
+    window.backup_page._thread = fake_thread
+    try:
+        assert not window._configure_ssh_session()
+        window._clear_ssh_session()
+        assert window._ssh_credentials.configured
+        assert len(notices) == 2
+        window._refresh_status()
+        assert not window.ssh_session_button.isEnabled()
+        assert not window.ssh_session_clear_button.isEnabled()
+    finally:
+        window.backup_page._thread = None
+        fake_thread.deleteLater()
     window.close()
