@@ -5,7 +5,24 @@
 
 ## [Unreleased]
 
-## [0.4.0] - Unreleased
+## [0.5.0] - Unreleased
+
+### 추가
+
+- 좌측 메뉴 네비게이션을 갖춘 네트워크 통합 관리 메인 창: 홈 / 컨피그 백업 / 포트 통합 관리 / 작업 이력 / 설정
+- 기존 컨피그 백업 입력과 결과를 좌우 분할 배치하고 백업 진행·취소·실패 재시도 버튼 유지
+- 포트 조회 대상·SSH 설정 접기, 스위치별 포트 표 확대, 우측 선택 포트 상세·단일/일괄 제어 패널
+- 기존 result.xlsx/일괄 제어 JSONL을 읽는 이력 목록과 SSH 장비 지문 관리 설정 진입점
+- 네트워크 없는 Qt 모의 홈·백업·포트 UI 캡처와 화면 탐색·계정 보존·이력 테스트
+
+### 변경
+
+- 조회된 스위치 이름은 `Hostname · IP`로 표시하며, 확인 전에는 `확인 전 · IP`, 비기본 SSH 포트는 명시
+- 프로그램 기본 실행은 통합 메뉴 창으로 변경. 기존 백업·포트 조회·제어 서비스 및 별도 GUI 클래스는 재사용
+- 작업 중 화면 이동·종료를 제한하고 기존 포트 변경 사전 확인/승인/이력 저장 경계를 유지
+- 사용자 저장 포트 대상 목록/CSV 및 기존 백업 결과 TXT/XLSX 포맷은 변경하지 않음
+
+## [0.4.0] - 2026-11-17
 
 ### 추가
 
@@ -278,7 +295,8 @@
 - 자격증명과 장비 목록을 세션에만 유지하고 운영 로그에서 민감정보 제거
 - 실제 2930F 미검증 및 미서명 바이너리임을 사전릴리즈에 명시
 
-[Unreleased]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sebia1993/aruba-2930f-config-backup/compare/v0.1.8...v0.2.0

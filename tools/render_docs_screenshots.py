@@ -278,6 +278,67 @@ def _save_poe_query(output: Path) -> None:
     app.processEvents()
 
 
+def _save_network_manager(output: Path) -> None:
+    """Capture the real embedded app shell with synthetic, offline 2930F data."""
+    from aruba2930f_backup.manager_gui import NetworkManagerWindow
+    from aruba2930f_backup.poe_power import LLDPNeighbor, LLDPObservation, LLDPStatus
+    from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
+    from aruba2930f_backup.port_control import PortSnapshot
+
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        raise RuntimeError("Qt application is not initialized")
+    manager = NetworkManagerWindow()
+    manager.resize(1320, 840)
+    manager.backup_page.ip_input.setPlainText("192.0.2.10\n192.0.2.20")
+    manager.backup_page.username_input.setText("documentation-only")
+    manager.show()
+    app.processEvents()
+    if not manager.grab().save(str(output / "manager-home.png"), "PNG"):
+        raise RuntimeError("홈 화면 PNG 저장에 실패했습니다.")
+    manager.navigate(1)
+    app.processEvents()
+    if not manager.grab().save(str(output / "manager-backup.png"), "PNG"):
+        raise RuntimeError("통합 백업 화면 PNG 저장에 실패했습니다.")
+    manager.navigate(2)
+    group = PoETarget(DeviceTarget("192.0.2.10", 22), ("12", "24"))
+    manager.port_page._build_results((group,))
+    for interface, watts in (("12", Decimal("14.8")), ("24", Decimal("12.6"))):
+        snapshot = PortSnapshot(
+            group.target,
+            interface,
+            "SEOUL-F1-SW-01",
+            "Aruba 2930F",
+            True,
+            "Up",
+            True,
+            "Delivering",
+            watts,
+        )
+        manager.port_page._apply_result(
+            PoEQueryResult(
+                group,
+                interface,
+                QueryStatus.OK,
+                snapshot=snapshot,
+                lldp=LLDPObservation(
+                    LLDPStatus.OK,
+                    (LLDPNeighbor(system_name=f"AP-{interface}", model="AP-535"),),
+                ),
+                complete=True,
+            )
+        )
+    manager.port_page.result_tree.setCurrentItem(
+        manager.port_page.result_tree.topLevelItem(0).child(0)
+    )
+    manager.port_page.status_label.setText("문서용 가상 AP · 실제 장비 접속 없음")
+    app.processEvents()
+    if not manager.grab().save(str(output / "manager-ports.png"), "PNG"):
+        raise RuntimeError("통합 포트 관리 화면 PNG 저장에 실패했습니다.")
+    manager.close()
+    app.processEvents()
+
+
 def _verify_image(path: Path) -> None:
     if not path.is_file():
         raise RuntimeError(f"문서 화면 파일이 생성되지 않았습니다: {path}")
@@ -310,6 +371,7 @@ def main() -> int:
     _save_host_key_review(output)
     _save_mixed_result(output)
     _save_poe_query(output)
+    _save_network_manager(output)
 
     for path in sorted(output.glob("*.png")):
         _verify_image(path)

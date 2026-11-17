@@ -1,0 +1,731 @@
+"""Five-page operator shell for Aruba 2930F backup and port operations.
+
+The existing collectors, query workers and guarded control paths remain the
+only execution engines. This module rearranges their Qt widgets, not their
+SSH commands or authorization logic.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import TYPE_CHECKING
+from zipfile import BadZipFile
+
+from openpyxl import load_workbook
+from PySide6.QtCore import Qt, QTimer, QUrl, Slot
+from PySide6.QtGui import QCloseEvent, QDesktopServices
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QStackedWidget,
+    QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .batch_port_control import BatchControlError, journal_states
+from .gui import MainWindow
+from .storage import default_output_directory
+from .unified_port_gui import UnifiedPortManagementDialog
+
+if TYPE_CHECKING:
+    from .developer_inspector import DeveloperInspectorController
+    from .gui import BackupServiceProtocol
+
+_PAGE_TITLES = (
+    ("홈", "오늘의 운영 작업을 선택하세요."),
+    ("컨피그 백업", "running-config 수집과 스위치별 백업 결과 확인"),
+    ("포트 통합 관리", "LLDP·PoE 전력 조회 후 해당 포트 제어 및 복구 확인"),
+    ("작업 이력", "저장된 백업 및 포트 변경 이력"),
+    ("설정", "SSH 장비 지문과 기본 저장 위치"),
+)
+
+
+def _attach(layout: QVBoxLayout, value: QWidget | object) -> None:
+    if isinstance(value, QWidget):
+        layout.addWidget(value)
+    else:
+        # Original Qt layout items are detached before being reparented.
+        from PySide6.QtWidgets import QLayout
+
+        if not isinstance(value, QLayout):
+            raise TypeError("Unsupported Qt layout item")
+        layout.addLayout(value)
+
+
+def _take_layout_with(layout: QVBoxLayout, button: QWidget) -> object:
+    from PySide6.QtWidgets import QLayout
+
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        if item is None:
+            continue
+        child = item.layout()
+        if isinstance(child, QLayout):
+            for number in range(child.count()):
+                inner = child.itemAt(number)
+                if inner is not None and inner.widget() is button:
+                    layout.takeAt(index)
+                    return child
+    raise RuntimeError("Existing operator controls could not be found")
+
+
+def recent_backup_reports(root: Path, *, limit: int = 30) -> list[Path]:
+    """Bounded enumeration of recent result workbooks; never crawl entire disks."""
+    results: list[Path] = []
+    try:
+        dates = sorted(
+            (directory for directory in root.iterdir() if directory.is_dir()),
+            reverse=True,
+        )[:20]
+        for day in dates:
+            runs = sorted(
+                (directory for directory in day.iterdir() if directory.is_dir()),
+                reverse=True,
+            )[:30]
+            for run in runs:
+                candidate = run / "result.xlsx"
+                if candidate.is_file():
+                    results.append(candidate)
+                if len(results) >= limit:
+                    return results
+    except OSError:
+        return results
+    return results
+
+
+def report_device_rows(path: Path, *, limit: int = 200) -> list[tuple[str, str, str]]:
+    """Read only the existing device report and never modify any saved result."""
+    try:
+        workbook = load_workbook(path, read_only=True, data_only=True)
+    except (BadZipFile, OSError) as exc:
+        raise ValueError("저장된 백업 보고서를 읽을 수 없습니다.") from exc
+    try:
+        if "Devices" not in workbook.sheetnames:
+            return []
+        sheet = workbook["Devices"]
+        iterator = sheet.iter_rows(values_only=True)
+        headers = tuple(str(value or "") for value in next(iterator, ()))
+        if not {"IP", "Hostname", "Status"}.issubset(headers):
+            return []
+        positions = {key: headers.index(key) for key in ("IP", "Hostname", "Status")}
+        output: list[tuple[str, str, str]] = []
+        for number, values in enumerate(iterator):
+            if number >= limit:
+                break
+            ip = str(values[positions["IP"]] or "")
+            hostname = str(values[positions["Hostname"]] or "확인 불가")
+            status = str(values[positions["Status"]] or "확인 불가")
+            if ip:
+                output.append((hostname, ip, status))
+        return output
+    finally:
+        workbook.close()
+
+
+class _EmbeddedPortManagementDialog(UnifiedPortManagementDialog):
+    """Do not let Escape or a hidden QDialog Close action discard a workspace."""
+
+    def __init__(self, parent: QWidget) -> None:
+        self._shell_allows_close = False
+        super().__init__(parent)
+
+    def reject(self) -> None:
+        if self._shell_allows_close:
+            super().reject()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._shell_allows_close:
+            super().closeEvent(event)
+        else:
+            event.ignore()
+
+
+class NetworkManagerWindow(QMainWindow):
+    """Single top-level window; the old GUI modules stay usable independently."""
+
+    def __init__(
+        self,
+        *,
+        service: BackupServiceProtocol | None = None,
+        developer_inspector: DeveloperInspectorController | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("networkManagerWindow")
+        self.setWindowTitle("Aruba 2930F · 네트워크 통합 관리")
+        self.resize(1320, 840)
+        self.setMinimumSize(820, 540)
+        self._navigation_buttons: list[QPushButton] = []
+        self._page_index = 0
+        self._history_paths: dict[int, Path] = {}
+
+        central = QWidget(self)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(10)
+
+        sidebar = QFrame(central)
+        sidebar.setObjectName("networkManagerSidebar")
+        sidebar.setFixedWidth(178)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(8, 12, 8, 12)
+        sidebar_layout.setSpacing(8)
+        brand = QLabel("Aruba 2930F\nNETWORK MANAGER", sidebar)
+        brand.setObjectName("managerBrand")
+        brand.setWordWrap(True)
+        sidebar_layout.addWidget(brand)
+        sidebar_layout.addSpacing(12)
+        for index, (title, _) in enumerate(_PAGE_TITLES):
+            button = QPushButton(title, sidebar)
+            button.setCheckable(True)
+            button.setObjectName(
+                ("navHome", "navBackup", "navPorts", "navHistory", "navSettings")[index]
+            )
+            button.setMinimumHeight(42)
+            button.clicked.connect(lambda checked=False, target=index: self.navigate(target))
+            sidebar_layout.addWidget(button)
+            self._navigation_buttons.append(button)
+        sidebar_layout.addStretch(1)
+        self.sidebar_status = QLabel("작업 상태 · 대기", sidebar)
+        self.sidebar_status.setWordWrap(True)
+        sidebar_layout.addWidget(self.sidebar_status)
+        root.addWidget(sidebar)
+
+        content = QWidget(central)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(4, 4, 4, 4)
+        content_layout.setSpacing(8)
+        self.page_title = QLabel(content)
+        self.page_title.setObjectName("managerPageTitle")
+        title_font = self.page_title.font()
+        title_font.setPointSize(max(12, title_font.pointSize() + 4))
+        title_font.setBold(True)
+        self.page_title.setFont(title_font)
+        content_layout.addWidget(self.page_title)
+        self.page_description = QLabel(content)
+        self.page_description.setWordWrap(True)
+        content_layout.addWidget(self.page_description)
+        self.pages = QStackedWidget(content)
+        self.pages.setObjectName("networkManagerPages")
+        content_layout.addWidget(self.pages, 1)
+        root.addWidget(content, 1)
+        self.setCentralWidget(central)
+
+        self.home_page = self._create_home()
+        self.pages.addWidget(self.home_page)
+        self.backup_page = MainWindow(
+            service=service,
+            developer_inspector=developer_inspector,
+            parent=self.pages,
+        )
+        self.backup_page.setWindowFlags(Qt.WindowType.Widget)
+        self.backup_page.setMinimumSize(0, 0)
+        self._layout_backup()
+        self.pages.addWidget(self.backup_page)
+
+        self.port_page = _EmbeddedPortManagementDialog(self.pages)
+        self.port_page.setWindowFlags(Qt.WindowType.Widget)
+        self.port_page.setMinimumSize(0, 0)
+        self._layout_port()
+        self.pages.addWidget(self.port_page)
+
+        self.history_page = self._create_history()
+        self.pages.addWidget(self.history_page)
+        self.settings_page = self._create_settings()
+        self.pages.addWidget(self.settings_page)
+        self.navigate(0)
+
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(650)
+        self._status_timer.timeout.connect(self._refresh_status)
+        self._status_timer.start()
+        self.setStyleSheet(
+            "QFrame#networkManagerSidebar { border: 1px solid palette(mid); border-radius: 8px; }"
+            " QPushButton:checked { background: palette(highlight);"
+            " color: palette(highlighted-text); font-weight: 600; }"
+            " QLabel#managerPageTitle { padding: 2px 0; }"
+        )
+
+    def _create_home(self) -> QWidget:
+        page = QWidget(self.pages)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(12, 12, 12, 12)
+        heading = QLabel("작업 바로가기", page)
+        layout.addWidget(heading)
+        shortcuts = (
+            ("컨피그 백업", "running-config 수집 / 결과", 1),
+            ("포트 통합 관리", "LLDP·PoE 조회 / 포트 제어", 2),
+            ("작업 이력", "백업·포트 변경 기록", 3),
+            ("설정", "SSH 지문·저장 위치", 4),
+        )
+        cards = QGridLayout()
+        cards.setSpacing(10)
+        for position, (title, description, index) in enumerate(shortcuts):
+            button = QPushButton(f"{title}\n{description}", page)
+            button.setObjectName(f"homeShortcut{index}")
+            button.setMinimumHeight(92)
+            button.clicked.connect(lambda checked=False, target=index: self.navigate(target))
+            cards.addWidget(button, position // 2, position % 2)
+        layout.addLayout(cards)
+        layout.addSpacing(12)
+        self.home_backup_status = QLabel("백업 작업 · 실행 전", page)
+        self.home_port_status = QLabel("포트 작업 · 실행 전", page)
+        for label in (self.home_backup_status, self.home_port_status):
+            label.setWordWrap(True)
+            layout.addWidget(label)
+        layout.addStretch(1)
+        return page
+
+    def _layout_backup(self) -> None:
+        backup = self.backup_page
+        central = backup.centralWidget()
+        assert central is not None
+        root = central.layout()
+        assert isinstance(root, QVBoxLayout)
+        target = backup.ip_input.parentWidget()
+        access = backup.username_input.parentWidget()
+        options = backup.output_input.parentWidget()
+        assert target is not None and access is not None and options is not None
+        action = _take_layout_with(root, backup.start_button)
+        for widget in (
+            target,
+            access,
+            options,
+            backup.status_label,
+            backup.progress_bar,
+            backup.result_table,
+        ):
+            root.removeWidget(widget)
+        backup.poe_query_button.hide()
+        backup.trust_keys_button.hide()
+        backup.port_control_button.hide()
+
+        settings = QWidget(central)
+        settings_layout = QVBoxLayout(settings)
+        settings_layout.setContentsMargins(7, 7, 7, 7)
+        settings_layout.addWidget(QLabel("대상 장비 · 접속 · 저장 옵션", settings))
+        for group in (target, access, options):
+            settings_layout.addWidget(group)
+        settings_layout.addStretch(1)
+        scroll = QScrollArea(central)
+        scroll.setObjectName("backupConfigurationScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumWidth(270)
+        scroll.setWidget(settings)
+        results = QWidget(central)
+        results_layout = QVBoxLayout(results)
+        results_layout.setContentsMargins(6, 6, 6, 6)
+        results_layout.addWidget(QLabel("백업 결과 · IP + Hostname", results))
+        _attach(results_layout, action)
+        results_layout.addWidget(backup.status_label)
+        results_layout.addWidget(backup.progress_bar)
+        backup.result_table.setMinimumHeight(180)
+        results_layout.addWidget(backup.result_table, 1)
+        splitter = QSplitter(Qt.Orientation.Horizontal, central)
+        splitter.setObjectName("backupMainSplitter")
+        splitter.addWidget(scroll)
+        splitter.addWidget(results)
+        splitter.setChildrenCollapsible(False)
+        splitter.setSizes([340, 740])
+        root.addWidget(splitter, 1)
+
+    def _layout_port(self) -> None:
+        port = self.port_page
+        root = port.layout()
+        assert isinstance(root, QVBoxLayout)
+        target_action = _take_layout_with(root, port.add_button)
+        query_action = _take_layout_with(root, port.collect_button)
+        # Reuse the existing credential form without replacing its live inputs.
+        credential_form = None
+        from PySide6.QtWidgets import QFormLayout
+
+        for index in range(root.count()):
+            item = root.itemAt(index)
+            if item is None:
+                continue
+            if isinstance(item.layout(), QFormLayout):
+                credential_form = item.layout()
+                root.takeAt(index)
+                break
+        if credential_form is None:
+            raise RuntimeError("Could not relocate the existing SSH credential form")
+        search_group = port.search_input.parentWidget()
+        control_group = port.batch_progress.parentWidget()
+        assert search_group is not None and control_group is not None
+        details_scroll = port.findChild(QScrollArea, "poeDetailsScroll")
+        if details_scroll is None:
+            raise RuntimeError("Missing existing per-port details widget")
+        header_items = (
+            port.targets_table,
+            port.advanced_toggle,
+            port.result_tree,
+            details_scroll,
+            port.progress_bar,
+            port.status_label,
+            search_group,
+            control_group,
+        )
+        for widget in header_items:
+            if widget is not None:
+                root.removeWidget(widget)
+        # Remove explanatory labels and the legacy Close button: navigation is
+        # owned by the shell, with active operations protected by navigate().
+        while root.count():
+            item = root.takeAt(0)
+            if item is None:
+                continue
+            leftover_widget = item.widget()
+            if leftover_widget is not None:
+                leftover_widget.hide()
+
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(7)
+        self.port_target_toggle = QToolButton(port)
+        self.port_target_toggle.setObjectName("portTargetsToggle")
+        self.port_target_toggle.setText("조회 대상 · SSH 접속 설정 펼치기/접기")
+        self.port_target_toggle.setCheckable(True)
+        self.port_target_toggle.setChecked(False)
+        self.port_target_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.port_target_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        root.addWidget(self.port_target_toggle)
+
+        target_container = QWidget(port)
+        target_layout = QVBoxLayout(target_container)
+        target_layout.setContentsMargins(8, 8, 8, 8)
+        target_layout.addWidget(port.targets_table)
+        target_layout.addWidget(port.advanced_toggle)
+        _attach(target_layout, target_action)
+        target_layout.addLayout(credential_form)
+        target_layout.addStretch(1)
+        self.port_target_scroll = QScrollArea(port)
+        self.port_target_scroll.setObjectName("portTargetSettings")
+        self.port_target_scroll.setWidgetResizable(True)
+        self.port_target_scroll.setMaximumHeight(275)
+        self.port_target_scroll.setWidget(target_container)
+        self.port_target_scroll.setVisible(False)
+        self.port_target_toggle.toggled.connect(self._toggle_port_targets)
+        root.addWidget(self.port_target_scroll)
+
+        _attach(root, query_action)
+        body = QSplitter(Qt.Orientation.Horizontal, port)
+        body.setObjectName("portResultDetailSplitter")
+        center = QWidget(body)
+        center_layout = QVBoxLayout(center)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.addWidget(search_group)
+        port.result_tree.setColumnHidden(4, True)  # timestamps remain in Details
+        port.result_tree.setColumnWidth(0, 255)  # hostname and IP together
+        center_layout.addWidget(port.result_tree, 1)
+        detail = QWidget(body)
+        detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(5, 0, 0, 0)
+        detail_layout.addWidget(QLabel("선택 포트 상세 · 제어", detail))
+        detail_layout.addWidget(details_scroll)
+        self._layout_port_control_buttons(control_group)
+        detail_layout.addWidget(control_group)
+        detail_layout.addStretch(1)
+        right = QScrollArea(port)
+        right.setObjectName("portDetailsAndControl")
+        right.setWidgetResizable(True)
+        right.setMinimumWidth(260)
+        right.setWidget(detail)
+        body.addWidget(center)
+        body.addWidget(right)
+        body.setChildrenCollapsible(False)
+        body.setSizes([730, 350])
+        root.addWidget(body, 1)
+        root.addWidget(port.progress_bar)
+        root.addWidget(port.status_label)
+
+    def _layout_port_control_buttons(self, group: QWidget) -> None:
+        """Reflow wide legacy button rows into a readable narrow control rail."""
+        panel = group.layout()
+        assert isinstance(panel, QVBoxLayout)
+        port = self.port_page
+        first = _take_layout_with(panel, port.action_combo)
+        second = _take_layout_with(panel, port.run_button)
+        # Preserve all signal connections and control policies while moving
+        # the actual widgets, not rebuilding new control actions.
+        from PySide6.QtWidgets import QLayout
+
+        assert isinstance(first, QLayout) and isinstance(second, QLayout)
+        for widget in (port.action_combo, port.plan_button, port.single_button):
+            first.removeWidget(widget)
+        for widget in (port.run_button, port.cancel_batch_button, port.history_button):
+            second.removeWidget(widget)
+        rows = QGridLayout()
+        rows.setSpacing(5)
+        rows.addWidget(port.action_combo, 0, 0, 1, 2)
+        rows.addWidget(port.plan_button, 1, 0)
+        rows.addWidget(port.single_button, 1, 1)
+        port.plan_button.setToolTip(port.plan_button.text())
+        port.single_button.setToolTip(port.single_button.text())
+        port.plan_button.setText("일괄 계획")
+        port.single_button.setText("단일 제어…")
+        panel.insertLayout(1, rows)
+        actions = QGridLayout()
+        actions.setSpacing(5)
+        actions.addWidget(port.run_button, 0, 0, 1, 2)
+        actions.addWidget(port.cancel_batch_button, 1, 0)
+        actions.addWidget(port.history_button, 1, 1)
+        for widget, label in (
+            (port.run_button, "승인 후 실행…"),
+            (port.cancel_batch_button, "작업 중지"),
+            (port.history_button, "이력 확인…"),
+        ):
+            widget.setToolTip(widget.text())
+            widget.setText(label)
+        panel.insertLayout(3, actions)
+        explanation = panel.itemAt(0)
+        if explanation is not None:
+            explanation_label = explanation.widget()
+            if isinstance(explanation_label, QLabel):
+                explanation_label.setToolTip(explanation_label.text())
+                explanation_label.setText(
+                    "포트 선택 후 제어. 일괄 PoE OFF/포트 Down은 "
+                    "LLDP로 확인된 AP-535 포트만 허용합니다."
+                )
+
+    @Slot(bool)
+    def _toggle_port_targets(self, expanded: bool) -> None:
+        self.port_target_scroll.setVisible(expanded)
+        self.port_target_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+
+    def _create_history(self) -> QWidget:
+        page = QWidget(self.pages)
+        layout = QVBoxLayout(page)
+        toolbar = QHBoxLayout()
+        button = QPushButton("저장된 작업 이력 새로고침", page)
+        button.setObjectName("refreshHistory")
+        button.clicked.connect(self.refresh_history)
+        toolbar.addWidget(button)
+        toolbar.addStretch(1)
+        layout.addLayout(toolbar)
+        self.history_table = QTreeWidget(page)
+        self.history_table.setObjectName("managerHistoryTable")
+        self.history_table.setHeaderLabels(("유형", "Hostname", "스위치 IP", "상태", "저장 파일"))
+        self.history_table.setAlternatingRowColors(True)
+        self.history_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        layout.addWidget(self.history_table, 1)
+        open_button = QPushButton("선택 이력 파일 위치 열기", page)
+        open_button.setObjectName("openHistoryLocation")
+        open_button.clicked.connect(self._open_history_location)
+        layout.addWidget(open_button)
+        note = QLabel(
+            "기존 result.xlsx·일괄 제어 JSONL만 읽습니다. 설정 파일과 암호는 표시하지 않습니다.",
+            page,
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        return page
+
+    def refresh_history(self) -> None:
+        self.history_table.clear()
+        self._history_paths.clear()
+        backup_root = Path(self.backup_page.output_input.text()).expanduser()
+        files = recent_backup_reports(backup_root, limit=12)
+        row_count = 0
+        for report in files:
+            try:
+                records = report_device_rows(report, limit=100)
+            except OSError, ValueError, KeyError:
+                continue
+            for hostname, ip, status in records:
+                QTreeWidgetItem(
+                    self.history_table, ["컨피그 백업", hostname, ip, status, str(report)]
+                )
+                self._history_paths[row_count] = report
+                row_count += 1
+        journal_root = default_output_directory() / "port-control" / "batch"
+        dated_journals: list[tuple[int, Path]] = []
+        try:
+            for candidate in journal_root.glob("*.jsonl"):
+                try:
+                    dated_journals.append((candidate.stat().st_mtime_ns, candidate))
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        journals = [path for _, path in sorted(dated_journals, reverse=True)[:30]]
+        for journal in journals:
+            try:
+                if journal.stat().st_size > 2_000_000:
+                    continue
+                with journal.open(encoding="utf-8") as handle:
+                    record = json.loads(handle.readline())
+                if not isinstance(record, dict) or not isinstance(record.get("items"), list):
+                    continue
+                states = journal_states(journal)
+                for index, entry in enumerate(record["items"][:300]):
+                    if not isinstance(entry, dict):
+                        continue
+                    endpoint = str(entry.get("endpoint", ""))
+                    ip = endpoint.rsplit(":", 1)[0]
+                    hostname = str(entry.get("hostname", "") or "확인 불가")
+                    state = states.get(index, "queued")
+                    item = QTreeWidgetItem(
+                        self.history_table,
+                        [
+                            "포트 제어 이력",
+                            hostname,
+                            ip,
+                            f"{record.get('action', '')} · {state}",
+                            str(journal),
+                        ],
+                    )
+                    item.setToolTip(3, "confirmed/unknown/queued states come from saved journal")
+                    item.setToolTip(4, str(journal))
+                    self._history_paths[row_count] = journal
+                    row_count += 1
+            except OSError, ValueError, UnicodeError, BatchControlError:
+                continue
+        if row_count == 0:
+            QTreeWidgetItem(
+                self.history_table,
+                [
+                    "기록 없음",
+                    "—",
+                    "—",
+                    "저장된 작업 파일이 없습니다.",
+                    "",
+                ],
+            )
+        self.history_table.resizeColumnToContents(0)
+        self.history_table.resizeColumnToContents(1)
+        self.history_table.resizeColumnToContents(2)
+
+    @Slot()
+    def _open_history_location(self) -> None:
+        current = self.history_table.currentItem()
+        if current is None:
+            return
+        path = Path(current.text(4))
+        if path.is_file():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+
+    def _create_settings(self) -> QWidget:
+        page = QWidget(self.pages)
+        layout = QVBoxLayout(page)
+        layout.addWidget(QLabel("SSH 장비 신뢰 정보", page))
+        trust = QPushButton("승인된 SSH 장비 지문 관리…", page)
+        trust.setObjectName("managerTrustedKeys")
+        trust.clicked.connect(self.backup_page._manage_trusted_keys)
+        layout.addWidget(trust)
+        layout.addSpacing(16)
+        layout.addWidget(QLabel("컨피그 백업 기본 저장 위치", page))
+        self.output_path_edit = QLineEdit(page)
+        self.output_path_edit.setObjectName("managerDefaultOutputPath")
+        self.output_path_edit.setText(self.backup_page.output_input.text())
+        layout.addWidget(self.output_path_edit)
+        apply_button = QPushButton("백업 저장 위치 적용 (현재 실행에서만)", page)
+        apply_button.setObjectName("managerApplyOutput")
+        apply_button.clicked.connect(self._apply_output)
+        layout.addWidget(apply_button)
+        self.settings_status = QLabel(
+            "접속 암호·Enable 암호는 저장하지 않습니다. SSH 지문 승인 정책은 유지됩니다.",
+            page,
+        )
+        self.settings_status.setWordWrap(True)
+        layout.addWidget(self.settings_status)
+        layout.addStretch(1)
+        return page
+
+    @Slot()
+    def _apply_output(self) -> None:
+        if self._is_busy():
+            QMessageBox.information(self, "저장 위치", "작업 중에는 저장 위치를 바꾸지 마세요.")
+            return
+        path = self.output_path_edit.text().strip()
+        if not path:
+            QMessageBox.warning(self, "저장 위치", "저장할 폴더를 지정하세요.")
+            return
+        self.backup_page.output_input.setText(path)
+        self.settings_status.setText("현재 실행의 백업 저장 위치에 적용했습니다.")
+
+    def _is_busy(self) -> bool:
+        backup = self.backup_page
+        return (
+            backup._thread is not None
+            or backup._cancel_thread_is_alive()
+            or backup._run_finalize_pending
+            or self.port_page.is_busy
+        )
+
+    def navigate(self, index: int) -> bool:
+        if index < 0 or index >= self.pages.count():
+            return False
+        if self._is_busy() and index != self._page_index:
+            QMessageBox.information(
+                self,
+                "작업 진행 중",
+                "현재 작업이 실행 중입니다. 작업 상태와 안전한 종료를 확인한 후 이동하세요.",
+            )
+            for number, button in enumerate(self._navigation_buttons):
+                button.setChecked(number == self._page_index)
+            return False
+        if index == 2 and self._page_index != 2:
+            # Carry only target IPs and keep separately confirmed SSH defaults.
+            # Never overwrite a saved port target profile or existing result set.
+            port = self.port_page
+            if not port._has_target_text():
+                ips = tuple(
+                    line.strip()
+                    for line in self.backup_page.ip_input.toPlainText().splitlines()
+                    if line.strip()
+                )
+                if ips:
+                    port._replace_targets_rows(tuple((ip, "22", "", "") for ip in ips))
+            if not port.isVisible():
+                port.show()
+        if index == 3:
+            self.refresh_history()
+        self._page_index = index
+        self.pages.setCurrentIndex(index)
+        self.page_title.setText(_PAGE_TITLES[index][0])
+        self.page_description.setText(_PAGE_TITLES[index][1])
+        for number, button in enumerate(self._navigation_buttons):
+            button.setChecked(number == index)
+        self._refresh_status()
+        return True
+
+    @Slot()
+    def _refresh_status(self) -> None:
+        backup = self.backup_page
+        self.home_backup_status.setText("컨피그 백업 · " + backup.status_label.text())
+        self.home_port_status.setText("포트 통합 관리 · " + self.port_page.status_label.text())
+        if self._is_busy():
+            self.sidebar_status.setText("작업 진행 중 · 현재 화면에서 확인")
+        else:
+            self.sidebar_status.setText("작업 상태 · 대기")
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._is_busy():
+            QMessageBox.warning(
+                self,
+                "작업 진행 중",
+                "실행 중인 작업을 먼저 중지하고 종료를 확인하세요. "
+                "명령 결과가 불확실하면 자동 재실행하지 않습니다.",
+            )
+            event.ignore()
+            return
+        self._status_timer.stop()
+        # The old controllers clear sensitive inputs in their own close paths.
+        self.backup_page.close()
+        self.port_page._shell_allows_close = True
+        self.port_page.close()
+        super().closeEvent(event)

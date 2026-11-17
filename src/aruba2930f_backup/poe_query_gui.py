@@ -723,7 +723,9 @@ class PoEQueryDialog(QDialog):
             (r.identity.hostname for r in results if r.identity and r.identity.hostname),
             next((r.snapshot.hostname for r in results if r.snapshot), ""),
         )
-        name = " · ".join(filter(None, (group.target.ip, hostname)))
+        name = f"{hostname} · {group.target.ip}" if hostname else f"확인 전 · {group.target.ip}"
+        if group.target.port != 22:
+            name += f" (SSH {group.target.port})"
         item = self._parents[group.target.endpoint]
         item.setText(0, name)
         completed = sum(r.complete for r in results)

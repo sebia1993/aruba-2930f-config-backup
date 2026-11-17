@@ -31,6 +31,7 @@ def _smoke_test() -> int:
 
     from .developer_inspector import DeveloperInspectorController
     from .gui import MainWindow
+    from .manager_gui import NetworkManagerWindow
     from .poe_query_gui import PoEQueryDialog
 
     app = QApplication.instance()
@@ -47,6 +48,15 @@ def _smoke_test() -> int:
         query_dialog.show()
         app.processEvents()
         query_dialog.close()
+        manager = NetworkManagerWindow()
+        try:
+            manager.show()
+            manager.navigate(1)
+            manager.navigate(2)
+            manager.navigate(0)
+            app.processEvents()
+        finally:
+            manager.close()
     finally:
         window.close()
         developer_inspector.close()

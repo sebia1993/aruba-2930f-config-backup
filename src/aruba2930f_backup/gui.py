@@ -2146,7 +2146,9 @@ def run_gui(service: BackupServiceProtocol | None = None) -> int:
     app.setApplicationName("Aruba2930FConfigBackup")
     app.setOrganizationName("sebia1993")
     developer_inspector = DeveloperInspectorController(app, f"v{__version__}", app)
-    window = MainWindow(service=service, developer_inspector=developer_inspector)
+    from .manager_gui import NetworkManagerWindow
+
+    window = NetworkManagerWindow(service=service, developer_inspector=developer_inspector)
     window.show()
     try:
         return app.exec()
