@@ -176,3 +176,37 @@ def test_unified_tree_accepts_300_switches_with_14400_ports(app: QApplication) -
     assert len(dialog._parents) == 300
     assert len(dialog._items) == 14_400
     dialog.close()
+
+
+def test_search_filters_by_ap_name_and_preserves_underlying_results(app: QApplication) -> None:
+    dialog = setup_dialog()
+    first = dialog._items[(TARGET.endpoint, "1")]
+    second = dialog._items[(TARGET.endpoint, "2")]
+    dialog.search_input.setText("AP-2")
+    dialog._apply_search_filter()
+    assert first.isHidden()
+    assert not second.isHidden()
+    assert len(dialog._results) == 2
+    dialog.search_input.clear()
+    dialog._apply_search_filter()
+    assert not first.isHidden()
+    assert not second.isHidden()
+    dialog.close()
+
+
+def test_failure_filter_does_not_mark_unqueried_port_as_failure(app: QApplication) -> None:
+    dialog = setup_dialog()
+    dialog._on_result(
+        PoEQueryResult(
+            PoETarget(TARGET, ("2",)), "2", QueryStatus.FAILED,
+            message="synthetic query failed", complete=True,
+        )
+    )
+    dialog.filter_combo.setCurrentIndex(dialog.filter_combo.findData("failed"))
+    dialog._apply_search_filter()
+    assert dialog._items[(TARGET.endpoint, "1")].isHidden()
+    assert not dialog._items[(TARGET.endpoint, "2")].isHidden()
+    dialog.filter_combo.setCurrentIndex(0)
+    dialog._apply_search_filter()
+    assert not dialog._items[(TARGET.endpoint, "1")].isHidden()
+    dialog.close()
