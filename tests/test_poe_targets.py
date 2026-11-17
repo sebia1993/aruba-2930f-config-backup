@@ -101,6 +101,7 @@ def test_target_limits_apply_after_merge() -> None:
     with pytest.raises(ValueError, match="14,400"):
         merge_targets([*full, make_target("192.0.2.38", 22, remainder + ",193")])
 
+
 def test_direct_target_construction_enforces_interface_and_port_safety() -> None:
     with pytest.raises(ValueError):
         PoETarget(DeviceTarget("192.0.2.1"), ("all",))
