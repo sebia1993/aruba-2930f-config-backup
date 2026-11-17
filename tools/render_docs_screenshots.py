@@ -314,6 +314,7 @@ def _save_network_manager(output: Path) -> None:
             True,
             "Delivering",
             watts,
+            "SHA256:documentation-demo",
         )
         manager.port_page._apply_result(
             PoEQueryResult(
