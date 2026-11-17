@@ -1226,12 +1226,12 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 PowerCyclePhase.VERIFY_ON: "PoE 복구 확인",
                 PowerCyclePhase.INTERRUPTED: "중단 상태 확인",
             }
-            self.quick_cycle_button.setText(
-                short_labels.get(phase, "PoE 재가동…")
-            )
+            self.quick_cycle_button.setText(short_labels.get(phase, "PoE 재가동…"))
             self.quick_cycle_button.setEnabled(
                 not self.is_busy
-                and (active or phase is PowerCyclePhase.INTERRUPTED or bool(self._checked_port_keys))
+                and (
+                    active or phase is PowerCyclePhase.INTERRUPTED or bool(self._checked_port_keys)
+                )
             )
         if session is None:
             self.cycle_status.setText(
