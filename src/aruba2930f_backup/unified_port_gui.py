@@ -727,15 +727,17 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         parent_layout.insertWidget(parent_layout.count() - 2, group)
 
     def _build_quick_bar(self) -> None:
-        """Pinned OFF/ON/cycle actions, all using the existing approval engine."""
+        """Pinned fast controls; backend trust and state checks are unchanged."""
         self.quick_action_bar = QFrame(self)
         self.quick_action_bar.setObjectName("poeQuickActionBar")
         self.quick_action_bar.setStyleSheet(
             "QFrame#poeQuickActionBar { border: 1px solid palette(mid); "
             "border-radius: 7px; background: palette(base); }"
         )
-        layout = QHBoxLayout(self.quick_action_bar)
-        layout.setContentsMargins(9, 7, 9, 7)
+        vertical = QVBoxLayout(self.quick_action_bar)
+        vertical.setContentsMargins(9, 7, 9, 7)
+        vertical.setSpacing(5)
+        layout = QHBoxLayout()
         layout.setSpacing(8)
         self.quick_summary = QLabel("체크 0개 · 작업 대상을 선택하세요.", self.quick_action_bar)
         self.quick_summary.setObjectName("poeQuickSummary")
@@ -764,8 +766,46 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.quick_off_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_OFF))
         self.quick_on_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_ON))
         self.quick_cycle_button.clicked.connect(self._quick_cycle)
+        vertical.addLayout(layout)
+
+        # Keep stop, progress and the last result visible without expanding
+        # the legacy advanced-plan console.
+        self.quick_job_widget = QWidget(self.quick_action_bar)
+        self.quick_job_widget.setObjectName("poeQuickJobStatus")
+        job_layout = QHBoxLayout(self.quick_job_widget)
+        job_layout.setContentsMargins(0, 0, 0, 0)
+        job_layout.setSpacing(7)
+        self.quick_job_progress = QProgressBar(self.quick_job_widget)
+        self.quick_job_progress.setObjectName("poeQuickJobProgress")
+        self.quick_job_progress.setMaximumWidth(120)
+        job_layout.addWidget(self.quick_job_progress)
+        self.quick_job_status = QLabel("작업 대기", self.quick_job_widget)
+        self.quick_job_status.setObjectName("poeQuickJobText")
+        self.quick_job_status.setWordWrap(True)
+        job_layout.addWidget(self.quick_job_status, 1)
+        self.quick_stop_button = QPushButton("작업 중지", self.quick_job_widget)
+        self.quick_stop_button.setObjectName("poeQuickJobStop")
+        self.quick_stop_button.clicked.connect(self._cancel_batch)
+        self.quick_stop_button.setEnabled(False)
+        job_layout.addWidget(self.quick_stop_button)
+        vertical.addWidget(self.quick_job_widget)
+        self.quick_job_widget.setVisible(False)
         root = cast(QVBoxLayout, self.layout())
         root.insertWidget(root.count() - 2, self.quick_action_bar)
+
+    def _sync_quick_job(self) -> None:
+        """Mirror the existing job status with a visible stop control."""
+        if not hasattr(self, "quick_job_widget"):
+            return
+        self.quick_job_progress.setRange(
+            self.batch_progress.minimum(), self.batch_progress.maximum()
+        )
+        self.quick_job_progress.setValue(self.batch_progress.value())
+        self.quick_job_status.setText(self.batch_status.text())
+        worker = self._batch_worker
+        self.quick_stop_button.setEnabled(
+            worker is not None and not worker.cancel_event.is_set()
+        )
 
     def _quick_poe_action(self, action: PortAction) -> None:
         """Direct PoE action: construct the internal frozen plan transparently."""
@@ -801,6 +841,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         super()._set_busy(busy)
         if hasattr(self, "plan_button"):
             self._update_control_buttons()
+        self._sync_quick_job()
 
     def _invalidate(self) -> None:
         cycle = getattr(self, "_cycle", None)
@@ -1006,6 +1047,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.batch_progress.setRange(0, len(plan.targets))
         self.batch_progress.setValue(0)
         self.batch_status.setText(f"일괄 작업 실행 중 · 0/{len(plan.targets)}개 완료")
+        self.quick_job_widget.setVisible(True)
         self._set_busy(True)
         thread.start()
 
@@ -1041,6 +1083,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             f"일괄 작업: {self._batch_count}/{len(self._batch_plan.targets) if self._batch_plan else '?'}개 처리 · "
             f"현재 결과 {result.status.value} · {result.message}"
         )
+        self._sync_quick_job()
 
     @Slot(object)
     def _batch_completed(self, value: object) -> None:
@@ -1062,6 +1105,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             f"미실행 {counts['paused'] + counts['cancelled']}\n"
             f"작업 이력: {result.journal_path}"
         )
+        self._sync_quick_job()
         self._batch_plan = None
 
     @Slot(str)
@@ -1093,6 +1137,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             "실제 스위치 상태를 수동 재조회하세요. 자동 재실행하지 않습니다."
         )
         self._batch_plan = None
+        self._sync_quick_job()
         self.plan_preview.setText("일괄 제어 실패 · 대상 포트를 다시 조회한 뒤 계획을 작성하세요.")
         self._update_control_buttons()
         if self.search_input.text() or self.filter_combo.currentData() != "all":
@@ -1123,6 +1168,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 "일괄 작업 중지 요청 · 실행 중 명령이 끝나면 남은 대상은 수행하지 않습니다."
             )
             self.cancel_batch_button.setEnabled(False)
+            self._sync_quick_job()
 
     @Slot()
     def _batch_thread_finished(self) -> None:
@@ -1136,6 +1182,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             thread.deleteLater()
         self._set_busy(False)
         self._update_cycle_controls()
+        self._sync_quick_job()
         if self._close_after_batch:
             self._close_after_batch = False
             self.reject()
