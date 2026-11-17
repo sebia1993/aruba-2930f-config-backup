@@ -803,9 +803,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.quick_job_progress.setValue(self.batch_progress.value())
         self.quick_job_status.setText(self.batch_status.text())
         worker = self._batch_worker
-        self.quick_stop_button.setEnabled(
-            worker is not None and not worker.cancel_event.is_set()
-        )
+        self.quick_stop_button.setEnabled(worker is not None and not worker.cancel_event.is_set())
 
     def _quick_poe_action(self, action: PortAction) -> None:
         """Direct PoE action: construct the internal frozen plan transparently."""
