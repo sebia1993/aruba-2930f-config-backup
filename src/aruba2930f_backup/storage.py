@@ -12,6 +12,7 @@ import os
 import re
 import stat
 import subprocess
+import tempfile
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -155,11 +156,19 @@ def write_config_atomic(
 
     final_path = Path(destination)
     final_path.parent.mkdir(parents=True, exist_ok=True)
-    partial_path = final_path.with_name(f"{final_path.name}.part")
     payload = normalize_config_text(config_text).encode("utf-8")
-
+    # A fixed .part name may already be owned by another writer or be a link.
+    # Create a fresh exclusive sibling file while preserving the final TXT name.
+    stream = tempfile.NamedTemporaryFile(
+        mode="wb",
+        prefix=f"{final_path.name}.",
+        suffix=".part",
+        dir=final_path.parent,
+        delete=False,
+    )
+    partial_path = Path(stream.name)
     try:
-        with partial_path.open("wb") as stream:
+        with stream:
             if os.name != "nt":
                 os.chmod(partial_path, 0o600)
             stream.write(payload)

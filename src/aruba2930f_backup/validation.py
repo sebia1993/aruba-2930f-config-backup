@@ -122,7 +122,14 @@ def validate_cli_response(command: str, output: str) -> None:
             ErrorCode.COMMAND_REJECTED,
             f"{command} returned an invalid response.",
         )
-    if _CLI_ERROR_RE.search(_ANSI_RE.sub("", output)):
+    clean = _ANSI_RE.sub("", output)
+    if command.strip().casefold() == "show running-config":
+        # MOTD is arbitrary operator-written text, not CLI error output.
+        # Only hide fully delimited banners; malformed output stays observable.
+        outside = _config_lines_outside_banners(clean)
+        if outside is not None:
+            clean = "\n".join(outside)
+    if _CLI_ERROR_RE.search(clean):
         raise CollectionFailure(
             ErrorCode.COMMAND_REJECTED,
             f"The device rejected '{command}'.",
@@ -229,7 +236,12 @@ def hostname_from_running_config(config_text: str) -> str | None:
     """
 
     candidates: list[str] = []
-    for line in _ANSI_RE.sub("", config_text or "").splitlines():
+    # An unindented "hostname" inside a login banner is not a config directive.
+    # On invalid/unclosed banners the safe result is no hostname metadata.
+    outside = _config_lines_outside_banners(_ANSI_RE.sub("", config_text or ""))
+    if outside is None:
+        return None
+    for line in outside:
         match = _RUNNING_CONFIG_HOSTNAME_RE.fullmatch(line)
         if match is None:
             continue
@@ -305,42 +317,48 @@ def normalize_config_text(output: str) -> str:
     return text.rstrip("\n").replace("\n", "\r\n") + "\r\n"
 
 
-def _config_banners_closed(text: str) -> bool:
-    """Check opaque banner boundaries without interpreting banner text as CLI.
+def _config_lines_outside_banners(text: str) -> tuple[str, ...] | None:
+    """Return true configuration lines, or None for an uncertain MOTD boundary.
 
-    AOS-S 16.11 Basic Operation Guide, banner motd (pp. 12-14), documents
-    single-character delimiters, inline/multiline text, and backslash escapes:
-    https://arubanetworking.hpe.com/techdocs/AOS-Switch/16.11/
-    Aruba%20Basic%20Operation%20Guide%20for%20AOS-S%2016.11.pdf
-    This is a completeness guard, not a general running-config grammar.
+    The ArubaOS-Switch MOTD delimiter is one character and may close inline or
+    on a later line; an escaped delimiter is literal. Never promote banner
+    content to a hostname or interpret its text as a command rejection.
     """
-
+    outside: list[str] = []
     delimiter: str | None = None
-    escaped = False
-    for line in text.split("\n"):
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    for line in normalized.split("\n"):
         if delimiter is None:
-            match = re.fullmatch(r"[ \t]*banner[ \t]+motd(?:[ \t]+(.*))?", line, re.IGNORECASE)
+            match = re.fullmatch(
+                r"[ \t]*banner[ \t]+motd(?:[ \t]+(.*))?", line, re.IGNORECASE
+            )
             if match is None:
+                outside.append(line)
                 continue
             value = (match.group(1) or "").lstrip(" \t")
             if not value:
-                return False
-            delimiter, line = value[0], value[1:]
-        for index, character in enumerate(line):
+                return None
+            delimiter, value = value[0], value[1:]
+        else:
+            value = line
+        escaped = False
+        for index, character in enumerate(value):
             if escaped:
                 escaped = False
-            elif character == delimiter:
-                # Any further non-whitespace text leaves the boundary uncertain.
-                if line[index + 1 :].strip():
-                    return False
-                delimiter = None
-                break
             elif character == "\\":
                 escaped = True
-        # A literal newline separates lines; it cannot escape the next character.
-        escaped = False
-    return delimiter is None
+            elif character == delimiter:
+                if value[index + 1 :].strip():
+                    return None
+                delimiter = None
+                break
+        # An escape cannot continue across a literal output line boundary.
+    return tuple(outside) if delimiter is None else None
 
+
+def _config_banners_closed(text: str) -> bool:
+    """Reject incomplete or ambiguous AOS-S MOTD banner delimiters."""
+    return _config_lines_outside_banners(text) is not None
 
 def _recognized_skus(text: str) -> set[str]:
     reported = _all_skus(text)
