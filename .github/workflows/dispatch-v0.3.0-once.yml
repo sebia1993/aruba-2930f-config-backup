@@ -1,0 +1,50 @@
+# One-time dispatcher for the approved v0.3.0 release.
+# Runs on its isolated branch only; actual tag/release permissions and checks
+# remain in the existing Prepare release and Release workflows on main.
+name: Dispatch approved v0.3.0 release once
+on:
+  push:
+    branches:
+      - ops/dispatch-v0.3.0-once
+    paths:
+      - .github/workflows/dispatch-v0.3.0-once.yml
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: dispatch-approved-v0.3.0-once
+  cancel-in-progress: false
+
+jobs:
+  request:
+    if: >-
+      github.repository == 'sebia1993/aruba-2930f-config-backup' &&
+      github.ref == 'refs/heads/ops/dispatch-v0.3.0-once' &&
+      github.event.head_commit.message == 'chore: request verified v0.3.0 release once'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EXPECTED_MAIN_SHA: cd62fe1b1c0b02efb199f5aea3fe9b50a7fdbf53
+    steps:
+      - name: Require the exact approved main SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$current" != "$EXPECTED_MAIN_SHA" ]]; then
+            echo "::error::Main has moved since PR #30 was verified; refusing dispatch."
+            exit 1
+          fi
+      - name: Dispatch existing reviewed Prepare release workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/prepare-release.yml/dispatches" \
+            --raw-field ref=main \
+            --raw-field 'inputs[release_tag]=v0.3.0' \
+            --raw-field "inputs[expected_main_sha]=$EXPECTED_MAIN_SHA"
+          echo "Requested reviewed Prepare release on main for v0.3.0."
