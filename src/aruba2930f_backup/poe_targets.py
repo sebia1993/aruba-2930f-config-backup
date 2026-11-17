@@ -59,13 +59,9 @@ def merge_targets(targets: Sequence[PoETarget]) -> tuple[PoETarget, ...]:
         if previous is not None:
             if previous.label and group.label and previous.label != group.label:
                 raise ValueError("같은 접속 대상의 이름이 서로 다릅니다.")
-            merged_interfaces = tuple(
-                dict.fromkeys((*previous.interfaces, *group.interfaces))
-            )
+            merged_interfaces = tuple(dict.fromkeys((*previous.interfaces, *group.interfaces)))
             total_interfaces += len(merged_interfaces) - len(previous.interfaces)
-            group = PoETarget(
-                group.target, merged_interfaces, previous.label or group.label
-            )
+            group = PoETarget(group.target, merged_interfaces, previous.label or group.label)
         else:
             total_interfaces += len(group.interfaces)
         merged[group.target] = group
