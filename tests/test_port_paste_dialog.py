@@ -87,3 +87,20 @@ def test_append_with_invalid_existing_requires_replace_not_silent_discard(
     dialog._update_preview()
     assert dialog.apply_button.isEnabled()
     dialog.close()
+
+
+def test_enlarged_paste_window_and_complete_large_preview(app: QApplication) -> None:
+    from PySide6.QtCore import Qt
+
+    dialog = PortTargetPasteDialog(existing_targets=lambda: ())
+    assert dialog.width() >= 1000
+    assert dialog.paste_splitter.orientation() == Qt.Orientation.Horizontal
+    assert dialog.pasted_text.parentWidget() is not None
+    source = "\n".join(f"192.0.2.{ip}\t12" for ip in range(1, 61))
+    dialog.pasted_text.setPlainText(source)
+    dialog._update_preview()
+    assert dialog.apply_button.isEnabled()
+    assert "스위치 60대" in dialog.preview_status.text()
+    assert "192.0.2.60:22" in dialog.preview_table.toPlainText()
+    assert "나머지" not in dialog.preview_table.toPlainText()
+    dialog.close()
