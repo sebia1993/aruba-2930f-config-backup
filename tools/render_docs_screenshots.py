@@ -291,10 +291,7 @@ def _save_network_manager(output: Path) -> None:
     manager = NetworkManagerWindow()
     manager.resize(1320, 840)
     manager.backup_page.ip_input.setPlainText("192.0.2.10\n192.0.2.20")
-    # The real GUI must show one configured account in the global header,
-    # never duplicate credentials in the backup or port tabs.
-    manager._ssh_credentials.configure("demo-operator", "documentation-only")
-    manager._refresh_ssh_session_status()
+    manager.backup_page.username_input.setText("documentation-only")
     manager.show()
     app.processEvents()
     if not manager.grab().save(str(output / "manager-home.png"), "PNG"):
@@ -350,6 +347,19 @@ def _save_network_manager(output: Path) -> None:
     app.processEvents()
     if not manager.grab().save(str(output / "manager-ports.png"), "PNG"):
         raise RuntimeError("통합 포트 관리 화면 PNG 저장에 실패했습니다.")
+    # A안 expanded input preserves the result rows while giving the editor
+    # a draggable vertical work area instead of a narrow fixed-height form.
+    manager.port_target_toggle.click()
+    app.processEvents()
+    if not manager.grab().save(str(output / "manager-ports-input-expanded.png"), "PNG"):
+        raise RuntimeError("확장된 포트 입력 화면 PNG 저장에 실패했습니다.")
+    manager.port_input_focus_button.click()
+    app.processEvents()
+    if not manager.grab().save(str(output / "manager-ports-input-focus.png"), "PNG"):
+        raise RuntimeError("포트 입력 집중 모드 PNG 저장에 실패했습니다.")
+    manager.port_input_focus_button.click()
+    manager.port_target_toggle.click()
+    app.processEvents()
     manager.port_page.result_tree.setCurrentItem(
         manager.port_page._items[(group.target.endpoint, "24")]
     )
@@ -384,6 +394,21 @@ def _save_network_manager(output: Path) -> None:
     if not manager.grab().save(str(output / "manager-ports-filter-hidden.png"), "PNG"):
         raise RuntimeError("검색 중 숨긴 체크 포트 화면 PNG 저장에 실패했습니다.")
     manager.close()
+    app.processEvents()
+
+    # The real Excel review dialog shows every validated switch in two panes.
+    from aruba2930f_backup.port_paste_dialog import PortTargetPasteDialog
+
+    paste = PortTargetPasteDialog(existing_targets=lambda: ())
+    paste.pasted_text.setPlainText(
+        "스위치 IP\t포트\n192.0.2.10\t12\n192.0.2.10\t24\n192.0.2.20\t1/12,1/24\n192.0.2.30\t9"
+    )
+    paste._update_preview()
+    paste.show()
+    app.processEvents()
+    if not paste.grab().save(str(output / "manager-ports-paste-expanded.png"), "PNG"):
+        raise RuntimeError("확장된 엑셀 붙여넣기 검증 화면 PNG 저장에 실패했습니다.")
+    paste.close()
     app.processEvents()
 
 

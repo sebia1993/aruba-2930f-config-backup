@@ -87,3 +87,39 @@ def test_append_with_invalid_existing_requires_replace_not_silent_discard(
     dialog._update_preview()
     assert dialog.apply_button.isEnabled()
     dialog.close()
+
+
+def test_full_preview_shows_more_than_40_switches_and_can_resize(
+    app: QApplication,
+) -> None:
+    rows = "\n".join(f"192.0.2.{index}\t{index % 48 + 1}" for index in range(1, 66))
+    dialog = PortTargetPasteDialog(existing_targets=lambda: ())
+    assert dialog.width() >= 1000
+    assert dialog.paste_splitter.count() == 2
+    dialog.pasted_text.setPlainText(rows)
+    dialog._update_preview()
+
+    assert dialog.apply_button.isEnabled()
+    assert dialog.preview_table.rowCount() == 65
+    assert dialog.preview_table.item(64, 0).text() == "192.0.2.65"
+    assert "스위치 65대" in dialog.preview_status.text()
+    dialog.close()
+
+
+def test_editing_clears_stale_preview_and_fails_closed(
+    app: QApplication,
+) -> None:
+    dialog = PortTargetPasteDialog(existing_targets=lambda: ())
+    dialog.pasted_text.setPlainText("192.0.2.10\t12")
+    dialog._update_preview()
+    assert dialog.preview_table.rowCount() == 1
+    assert dialog.apply_button.isEnabled()
+
+    dialog.pasted_text.setPlainText("192.0.2.10\tall")
+    assert dialog.preview_table.rowCount() == 0
+    assert not dialog.apply_button.isEnabled()
+    dialog._update_preview()
+    assert dialog.preview_table.rowCount() == 0
+    assert not dialog.apply_button.isEnabled()
+    assert dialog.proposed_targets is None
+    dialog.close()

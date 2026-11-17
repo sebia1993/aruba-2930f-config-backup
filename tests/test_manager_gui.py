@@ -81,12 +81,19 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     window = make_window(app)
     assert window.navigate(2)
     port = window.port_page
-    # No side panel steals width from the switch/port status table.
+    # The full-width results occupy the lower half of a resizable vertical stack.
     assert port.findChild(QSplitter, "portResultDetailSplitter") is None
     assert port.findChild(QScrollArea, "portDetailsAndControl") is None
+    stack = port.findChild(QSplitter, "portInputResultSplitter")
+    assert stack is window.port_input_result_splitter
+    assert stack.count() == 2
+    assert stack.widget(0) is window.port_target_scroll
+    assert stack.widget(1) is window.port_result_panel
     assert port.result_tree.isVisible()
-    assert port.result_tree.parentWidget() is port
+    assert port.result_tree.parentWidget() is window.port_result_panel
     assert port.result_tree.width() >= 700
+    assert window.port_target_scroll.maximumHeight() > 275
+    assert port.targets_table.maximumHeight() > 150
     assert port.search_input.isVisible()
     assert port.findChild(QScrollArea, "poeDetailsScroll").isHidden()
     assert not port.action_combo.isVisible()
@@ -100,6 +107,16 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     assert port.targets_table.isVisible()
     assert not port.username_input.isVisible()
     assert not port.password_input.isVisible()
+    # The optional focus view expands input without discarding query data.
+    assert window.port_input_focus_button.isVisible()
+    window.port_input_focus_button.click()
+    assert port.targets_table.isVisible()
+    assert not port.result_tree.isVisible()
+    window.port_input_focus_button.click()
+    assert port.result_tree.isVisible()
+    window.port_target_toggle.click()
+    assert not window.port_target_scroll.isVisible()
+    assert port.result_tree.isVisible()
     assert not window.port_advanced_scroll.isVisible()
     window.port_advanced_toggle.click()
     assert window.port_advanced_scroll.isVisible()
@@ -108,6 +125,29 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     window.port_advanced_toggle.click()
     assert not window.port_advanced_scroll.isVisible()
     assert not port.run_button.isVisible()
+    window.close()
+
+
+def test_port_input_focus_preserves_checked_port_state(
+    app: QApplication,
+) -> None:
+    window = make_window(app)
+    assert window.navigate(2)
+    port = window.port_page
+    group = PoETarget(DeviceTarget("192.0.2.10", 22), ("12", "24"))
+    port._build_results((group,))
+    port._set_checked_keys({(group.target.endpoint, "24")})
+    assert port.result_tree.topLevelItemCount() == 1
+
+    window.port_input_focus_button.click()
+    assert window.port_target_scroll.isVisible()
+    assert not port.result_tree.isVisible()
+    window.port_input_focus_button.click()
+    assert port.result_tree.isVisible()
+    window.port_target_toggle.click()
+    assert not window.port_target_scroll.isVisible()
+    assert port.result_tree.topLevelItemCount() == 1
+    assert (group.target.endpoint, "24") in port._checked_port_keys
     window.close()
 
 
@@ -325,7 +365,7 @@ def test_ssh_account_is_shared_without_copying_passwords_to_feature_views(
 
     # Backup's legacy per-run clear must not revoke the integrated session.
     backup._finalize_completed_run()
-    # Even if a stale legacy input was populated, navigation must not copy it.
+    # A stale hidden backup input must never be copied into the port workspace.
     backup.password_input.setText("stale-legacy-password")
     assert window.navigate(2)
     port = window.port_page
@@ -340,7 +380,9 @@ def test_ssh_account_is_shared_without_copying_passwords_to_feature_views(
 def test_ssh_session_change_revokes_stale_port_rows(app: QApplication) -> None:
     window = make_window(app)
     window._ssh_credentials.configure("first", "first-pass")
-    window.port_page._build_results((PoETarget(DeviceTarget("192.0.2.10"), ("12",)),))
+    window.port_page._build_results(
+        (PoETarget(DeviceTarget("192.0.2.10"), ("12",)),)
+    )
     assert window.port_page.result_tree.topLevelItemCount() == 1
     # Changing account must invalidate old query state, but preserve target input.
     window._ssh_credentials.configure("second", "second-pass")
@@ -377,9 +419,9 @@ def test_ssh_session_controls_reject_changes_during_active_backup(
     window._refresh_ssh_session_status()
     notices: list[str] = []
     monkeypatch.setattr(
-        QMessageBox,
-        "information",
-        lambda _parent, _title, message: notices.append(message) or QMessageBox.StandardButton.Ok,
+        QMessageBox, "information",
+        lambda _parent, _title, message: notices.append(message)
+        or QMessageBox.StandardButton.Ok,
     )
     fake_thread = QThread(window)
     window.backup_page._thread = fake_thread
@@ -428,7 +470,9 @@ def test_common_ssh_account_dialog_is_shared_and_reprompts_after_clear(
     assert window.ssh_session_status.text().startswith("SSH 계정: network-operator")
     assert "shared-secret" not in window.ssh_session_status.text()
 
-    window.port_page._build_results((PoETarget(DeviceTarget("192.0.2.10"), ("12",)),))
+    window.port_page._build_results(
+        (PoETarget(DeviceTarget("192.0.2.10"), ("12",)),)
+    )
     assert window.port_page.result_tree.topLevelItemCount() == 1
     assert window._configure_ssh_session()
     assert calls == ["", "network-operator"]
