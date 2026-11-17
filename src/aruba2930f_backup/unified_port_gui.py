@@ -210,7 +210,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.setWindowTitle("Aruba 2930F · 포트 통합 관리")
         self.resize(1200, 920)
         self.result_tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.result_tree.itemSelectionChanged.connect(self._update_control_buttons)
+        self.result_tree.itemSelectionChanged.connect(self._selection_changed_for_batch)
         self._build_search_panel()
         self._build_control_panel()
         self._set_busy(False)
@@ -243,12 +243,24 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self._filter_timer.setSingleShot(True)
         self._filter_timer.setInterval(180)
         self._filter_timer.timeout.connect(self._apply_search_filter)
-        self.search_input.textChanged.connect(lambda _value: self._filter_timer.start())
-        self.filter_combo.currentIndexChanged.connect(
-            lambda _index: self._filter_timer.start()
-        )
+        self.search_input.textChanged.connect(self._filter_changed)
+        self.filter_combo.currentIndexChanged.connect(self._filter_changed)
         layout = cast(QVBoxLayout, self.layout())
         layout.insertWidget(layout.indexOf(self.result_tree), container)
+
+    def _clear_batch_plan(self, message: str) -> None:
+        if self._batch_plan is not None and not self.is_busy:
+            self._batch_plan = None
+            self.plan_preview.setText(message)
+        if hasattr(self, "plan_button"):
+            self._update_control_buttons()
+
+    def _selection_changed_for_batch(self) -> None:
+        self._clear_batch_plan("포트 선택이 변경되었습니다. 작업 계획을 다시 작성하세요.")
+
+    def _filter_changed(self, _value: object = None) -> None:
+        self._clear_batch_plan("검색·필터가 변경되었습니다. 작업 계획을 다시 작성하세요.")
+        self._filter_timer.start()
 
     @Slot()
     def _apply_search_filter(self) -> None:
@@ -298,6 +310,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 else:
                     matched_status = True
                 shown = matched_term and matched_status
+                if not shown and item.isSelected():
+                    item.setSelected(False)
                 item.setHidden(not shown)
                 visible = visible or shown
             parent.setHidden(not visible)
@@ -326,6 +340,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         for action, label in ACTION_TITLES.items():
             self.action_combo.addItem(label, action.value)
         row.addWidget(self.action_combo)
+        self.action_combo.currentIndexChanged.connect(self._selection_changed_for_batch)
         self.plan_button = QPushButton("선택한 포트로 작업 계획", group)
         self.plan_button.setObjectName("unifiedBatchPrepare")
         self.plan_button.clicked.connect(self._prepare_batch)
@@ -389,6 +404,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
     def _selected_rows(self) -> tuple[PoEQueryResult, ...]:
         selected: set[tuple[str, str]] = set()
         for item in self.result_tree.selectedItems():
+            if item.isHidden() or (item.parent() is not None and item.parent().isHidden()):
+                continue
             key = cast(tuple[str, str] | None, item.data(0, Qt.ItemDataRole.UserRole))
             if key is not None and key[1]:
                 selected.add(key)
@@ -412,6 +429,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.cancel_batch_button.setEnabled(self._batch_thread is not None)
         self.action_combo.setEnabled(not busy)
         self.history_button.setEnabled(not busy)
+        self.search_input.setEnabled(not busy)
+        self.filter_combo.setEnabled(not busy)
 
     @Slot()
     def _prepare_batch(self) -> None:
