@@ -321,13 +321,20 @@ def test_running_config_cli_error_words_inside_complete_banner_are_literal(banne
 
 
 def test_running_config_hostname_ignores_unindented_banner_content() -> None:
-    assert hostname_from_running_config(
-        "Running configuration:\nbanner motd ^\nhostname forged-device\n^\n"
-    ) is None
-    assert hostname_from_running_config(
-        "hostname legitimate\nbanner motd ^\nhostname forged-device\n^\n"
-    ) == "legitimate"
-    assert hostname_from_running_config(
-        'banner motd "hostname forged-device"\nhostname legitimate\n'
-    ) == "legitimate"
+    assert (
+        hostname_from_running_config(
+            "Running configuration:\nbanner motd ^\nhostname forged-device\n^\n"
+        )
+        is None
+    )
+    assert (
+        hostname_from_running_config(
+            "hostname legitimate\nbanner motd ^\nhostname forged-device\n^\n"
+        )
+        == "legitimate"
+    )
+    assert (
+        hostname_from_running_config('banner motd "hostname forged-device"\nhostname legitimate\n')
+        == "legitimate"
+    )
 

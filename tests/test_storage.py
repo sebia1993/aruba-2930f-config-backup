@@ -280,10 +280,9 @@ def test_backup_write_refuses_to_follow_preexisting_partial_symlink(tmp_path: Pa
     link = tmp_path / "switch.txt.part"
     try:
         link.symlink_to(sentinel)
-    except (OSError, NotImplementedError):
+    except OSError, NotImplementedError:
         pytest.skip("Test filesystem cannot create symbolic links")
     result = write_config_atomic(tmp_path / "switch.txt", "hostname edge\n")
     assert result.path.read_bytes() == b"hostname edge\r\n"
     assert sentinel.read_bytes() == b"protected"
     assert link.is_symlink()
-
