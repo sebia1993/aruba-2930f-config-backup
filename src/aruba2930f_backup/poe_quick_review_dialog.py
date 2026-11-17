@@ -101,6 +101,19 @@ class QuickPoEReviewDialog(QDialog):
         self.exclusion_ack.toggled.connect(self._update_approval)
         layout.addWidget(self.exclusion_ack)
 
+        # Quick actions intentionally have no repeated 10-port popups. For
+        # larger plans require an explicit second acknowledgment *in this
+        # single target-review dialog* before automatic chunk continuation.
+        self.large_action_ack = QCheckBox(
+            f"{len(ready)}개 포트가 순차적으로 실행되며 10개마다 재확인 창이 "
+            "나타나지 않는다는 점을 확인했습니다.",
+            self,
+        )
+        self.large_action_ack.setObjectName("quickPoEAcknowledgeLargeAction")
+        self.large_action_ack.setVisible(len(ready) > 10)
+        self.large_action_ack.toggled.connect(self._update_approval)
+        layout.addWidget(self.large_action_ack)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
         self.approve_button = QPushButton(f"확인 후 {len(ready)}포트 {title} 실행", self)
         self.approve_button.setObjectName("quickPoEApprove")
@@ -114,7 +127,9 @@ class QuickPoEReviewDialog(QDialog):
 
     def _update_approval(self, _checked: bool = False) -> None:
         self.approve_button.setEnabled(
-            self._ready_count > 0 and (self._blocked_count == 0 or self.exclusion_ack.isChecked())
+            self._ready_count > 0
+            and (self._blocked_count == 0 or self.exclusion_ack.isChecked())
+            and (self._ready_count <= 10 or self.large_action_ack.isChecked())
         )
 
     def _approve(self) -> None:
