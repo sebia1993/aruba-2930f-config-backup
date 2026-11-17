@@ -228,7 +228,7 @@ def test_report_fsync_completes_before_result_is_published(
     def observe(fd: int) -> None:
         observations.append(
             (
-                (tmp_path / "result.xlsx.part").is_file(),
+                len(list(tmp_path.glob(".result.xlsx.*.part"))) == 1,
                 (tmp_path / "result.xlsx").exists(),
                 os.fstat(fd).st_size,
             )
@@ -243,6 +243,7 @@ def test_report_fsync_completes_before_result_is_published(
     assert observations[0][0] is True
     assert observations[0][1] is False
     assert observations[0][2] > 0
+    assert not list(tmp_path.glob(".result.xlsx.*.part"))
     assert not (tmp_path / "result.xlsx.part").exists()
     workbook = load_workbook(result, read_only=True)
     assert workbook.sheetnames == ["Summary", "Devices"]
@@ -263,6 +264,7 @@ def test_report_fsync_failure_never_replaces_existing_result(
         write_result_workbook(tmp_path, [{"status": "success"}])
 
     assert destination.read_bytes() == b"already-published-report"
+    assert not list(tmp_path.glob(".result.xlsx.*.part"))
     assert not (tmp_path / "result.xlsx.part").exists()
 
 
