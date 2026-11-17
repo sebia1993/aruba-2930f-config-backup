@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -38,6 +39,8 @@ from PySide6.QtWidgets import (
 
 from .batch_port_control import BatchControlError, journal_states
 from .gui import MainWindow
+from .models import Credentials
+from .session_credentials import SessionCredentialDialog, SessionCredentialStore
 from .storage import default_output_directory
 from .unified_port_gui import UnifiedPortManagementDialog
 
@@ -172,6 +175,7 @@ class NetworkManagerWindow(QMainWindow):
         self._navigation_buttons: list[QPushButton] = []
         self._page_index = 0
         self._history_paths: dict[int, Path] = {}
+        self._ssh_credentials = SessionCredentialStore()
 
         central = QWidget(self)
         root = QHBoxLayout(central)
@@ -219,6 +223,24 @@ class NetworkManagerWindow(QMainWindow):
         self.page_description = QLabel(content)
         self.page_description.setWordWrap(True)
         content_layout.addWidget(self.page_description)
+
+        # One place to set/revoke SSH credentials, shared across every action.
+        account_row = QHBoxLayout()
+        self.ssh_session_status = QLabel("SSH 계정 미설정", content)
+        self.ssh_session_status.setObjectName("sshSessionStatus")
+        self.ssh_session_status.setTextFormat(Qt.TextFormat.PlainText)
+        account_row.addWidget(self.ssh_session_status, 1)
+        self.ssh_session_button = QPushButton("SSH 계정 설정…", content)
+        self.ssh_session_button.setObjectName("sshSessionConfigure")
+        self.ssh_session_button.clicked.connect(self._configure_ssh_session)
+        account_row.addWidget(self.ssh_session_button)
+        self.ssh_session_clear_button = QPushButton("세션 해제", content)
+        self.ssh_session_clear_button.setObjectName("sshSessionClear")
+        self.ssh_session_clear_button.setEnabled(False)
+        self.ssh_session_clear_button.clicked.connect(self._clear_ssh_session)
+        account_row.addWidget(self.ssh_session_clear_button)
+        content_layout.addLayout(account_row)
+
         self.pages = QStackedWidget(content)
         self.pages.setObjectName("networkManagerPages")
         content_layout.addWidget(self.pages, 1)
@@ -234,12 +256,14 @@ class NetworkManagerWindow(QMainWindow):
         )
         self.backup_page.setWindowFlags(Qt.WindowType.Widget)
         self.backup_page.setMinimumSize(0, 0)
+        self.backup_page.session_credential_provider = self._require_ssh_credentials
         self._layout_backup()
         self.pages.addWidget(self.backup_page)
 
         self.port_page = _EmbeddedPortManagementDialog(self.pages)
         self.port_page.setWindowFlags(Qt.WindowType.Widget)
         self.port_page.setMinimumSize(0, 0)
+        self.port_page.session_credential_provider = self._require_ssh_credentials
         self._layout_port()
         self.pages.addWidget(self.port_page)
 
@@ -320,6 +344,9 @@ class NetworkManagerWindow(QMainWindow):
         settings_layout.addWidget(QLabel("대상 장비 · 접속 · 저장 옵션", settings))
         for group in (target, access, options):
             settings_layout.addWidget(group)
+        # The common SSH account is configured in the global header only.
+        # Existing inputs stay connected for standalone GUI compatibility.
+        access.hide()
         settings_layout.addStretch(1)
         scroll = QScrollArea(central)
         scroll.setObjectName("backupConfigurationScroll")
@@ -421,6 +448,14 @@ class NetworkManagerWindow(QMainWindow):
         target_layout.addWidget(port.advanced_toggle)
         _attach(target_layout, target_action)
         target_layout.addLayout(credential_form)
+        # Standalone PoEQueryDialog retains the form, but this embedded view
+        # never copies or exposes the shared secret in duplicate QLineEdits.
+        for field in (
+            port.username_input,
+            port.password_input,
+            port.enable_password_input,
+        ):
+            credential_form.setRowVisible(field, False)
         target_layout.addStretch(1)
         self.port_target_scroll = QScrollArea(port)
         self.port_target_scroll.setObjectName("portTargetSettings")
@@ -676,6 +711,60 @@ class NetworkManagerWindow(QMainWindow):
         return page
 
     @Slot()
+    def _configure_ssh_session(self) -> bool:
+        if self._is_busy():
+            QMessageBox.information(
+                self, "SSH 계정 변경 불가", "작업 진행 중에는 SSH 계정을 변경할 수 없습니다."
+            )
+            return False
+        dialog = SessionCredentialDialog(self, username=self._ssh_credentials.username or "")
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return False
+            credentials = dialog.take_credentials()
+            if credentials is None:
+                return False
+            was_configured = self._ssh_credentials.configured
+            self._ssh_credentials.configure(
+                credentials.username, credentials.password, credentials.enable_secret
+            )
+            if was_configured:
+                # Account changes must invalidate any previously inspected
+                # switch/port state before further destructive operations.
+                self.port_page._invalidate()
+            self._refresh_ssh_session_status()
+            return True
+        finally:
+            dialog.deleteLater()
+
+    @Slot()
+    def _clear_ssh_session(self) -> None:
+        if self._is_busy():
+            QMessageBox.information(
+                self, "SSH 세션 해제 불가", "작업 진행 중에는 SSH 세션을 해제할 수 없습니다."
+            )
+            return
+        if self._ssh_credentials.configured:
+            self._ssh_credentials.clear()
+            self.port_page._invalidate()
+        self._refresh_ssh_session_status()
+
+    def _require_ssh_credentials(self) -> Credentials:
+        if not self._ssh_credentials.configured and not self._configure_ssh_session():
+            raise ValueError("SSH 공통 계정 설정을 취소했습니다.")
+        return self._ssh_credentials.require()
+
+    def _refresh_ssh_session_status(self) -> None:
+        username = self._ssh_credentials.username
+        self.ssh_session_status.setText(
+            f"SSH 계정: {username} · 현재 실행에만 사용" if username else "SSH 계정 미설정"
+        )
+        self.ssh_session_button.setText("계정 변경…" if username else "SSH 계정 설정…")
+        self.ssh_session_clear_button.setEnabled(
+            username is not None and not self._is_busy()
+        )
+
+    @Slot()
     def _apply_output(self) -> None:
         if self._is_busy():
             QMessageBox.information(self, "저장 위치", "작업 중에는 저장 위치를 바꾸지 마세요.")
@@ -748,7 +837,12 @@ class NetworkManagerWindow(QMainWindow):
         backup = self.backup_page
         self.home_backup_status.setText("컨피그 백업 · " + backup.status_label.text())
         self.home_port_status.setText("포트 통합 관리 · " + self.port_page.status_label.text())
-        if self._is_busy():
+        busy = self._is_busy()
+        self.ssh_session_button.setEnabled(not busy)
+        self.ssh_session_clear_button.setEnabled(
+            self._ssh_credentials.configured and not busy
+        )
+        if busy:
             self.sidebar_status.setText("작업 진행 중 · 현재 화면에서 확인")
         else:
             self.sidebar_status.setText("작업 상태 · 대기")
@@ -768,4 +862,6 @@ class NetworkManagerWindow(QMainWindow):
         self.backup_page.close()
         self.port_page._shell_allows_close = True
         self.port_page.close()
+        self._ssh_credentials.clear()
+        self._refresh_ssh_session_status()
         super().closeEvent(event)
