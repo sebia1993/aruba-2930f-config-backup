@@ -163,7 +163,7 @@ def test_batch_execution_clears_stale_ap_and_power_until_requery(
 
 
 def test_unified_tree_accepts_300_switches_with_14400_ports(app: QApplication) -> None:
-    dialog = UnifiedPortManagementDialog(username="operator", password="fixture")
+    dialog = UnifiedPortManagementDialog(username="operator", password="test-password")
     groups = tuple(
         PoETarget(
             DeviceTarget(
