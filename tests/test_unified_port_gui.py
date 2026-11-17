@@ -44,9 +44,7 @@ def queried(port: str, *, model: str = "AP-535") -> PoEQueryResult:
         13.2,
         "SHA256:test-verified",
     )
-    lldp = LLDPObservation(
-        LLDPStatus.OK, (LLDPNeighbor(system_name=f"AP-{port}", model=model),)
-    )
+    lldp = LLDPObservation(LLDPStatus.OK, (LLDPNeighbor(system_name=f"AP-{port}", model=model),))
     return PoEQueryResult(group, port, QueryStatus.OK, snapshot=snapshot, lldp=lldp)
 
 
@@ -73,9 +71,7 @@ def test_unified_window_shows_one_console_and_multi_selects_ports(app: QApplicat
     first.setSelected(True)
     second.setSelected(True)
     assert len(dialog._selected_rows()) == 2
-    dialog.action_combo.setCurrentIndex(
-        dialog.action_combo.findData(PortAction.POE_OFF.value)
-    )
+    dialog.action_combo.setCurrentIndex(dialog.action_combo.findData(PortAction.POE_OFF.value))
     dialog._prepare_batch()
     assert dialog._batch_plan is not None
     assert len(dialog._batch_plan.targets) == 2
@@ -106,9 +102,7 @@ def test_destructive_batch_refuses_non_ap_neighbor(
     second = dialog._items[(TARGET.endpoint, "2")]
     dialog.result_tree.setCurrentItem(second)
     second.setSelected(True)
-    dialog.action_combo.setCurrentIndex(
-        dialog.action_combo.findData(PortAction.DISABLE.value)
-    )
+    dialog.action_combo.setCurrentIndex(dialog.action_combo.findData(PortAction.DISABLE.value))
     shown: list[str] = []
     monkeypatch.setattr(
         QMessageBox,
@@ -136,8 +130,7 @@ class OfflineBatch:
 
         assert isinstance(plan, BatchPlan)
         results = tuple(
-            BatchResult(item, BatchStatus.VERIFIED, "설정 변경 확인")
-            for item in plan.targets
+            BatchResult(item, BatchStatus.VERIFIED, "설정 변경 확인") for item in plan.targets
         )
         if callable(on_result):
             for index, value in enumerate(results):
@@ -153,9 +146,7 @@ def test_batch_execution_clears_stale_ap_and_power_until_requery(
     dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
     dialog._prepare_batch()
     assert dialog._batch_plan is not None
-    monkeypatch.setattr(
-        BatchConfirmationDialog, "exec", lambda _self: QDialog.DialogCode.Accepted
-    )
+    monkeypatch.setattr(BatchConfirmationDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
     dialog._run_batch()
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and dialog._batch_thread is not None:
