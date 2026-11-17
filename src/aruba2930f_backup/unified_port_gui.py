@@ -711,15 +711,16 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.cycle_button.setToolTip(
             "OFF와 ON을 자동 연속 실행하지 않습니다. 각 단계는 별도로 승인합니다."
         )
-        self.cycle_button.clicked.connect(self._cycle_next)
-        layout.addWidget(self.cycle_button)
+        # Preserve the internal state-machine interface for compatibility,
+        # but remove the redundant restart action from the operator UI.
+        self.cycle_button.hide()
         self.cycle_status = QLabel(
             "선택 포트를 OFF → 상태 재조회 → 별도 승인 후 ON → 복구 재조회합니다.",
             group,
         )
         self.cycle_status.setObjectName("unifiedPowerCycleStatus")
         self.cycle_status.setWordWrap(True)
-        layout.addWidget(self.cycle_status)
+        self.cycle_status.hide()
         self.batch_progress = QProgressBar(group)
         self.batch_progress.setObjectName("unifiedBatchProgress")
         self.batch_progress.setRange(0, 100)
@@ -755,11 +756,14 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         layout.addWidget(self.quick_summary, 1)
         self.quick_off_button = QPushButton("PoE OFF 즉시", self.quick_action_bar)
         self.quick_on_button = QPushButton("PoE ON 즉시", self.quick_action_bar)
+        # Do not offer a combined OFF→ON action: operators choose OFF and ON
+        # separately. Keep the hidden Qt field for compatible internal tests.
         self.quick_cycle_button = QPushButton("PoE 재가동", self.quick_action_bar)
+        self.quick_cycle_button.setObjectName("poeQuickCycle")
+        self.quick_cycle_button.hide()
         for button, name in (
             (self.quick_off_button, "poeQuickOff"),
             (self.quick_on_button, "poeQuickOn"),
-            (self.quick_cycle_button, "poeQuickCycle"),
         ):
             button.setObjectName(name)
             button.setMinimumHeight(38)
@@ -774,7 +778,6 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         )
         self.quick_off_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_OFF))
         self.quick_on_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_ON))
-        self.quick_cycle_button.clicked.connect(self._quick_cycle)
         vertical.addLayout(layout)
 
         # Keep stop, progress and the last result visible without expanding
