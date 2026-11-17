@@ -49,7 +49,7 @@ def row(
     )
     lldp = LLDPObservation(
         LLDPStatus.OK,
-        (LLDPNeighbor(system_name=f"AP-{port}", model=connected_model),) if neighbor else (),
+        (LLDPNeighbor(system_name=f"AP-{port}", model=connected_model, chassis_id=f"chassis-{port}", port_id=f"eth-{port}"),) if neighbor else (),
     )
     return PoEQueryResult(
         PoETarget(SWITCH, (port,)),
@@ -88,8 +88,11 @@ class FakeControl:
         credentials: Credentials,
         *,
         confirmation: str,
+        expected_lldp_identity: tuple[str, str] | None = None,
     ) -> PortOperationResult:
         assert credentials is CREDS
+        if action in (PortAction.POE_OFF, PortAction.DISABLE):
+            assert expected_lldp_identity == (f"chassis-{snapshot.interface}", f"eth-{snapshot.interface}")
         assert confirmation == snapshot.confirmation_text
         self.applied.append((snapshot.interface, action))
         return PortOperationResult(self.result, self.result, snapshot, snapshot)
@@ -102,7 +105,26 @@ def test_plan_binds_selected_port_and_action_without_live_mutation() -> None:
         ("192.0.2.10:22", "24", "AP-24"),
     ]
     assert plan.action is PortAction.POE_OFF
+    assert plan.targets[0].expected_chassis_id == "chassis-12"
+    assert plan.targets[0].expected_remote_port_id == "eth-12"
     assert plan.plan_id
+
+
+def test_ap535_without_lldp_chassis_or_remote_port_is_not_safe_for_bulk_off() -> None:
+    candidate = row("7")
+    assert candidate.lldp is not None
+    without_chassis = replace(
+        candidate,
+        lldp=LLDPObservation(LLDPStatus.OK, (replace(candidate.lldp.neighbors[0], chassis_id=""),)),
+    )
+    without_port = replace(
+        candidate,
+        lldp=LLDPObservation(LLDPStatus.OK, (replace(candidate.lldp.neighbors[0], port_id=""),)),
+    )
+    for unsafe in (without_chassis, without_port):
+        with pytest.raises(BatchControlError, match="Chassis ID"):
+            create_batch_plan([unsafe], PortAction.POE_OFF)
+        assert create_batch_plan([unsafe], PortAction.POE_ON).targets
 
 
 def test_unconfirmed_ap_cannot_be_mass_powered_off_or_disabled() -> None:
