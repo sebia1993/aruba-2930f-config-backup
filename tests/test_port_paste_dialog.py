@@ -101,6 +101,26 @@ def test_enlarged_paste_window_and_complete_large_preview(app: QApplication) -> 
     dialog._update_preview()
     assert dialog.apply_button.isEnabled()
     assert "스위치 60대" in dialog.preview_status.text()
-    assert "192.0.2.60:22" in dialog.preview_table.toPlainText()
-    assert "나머지" not in dialog.preview_table.toPlainText()
+    assert dialog.preview_table.rowCount() == 60
+    assert dialog.preview_table.item(59, 0).text() == "192.0.2.60"
+    assert dialog.preview_table.item(59, 1).text() == "22"
+    dialog.close()
+
+
+def test_editing_clears_stale_preview_and_fails_closed(
+    app: QApplication,
+) -> None:
+    dialog = PortTargetPasteDialog(existing_targets=lambda: ())
+    dialog.pasted_text.setPlainText("192.0.2.10\t12")
+    dialog._update_preview()
+    assert dialog.preview_table.rowCount() == 1
+    assert dialog.apply_button.isEnabled()
+
+    dialog.pasted_text.setPlainText("192.0.2.10\tall")
+    assert dialog.preview_table.rowCount() == 0
+    assert not dialog.apply_button.isEnabled()
+    dialog._update_preview()
+    assert dialog.preview_table.rowCount() == 0
+    assert not dialog.apply_button.isEnabled()
+    assert dialog.proposed_targets is None
     dialog.close()

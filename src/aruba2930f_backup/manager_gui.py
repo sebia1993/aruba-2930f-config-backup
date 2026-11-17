@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QGridLayout,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLayout,
@@ -386,11 +387,12 @@ class NetworkManagerWindow(QMainWindow):
             item = root.itemAt(index)
             if item is None:
                 continue
-            if isinstance(item.layout(), QFormLayout):
-                credential_form = item.layout()
+            candidate = item.layout()
+            if isinstance(candidate, QFormLayout):
+                credential_form = candidate
                 root.takeAt(index)
                 break
-        if not isinstance(credential_form, QFormLayout):
+        if credential_form is None:
             raise RuntimeError("Could not relocate the existing SSH credential form")
         search_group = port.search_input.parentWidget()
         control_group = port.batch_progress.parentWidget()
@@ -427,7 +429,7 @@ class NetworkManagerWindow(QMainWindow):
         root.setSpacing(7)
         self.port_target_toggle = QToolButton(port)
         self.port_target_toggle.setObjectName("portTargetsToggle")
-        self.port_target_toggle.setText("조회 대상 입력 · 펼치기/접기")
+        self.port_target_toggle.setText("조회 대상 · SSH 접속 설정 접기")
         self.port_target_toggle.setCheckable(True)
         self.port_target_toggle.setChecked(True)
         self.port_target_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -440,14 +442,31 @@ class NetworkManagerWindow(QMainWindow):
         )
         quick_actions = QHBoxLayout()
         quick_actions.addWidget(self.port_target_toggle, 1)
+        self.port_input_focus_button = QToolButton(port)
+        self.port_input_focus_button.setObjectName("portInputFocusToggle")
+        self.port_input_focus_button.setCheckable(True)
+        self.port_input_focus_button.setText("입력 크게 보기")
+        self.port_input_focus_button.setToolTip(
+            "대상 IP·포트 검토 시 결과 영역을 잠시 접어 입력 공간을 크게 사용합니다."
+        )
+        self.port_input_focus_button.toggled.connect(self._toggle_port_input_focus)
+        quick_actions.addWidget(self.port_input_focus_button)
         quick_actions.addWidget(port.paste_button)
         root.addLayout(quick_actions)
 
         target_container = QWidget(port)
         target_layout = QVBoxLayout(target_container)
         target_layout.setContentsMargins(8, 8, 8, 8)
-        port.targets_table.setMinimumHeight(175)
+        # Replace the old 150px fixed table with a vertically growing editor.
+        port.targets_table.setMinimumHeight(180)
         port.targets_table.setMaximumHeight(16777215)
+        port.targets_table.setAlternatingRowColors(True)
+        header = port.targets_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        port.targets_table.setColumnWidth(0, 210)
+        port.targets_table.setColumnWidth(1, 90)
+        port.targets_table.setColumnWidth(3, 160)
         target_layout.addWidget(port.targets_table, 1)
         target_layout.addWidget(port.advanced_toggle)
         _attach(target_layout, target_action)
@@ -460,22 +479,33 @@ class NetworkManagerWindow(QMainWindow):
             port.enable_password_input,
         ):
             credential_form.setRowVisible(field, False)
-        target_layout.addStretch(1)
         self.port_target_scroll = QScrollArea(port)
         self.port_target_scroll.setObjectName("portTargetSettings")
         self.port_target_scroll.setWidgetResizable(True)
-        self.port_target_scroll.setMinimumHeight(175)
+        self.port_target_scroll.setMinimumHeight(160)
         self.port_target_scroll.setWidget(target_container)
+        self.port_target_scroll.setVisible(True)
+        self._last_port_target_height = 290
         self.port_target_toggle.toggled.connect(self._toggle_port_targets)
+
         _attach(root, query_action)
+        for button in (
+            port.collect_button,
+            port.refresh_group_button,
+            port.refresh_port_button,
+        ):
+            button.clicked.connect(lambda: self.port_input_focus_button.setChecked(False))
         # The operator requested that the per-port detail pane stop consuming
         # horizontal space. Keep the original read-only detail widget alive for
         # older standalone APIs, but never display it in this embedded view.
         details_scroll.hide()
-        result_panel = QWidget(port)
-        result_layout = QVBoxLayout(result_panel)
+        # A안: a resizable vertical input/result stack; focus mode temporarily
+        # hides only the visual result pane, without discarding checked ports.
+        self.port_result_panel = QWidget(port)
+        self.port_result_panel.setObjectName("portResultPanel")
+        result_layout = QVBoxLayout(self.port_result_panel)
         result_layout.setContentsMargins(0, 0, 0, 0)
-        result_layout.setSpacing(5)
+        result_layout.setSpacing(6)
         result_layout.addWidget(search_group)
         port.result_tree.setColumnHidden(4, True)  # timestamps stay in CSV/history
         port.result_tree.setColumnWidth(0, 235)  # hostname and IP together
@@ -483,20 +513,18 @@ class NetworkManagerWindow(QMainWindow):
         port.result_tree.setColumnWidth(2, 105)  # watts
         port.result_tree.setColumnWidth(3, 220)  # port administration and link
         port.result_tree.setColumnWidth(5, 190)  # PoE setting and delivery
-        # Full-width central table; no side splitter or selected-port details.
         result_layout.addWidget(port.result_tree, 1)
-        result_panel.setMinimumHeight(220)
-        # Resize the input area vertically without sacrificing the full-width
-        # port result table; collapsing input releases all available space.
-        self.port_vertical_splitter = QSplitter(Qt.Orientation.Vertical, port)
-        self.port_vertical_splitter.setObjectName("portVerticalSplitter")
-        self.port_vertical_splitter.setChildrenCollapsible(False)
-        self.port_vertical_splitter.addWidget(self.port_target_scroll)
-        self.port_vertical_splitter.addWidget(result_panel)
-        self.port_vertical_splitter.setStretchFactor(0, 1)
-        self.port_vertical_splitter.setStretchFactor(1, 3)
-        self.port_vertical_splitter.setSizes([280, 520])
-        root.addWidget(self.port_vertical_splitter, 1)
+        self.port_input_result_splitter = QSplitter(Qt.Orientation.Vertical, port)
+        self.port_input_result_splitter.setObjectName("portVerticalSplitter")
+        # Preserve v0.8.0 integrations/tests that reference this splitter name.
+        self.port_vertical_splitter = self.port_input_result_splitter
+        self.port_input_result_splitter.addWidget(self.port_target_scroll)
+        self.port_input_result_splitter.addWidget(self.port_result_panel)
+        self.port_input_result_splitter.setChildrenCollapsible(False)
+        self.port_input_result_splitter.setStretchFactor(0, 0)
+        self.port_input_result_splitter.setStretchFactor(1, 1)
+        self.port_input_result_splitter.setSizes([290, 520])
+        root.addWidget(self.port_input_result_splitter, 1)
 
         self._layout_port_control_buttons(control_group)
         self.port_advanced_toggle = QToolButton(port)
@@ -583,15 +611,32 @@ class NetworkManagerWindow(QMainWindow):
 
     @Slot(bool)
     def _toggle_port_targets(self, expanded: bool) -> None:
-        self.port_target_scroll.setVisible(expanded)
         if expanded:
-            # Restore a useful editor height even after the panel was collapsed.
-            sizes = self.port_vertical_splitter.sizes()
-            total = sum(sizes)
-            self.port_vertical_splitter.setSizes([max(200, total // 3), max(220, total * 2 // 3)])
+            self.port_target_scroll.setVisible(True)
+            self.port_input_result_splitter.setSizes([self._last_port_target_height, 520])
+        else:
+            current_height = self.port_target_scroll.height()
+            if current_height >= 160:
+                self._last_port_target_height = current_height
+            # Leave input focus gracefully rather than hiding both panes.
+            if self.port_input_focus_button.isChecked():
+                self.port_input_focus_button.setChecked(False)
+            self.port_target_scroll.setVisible(False)
+        self.port_target_toggle.setText(
+            "조회 대상 · SSH 접속 설정 접기" if expanded else "조회 대상 · SSH 접속 설정 펼치기"
+        )
         self.port_target_toggle.setArrowType(
             Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         )
+
+    @Slot(bool)
+    def _toggle_port_input_focus(self, focused: bool) -> None:
+        if focused and not self.port_target_toggle.isChecked():
+            self.port_target_toggle.setChecked(True)
+        self.port_result_panel.setVisible(not focused)
+        self.port_input_focus_button.setText("조회 결과 함께 보기" if focused else "입력 크게 보기")
+        if not focused and self.port_target_toggle.isChecked():
+            self.port_input_result_splitter.setSizes([self._last_port_target_height, 520])
 
     def _create_history(self) -> QWidget:
         page = QWidget(self.pages)
