@@ -280,3 +280,111 @@ def test_failed_batch_without_result_callbacks_invalidates_planned_ports(
     assert dialog._batch_plan is None
     assert not dialog.run_button.isEnabled()
     dialog.close()
+
+
+def test_select_all_scope_and_eligible_only_keep_unsafe_ports_unselected(
+    app: QApplication,
+) -> None:
+    dialog = setup_dialog()
+    dialog.show()
+    first = dialog._items[(TARGET.endpoint, "1")]
+    second = dialog._items[(TARGET.endpoint, "2")]
+    dialog._on_result(queried("2", model="Aruba 2930F"))
+    dialog.action_combo.setCurrentIndex(dialog.action_combo.findData(PortAction.POE_OFF.value))
+    dialog.select_all_button.click()
+    assert first.isSelected() and second.isSelected()
+    assert "선택 2개" in dialog.selection_summary.text()
+    assert "가능 1개" in dialog.selection_summary.text()
+    dialog.select_eligible_button.click()
+    assert first.isSelected() and not second.isSelected()
+    assert len(dialog._selected_rows()) == 1
+    dialog.clear_selection_button.click()
+    assert not first.isSelected() and not second.isSelected()
+    dialog.close()
+
+
+def test_select_current_switch_and_filter_results_without_selecting_group_parents(
+    app: QApplication,
+) -> None:
+    dialog = setup_dialog()
+    dialog.show()
+    first = dialog._items[(TARGET.endpoint, "1")]
+    second = dialog._items[(TARGET.endpoint, "2")]
+    dialog.result_tree.setCurrentItem(first)
+    dialog.selection_scope.setCurrentIndex(dialog.selection_scope.findData("switch"))
+    dialog.select_all_button.click()
+    assert first.isSelected() and second.isSelected()
+    assert not dialog._parents[TARGET.endpoint].isSelected()
+    dialog.search_input.setText("AP-2")
+    dialog._apply_search_filter()
+    dialog.selection_scope.setCurrentIndex(dialog.selection_scope.findData("filtered"))
+    dialog.select_all_button.click()
+    assert not first.isSelected() and second.isSelected()
+    dialog.selection_scope.setCurrentIndex(dialog.selection_scope.findData("all"))
+    dialog.select_all_button.click()
+    assert dialog.search_input.text() == ""
+    assert first.isSelected() and second.isSelected()
+    dialog.close()
+
+
+def test_select_all_over_300_warns_without_creating_mutation_plan(
+    app: QApplication,
+) -> None:
+    dialog = UnifiedPortManagementDialog(username="operator", password="test-password")
+    groups = (
+        PoETarget(DeviceTarget("192.0.2.10", 22), tuple(str(p) for p in range(1, 201))),
+        PoETarget(DeviceTarget("192.0.2.20", 22), tuple(str(p) for p in range(1, 201))),
+    )
+    dialog._build_results(groups)
+    dialog.show()
+    dialog.select_all_button.click()
+    assert len(dialog.result_tree.selectedItems()) == 400
+    assert "최대 300포트" in dialog.selection_summary.text()
+    assert dialog._batch_plan is None
+    assert not dialog.run_button.isEnabled()
+    dialog.close()
+
+
+def test_guided_cycle_does_not_auto_send_on_after_off(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aruba2930f_backup.poe_cycle import PowerCyclePhase
+
+    dialog = setup_dialog()
+    dialog._batch_controller = OfflineBatch()  # type: ignore[assignment]
+    dialog.show()
+    dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
+    dialog._cycle_next()
+    assert dialog._cycle is not None
+    assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
+    assert dialog._batch_plan is not None
+    assert dialog._batch_plan.action is PortAction.POE_OFF
+    monkeypatch.setattr(BatchConfirmationDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
+    dialog._run_batch()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and dialog._batch_thread is not None:
+        app.processEvents()
+        time.sleep(0.01)
+    assert dialog._batch_thread is None
+    assert dialog._cycle.phase is PowerCyclePhase.REQUERY_OFF
+    assert dialog._cycle.on_plan is None
+    assert dialog._batch_plan is None
+    assert dialog.cycle_button.isEnabled()
+    assert "재조회" in dialog.cycle_button.text()
+    dialog.close()
+
+
+def test_replace_two_column_paste_cleans_incomplete_placeholder_atomically(
+    app: QApplication,
+) -> None:
+    dialog = UnifiedPortManagementDialog(username="operator", password="test-password")
+    dialog.targets_table.item(0, 0).setText("192.0.2.99")
+    assert dialog.targets_table.item(0, 2).text() == ""
+    dialog.paste_targets("스위치 IP\t포트\n192.0.2.10\t12\n192.0.2.10\t24", replace=True)
+    assert dialog.targets_table.rowCount() == 1
+    assert dialog.targets_table.item(0, 0).text() == "192.0.2.10"
+    assert dialog.targets_table.item(0, 2).text() == "12,24"
+    with pytest.raises(ValueError):
+        dialog.paste_targets("192.0.2.10\tall", replace=True)
+    assert dialog.targets_table.item(0, 2).text() == "12,24"
+    dialog.close()

@@ -400,7 +400,16 @@ class NetworkManagerWindow(QMainWindow):
         self.port_target_toggle.setChecked(False)
         self.port_target_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.port_target_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        root.addWidget(self.port_target_toggle)
+        # Excel IP/port paste stays accessible while target/SSH settings are collapsed.
+        target_action.removeWidget(port.paste_button)
+        port.paste_button.setText("IP·포트 2열 붙여넣기…")
+        port.paste_button.setToolTip(
+            "엑셀의 스위치 IP / 포트 두 열을 복사하고 붙여넣기 결과를 미리 확인하세요."
+        )
+        quick_actions = QHBoxLayout()
+        quick_actions.addWidget(self.port_target_toggle, 1)
+        quick_actions.addWidget(port.paste_button)
+        root.addLayout(quick_actions)
 
         target_container = QWidget(port)
         target_layout = QVBoxLayout(target_container)
@@ -495,8 +504,8 @@ class NetworkManagerWindow(QMainWindow):
             if isinstance(explanation_label, QLabel):
                 explanation_label.setToolTip(explanation_label.text())
                 explanation_label.setText(
-                    "포트 선택 후 제어. 일괄 PoE OFF/포트 Down은 "
-                    "LLDP로 확인된 AP-535 포트만 허용합니다."
+                    "표 상단에서 전체·스위치별 포트를 선택하세요. "
+                    "일괄 OFF/Down은 LLDP로 확인된 AP-535만 허용합니다."
                 )
 
     @Slot(bool)

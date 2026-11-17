@@ -135,14 +135,18 @@ def _parse_table(text: str, delimiter: str) -> tuple[PoETarget, ...]:
         raise ValueError(
             "한 표에는 IP / 인터페이스 2열과 SSH 포트를 포함한 3~4열을 섞을 수 없습니다."
         )
-    return merge_targets(
-        [
-            make_target(row[0], 22, row[1])
-            if basic_schema
-            else make_target(row[0], row[1], row[2], row[3] if len(row) == 4 else "")
-            for row in rows
-        ]
-    )
+    parsed: list[PoETarget] = []
+    for line_number, row in enumerate(rows, start=1):
+        try:
+            target = (
+                make_target(row[0], 22, row[1])
+                if basic_schema
+                else make_target(row[0], row[1], row[2], row[3] if len(row) == 4 else "")
+            )
+        except ValueError as exc:
+            raise ValueError(f"{line_number}행: {exc}") from exc
+        parsed.append(target)
+    return merge_targets(parsed)
 
 
 def parse_pasted_targets(text: str) -> tuple[PoETarget, ...]:
@@ -150,14 +154,10 @@ def parse_pasted_targets(text: str) -> tuple[PoETarget, ...]:
     if not isinstance(text, str) or len(text) > MAX_PASTE_CHARACTERS:
         raise ValueError("붙여넣기는 최대 100,000자입니다.")
     text = text.removeprefix("\ufeff")
-    error: ValueError | None = None
-    for delimiter in ("\t", ","):
-        try:
-            return _parse_table(text, delimiter)
-        except ValueError as exc:
-            error = exc
-    assert error is not None
-    raise error
+    # Excel clipboard data uses tabs even when the interface cell has commas.
+    # Never reinterpret an invalid TSV block as comma-separated CSV.
+    delimiter = "\t" if "\t" in text else ","
+    return _parse_table(text, delimiter)
 
 
 def _atomic_write_bytes(path: Path, content: bytes) -> None:

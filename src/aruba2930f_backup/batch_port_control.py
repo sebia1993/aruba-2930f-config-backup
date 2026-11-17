@@ -130,6 +130,51 @@ class SinglePortController(Protocol):
     ) -> PortOperationResult: ...
 
 
+def validate_batch_target(
+    row: PoEQueryResult,
+    action: PortAction,
+    *,
+    allow_unverified_ap: bool = False,
+) -> BatchTarget:
+    """Share the exact fail-closed batch eligibility rule with the GUI.
+
+    A selected row alone cannot authorize a mutation: inspect/apply still
+    revalidate switch identity, host key and port configuration.
+    """
+    if not isinstance(action, PortAction):
+        raise BatchControlError("지원하지 않는 포트 제어 동작입니다.")
+    snapshot = row.snapshot
+    if (
+        not row.complete
+        or snapshot is None
+        or row.status not in (QueryStatus.OK, QueryStatus.UNSUPPORTED)
+    ):
+        raise BatchControlError("완료된 포트 상태가 없는 행은 일괄 제어할 수 없습니다.")
+    if action.is_poe and snapshot.poe_enabled is None:
+        raise BatchControlError("PoE 미지원·확인 불가 포트에는 전원 제어를 실행할 수 없습니다.")
+    neighbors = (
+        row.lldp.neighbors if row.lldp is not None and row.lldp.status is LLDPStatus.OK else ()
+    )
+    confirmed = len(neighbors) == 1 and neighbors[0].model == "AP-535"
+    if action in (PortAction.POE_OFF, PortAction.DISABLE) and not (
+        confirmed or allow_unverified_ap
+    ):
+        raise BatchControlError(
+            "일괄 전원 OFF/포트 Down은 LLDP에서 AP-535로 확인된 포트만 허용합니다. "
+            "미확인 포트는 기존 단일 포트 제어에서 개별 확인하세요."
+        )
+    return BatchTarget(
+        snapshot.target,
+        snapshot.interface,
+        snapshot.hostname,
+        snapshot.enabled,
+        snapshot.poe_enabled,
+        snapshot.fingerprint,
+        ap_name=neighbors[0].system_name if len(neighbors) == 1 else "",
+        confirmed_ap535=confirmed,
+    )
+
+
 def create_batch_plan(
     results: Sequence[PoEQueryResult],
     action: PortAction,
@@ -146,40 +191,10 @@ def create_batch_plan(
         raise BatchControlError("지원하지 않는 포트 제어 동작입니다.")
     if not results or len(results) > MAX_BATCH_ACTIONS:
         raise BatchControlError("한 번의 제어 계획에는 1~300개 포트만 넣을 수 있습니다.")
-    targets: list[BatchTarget] = []
-    for row in results:
-        snapshot = row.snapshot
-        if (
-            not row.complete
-            or snapshot is None
-            or row.status not in (QueryStatus.OK, QueryStatus.UNSUPPORTED)
-        ):
-            raise BatchControlError("완료된 포트 상태가 없는 행은 일괄 제어할 수 없습니다.")
-        if action.is_poe and snapshot.poe_enabled is None:
-            raise BatchControlError("PoE 미지원·확인 불가 포트에는 전원 제어를 실행할 수 없습니다.")
-        neighbors = (
-            row.lldp.neighbors if row.lldp is not None and row.lldp.status is LLDPStatus.OK else ()
-        )
-        confirmed = len(neighbors) == 1 and neighbors[0].model == "AP-535"
-        if action in (PortAction.POE_OFF, PortAction.DISABLE) and not (
-            confirmed or allow_unverified_ap
-        ):
-            raise BatchControlError(
-                "일괄 전원 OFF/포트 Down은 LLDP에서 AP-535로 확인된 포트만 허용합니다. "
-                "미확인 포트는 기존 단일 포트 제어에서 개별 확인하세요."
-            )
-        targets.append(
-            BatchTarget(
-                snapshot.target,
-                snapshot.interface,
-                snapshot.hostname,
-                snapshot.enabled,
-                snapshot.poe_enabled,
-                snapshot.fingerprint,
-                ap_name=neighbors[0].system_name if len(neighbors) == 1 else "",
-                confirmed_ap535=confirmed,
-            )
-        )
+    targets = [
+        validate_batch_target(row, action, allow_unverified_ap=allow_unverified_ap)
+        for row in results
+    ]
     return BatchPlan(str(uuid.uuid4()), datetime.now(UTC).isoformat(), action, tuple(targets))
 
 

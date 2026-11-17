@@ -384,3 +384,26 @@ def test_legacy_schema_keeps_optional_alias_rows_and_nondefault_profile_roundtri
     path = tmp_path / "legacy-targets.json"
     save_target_profile(path, groups)
     assert load_target_profile(path) == groups
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "스위치 IP\t포트\n192.0.2.10\t12\n192.0.2.10\t24\n192.0.2.20\t1/12,1/24",
+        "스위치IP\t포트번호\n192.0.2.10\t12\n192.0.2.10\t24\n192.0.2.20\t1/12,1/24",
+        '스위치 IP,포트\n192.0.2.10,12\n192.0.2.10,24\n192.0.2.20,"1/12,1/24"',
+    ],
+)
+def test_excel_two_columns_with_common_korean_headers_merge_identical_switches(
+    text: str,
+) -> None:
+    groups = parse_pasted_targets(text)
+    assert [(g.target.endpoint, g.interfaces) for g in groups] == [
+        ("192.0.2.10:22", ("12", "24")),
+        ("192.0.2.20:22", ("1/12", "1/24")),
+    ]
+
+
+def test_bad_excel_row_has_line_number_and_never_uses_csv_fallback() -> None:
+    with pytest.raises(ValueError, match="2행"):
+        parse_pasted_targets("192.0.2.10\t1\n192.0.2.20\tall,24")
