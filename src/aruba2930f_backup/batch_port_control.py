@@ -158,10 +158,11 @@ def validate_batch_target(
         raise BatchControlError("PoE 미지원·확인 불가 포트에는 전원 제어를 실행할 수 없습니다.")
     # An LLDP neighbor can remain cached after physical disconnection.
     # The link check is necessary but does not prove LLDP advertisement freshness.
-    if action in (PortAction.POE_OFF, PortAction.DISABLE) and snapshot.link_status.casefold() != "up":
-        raise BatchControlError(
-            "일괄 PoE OFF/포트 Down은 물리 링크가 Link Up인 포트만 허용합니다."
-        )
+    if (
+        action in (PortAction.POE_OFF, PortAction.DISABLE)
+        and snapshot.link_status.casefold() != "up"
+    ):
+        raise BatchControlError("일괄 PoE OFF/포트 Down은 물리 링크가 Link Up인 포트만 허용합니다.")
     neighbors = (
         row.lldp.neighbors if row.lldp is not None and row.lldp.status is LLDPStatus.OK else ()
     )

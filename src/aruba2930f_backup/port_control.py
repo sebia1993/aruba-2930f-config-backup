@@ -343,11 +343,13 @@ class PortControlService:
             approved, self._snapshot = self._snapshot, None
             if approved is None or snapshot is not approved:
                 raise PreMutationRejected(
-                    ErrorCode.INPUT_INVALID, "유효한 조회 결과가 없습니다. 대상 포트를 다시 조회하세요."
+                    ErrorCode.INPUT_INVALID,
+                    "유효한 조회 결과가 없습니다. 대상 포트를 다시 조회하세요.",
                 )
             if not 0 <= self._clock() - self._snapshot_time < self.SNAPSHOT_MAX_AGE_SECONDS:
                 raise PreMutationRejected(
-                    ErrorCode.INPUT_INVALID, "조회 결과가 만료되었습니다. 대상 포트를 다시 조회하세요."
+                    ErrorCode.INPUT_INVALID,
+                    "조회 결과가 만료되었습니다. 대상 포트를 다시 조회하세요.",
                 )
             if confirmation != snapshot.confirmation_text:
                 raise PreMutationRejected(
@@ -355,14 +357,17 @@ class PortControlService:
                     "입력한 확인 문자열이 조회한 대상과 일치하지 않습니다. 다시 조회하세요.",
                 )
             if not isinstance(action, PortAction):
-                raise PreMutationRejected(ErrorCode.INPUT_INVALID, "지원하지 않는 포트 제어 동작입니다.")
+                raise PreMutationRejected(
+                    ErrorCode.INPUT_INVALID, "지원하지 않는 포트 제어 동작입니다."
+                )
             if expected_lldp_identity is not None and (
                 action not in (PortAction.POE_OFF, PortAction.DISABLE)
                 or len(expected_lldp_identity) != 2
                 or not all(isinstance(value, str) and value for value in expected_lldp_identity)
             ):
                 raise PreMutationRejected(
-                    ErrorCode.INPUT_INVALID, "일괄 전원 차단의 LLDP 장비 식별 정보가 올바르지 않습니다."
+                    ErrorCode.INPUT_INVALID,
+                    "일괄 전원 차단의 LLDP 장비 식별 정보가 올바르지 않습니다.",
                 )
             if action.is_poe and snapshot.poe_enabled is None:
                 raise PreMutationRejected(
