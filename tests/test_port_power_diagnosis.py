@@ -69,7 +69,7 @@ BASE = PortSnapshot(
         (
             {"enabled": True, "poe_enabled": None, "poe_status": "PoE 미지원", "watts": None},
             "PoE 미지원",
-            "미지원",
+            "지원하지 않는",
         ),
         (
             {"enabled": False, "poe_enabled": None, "poe_status": "PoE 미지원", "watts": None},
