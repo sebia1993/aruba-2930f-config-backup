@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -74,9 +75,11 @@ class _BatchWorker(QObject):
         credentials: Credentials,
         *,
         controller: BatchPortController | None = None,
+        auto_continue_chunks: bool = False,
     ) -> None:
         super().__init__()
         self._plan = plan
+        self._auto_continue_chunks = auto_continue_chunks
         self._credentials: Credentials | None = credentials
         self._controller = controller or BatchPortController()
         self.cancel_event = threading.Event()
@@ -93,6 +96,10 @@ class _BatchWorker(QObject):
         self._continue_event.set()
 
     def _wait_for_checkpoint(self, done: int, total: int) -> bool:
+        # Quick PoE actions have one upfront selection/approval; no repetitive
+        # 10-port popup. Backend per-port preflight, journal and stop checks stay.
+        if self._auto_continue_chunks:
+            return not self.cancel_event.is_set()
         self._continue_allowed = False
         self._continue_event.clear()
         self.checkpoint.emit(done, total)
@@ -217,16 +224,19 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self._close_after_batch = False
         self._cycle: PowerCycleSession | None = None
         self._cycle_query_stage = ""
+        # Only explicitly checked ports can enter a mutation plan.
+        self._checked_port_keys: set[tuple[str, str]] = set()
         self._selection_summary_timer = QTimer(self)
         self._selection_summary_timer.setSingleShot(True)
         self._selection_summary_timer.setInterval(120)
         self._selection_summary_timer.timeout.connect(self._update_selection_summary)
         self.setWindowTitle("Aruba 2930F · 포트 통합 관리")
         self.resize(1200, 920)
-        self.result_tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.result_tree.itemSelectionChanged.connect(self._selection_changed_for_batch)
+        self.result_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.result_tree.itemChanged.connect(self._checkbox_changed)
         self._build_search_panel()
         self._build_control_panel()
+        self._build_quick_bar()
         self._set_busy(False)
 
     @property
@@ -261,7 +271,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.selection_scope.addItem("현재 스위치", "switch")
         self.selection_scope.addItem("검색 결과", "filtered")
         self.selection_scope.setToolTip(
-            "전체는 현재 검색 조건을 해제하고 조회 대상의 포트 행을 선택합니다."
+            "전체/현재 스위치는 숨겨진 포트도 체크합니다. 검색 결과는 표시된 포트만 선택합니다."
         )
         selection_row.addWidget(self.selection_scope, 1)
         self.select_all_button = QPushButton("범위 전체 선택", container)
@@ -287,7 +297,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.clear_selection_button.clicked.connect(self._clear_selection)
         selection_row.addWidget(self.clear_selection_button)
         layout.addLayout(selection_row)
-        self.selection_summary = QLabel("선택 0개 · 제어 대상은 조회 후 선택", container)
+        self.selection_summary = QLabel("체크 0개 · 조회 후 포트를 체크하세요.", container)
         self.selection_summary.setObjectName("unifiedSelectionSummary")
         self.selection_summary.setWordWrap(True)
         layout.addWidget(self.selection_summary)
@@ -301,16 +311,116 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         parent = cast(QVBoxLayout, self.layout())
         parent.insertWidget(parent.indexOf(self.result_tree), container)
 
+    def _build_results(self, groups: tuple[PoETarget, ...]) -> None:
+        """An updated device inventory must never inherit stale checked ports."""
+        if not hasattr(self, "_checked_port_keys"):
+            super()._build_results(groups)
+            return
+        self._checked_port_keys.clear()
+        with QSignalBlocker(self.result_tree):
+            super()._build_results(groups)
+            for group in groups:
+                self._parents[group.target.endpoint].setCheckState(0, Qt.CheckState.Unchecked)
+                for interface in group.interfaces:
+                    self._items[(group.target.endpoint, interface)].setCheckState(
+                        0, Qt.CheckState.Unchecked
+                    )
+        self._clear_batch_plan("조회 대상 변경으로 포트 체크를 초기화했습니다.")
+        self._selection_summary_timer.start()
+
+    def _selection_locked(self) -> bool:
+        session = self._cycle
+        return self.is_busy or (
+            session is not None
+            and session.phase not in (PowerCyclePhase.COMPLETE, PowerCyclePhase.INTERRUPTED)
+        )
+
+    def _parent_check_state(self, endpoint: str) -> Qt.CheckState:
+        group = next((g for g in self._groups if g.target.endpoint == endpoint), None)
+        if group is None:
+            return Qt.CheckState.Unchecked
+        chosen = sum((endpoint, port) in self._checked_port_keys for port in group.interfaces)
+        if chosen == 0:
+            return Qt.CheckState.Unchecked
+        if chosen == len(group.interfaces):
+            return Qt.CheckState.Checked
+        return Qt.CheckState.PartiallyChecked
+
+    def _sync_parent_check(self, endpoint: str) -> None:
+        parent = self._parents.get(endpoint)
+        if parent is not None:
+            parent.setCheckState(0, self._parent_check_state(endpoint))
+
+    @Slot(QTreeWidgetItem, int)
+    def _checkbox_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        if column != 0:
+            return
+        key = cast(tuple[str, str] | None, item.data(0, Qt.ItemDataRole.UserRole))
+        if key is None or key[0] not in self._parents:
+            return
+        state = item.checkState(0)
+        if not key[1]:
+            current_state = self._parent_check_state(key[0])
+            if state == current_state:
+                return
+            if self._selection_locked():
+                with QSignalBlocker(self.result_tree):
+                    item.setCheckState(0, current_state)
+                return
+            group = next((g for g in self._groups if g.target.endpoint == key[0]), None)
+            if group is None:
+                return
+            checked = state == Qt.CheckState.Checked
+            with QSignalBlocker(self.result_tree):
+                for port in group.interfaces:
+                    port_key = (key[0], port)
+                    if checked:
+                        self._checked_port_keys.add(port_key)
+                    else:
+                        self._checked_port_keys.discard(port_key)
+                    self._items[port_key].setCheckState(
+                        0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                    )
+                self._sync_parent_check(key[0])
+        else:
+            current_state = (
+                Qt.CheckState.Checked if key in self._checked_port_keys else Qt.CheckState.Unchecked
+            )
+            # setText() also emits itemChanged: no selection change without a state delta.
+            if state == current_state:
+                return
+            if self._selection_locked():
+                with QSignalBlocker(self.result_tree):
+                    item.setCheckState(0, current_state)
+                return
+            if state == Qt.CheckState.Checked:
+                self._checked_port_keys.add(key)
+            else:
+                self._checked_port_keys.discard(key)
+            with QSignalBlocker(self.result_tree):
+                self._sync_parent_check(key[0])
+        self._selection_changed_for_batch()
+
+    def _set_checked_keys(self, keys: set[tuple[str, str]]) -> None:
+        """Update the checkboxes atomically with one UI notification."""
+        if self._selection_locked():
+            return
+        keys.intersection_update(self._items)
+        delta = self._checked_port_keys ^ keys
+        affected = {key[0] for key in delta}
+        self._checked_port_keys = keys
+        with QSignalBlocker(self.result_tree):
+            for key in delta:
+                self._items[key].setCheckState(
+                    0, Qt.CheckState.Checked if key in keys else Qt.CheckState.Unchecked
+                )
+            for endpoint in affected:
+                self._sync_parent_check(endpoint)
+        self._selection_changed_for_batch()
+        self._update_selection_summary()
+
     def _scope_items(self) -> list[QTreeWidgetItem] | None:
         scope = str(self.selection_scope.currentData())
-        if scope == "all":
-            # An all-rows selection must not silently omit hidden filtered ports.
-            if self.search_input.text():
-                self.search_input.clear()
-            if self.filter_combo.currentData() != "all":
-                self.filter_combo.setCurrentIndex(self.filter_combo.findData("all"))
-            self._filter_timer.stop()
-            self._apply_search_filter()
         parent: QTreeWidgetItem | None = None
         if scope == "switch":
             current = self.result_tree.currentItem()
@@ -331,9 +441,10 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         return [
             row
             for root in roots
-            if root is not None and not root.isHidden()
-            for i in range(root.childCount())
-            if not (row := root.child(i)).isHidden()
+            if root is not None
+            for index in range(root.childCount())
+            if (row := root.child(index)) is not None
+            if scope != "filtered" or (not root.isHidden() and not row.isHidden())
         ]
 
     @Slot()
@@ -359,18 +470,19 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         action_override: PortAction | None = None,
         require_powered: bool = False,
     ) -> None:
-        if self.is_busy:
+        if self._selection_locked():
             return
         candidates = self._scope_items()
         if candidates is None:
             return
-        chosen = candidates
-        if eligible_only:
-            action = action_override or PortAction(str(self.action_combo.currentData()))
-            chosen = []
-            for item in candidates:
-                key = cast(tuple[str, str] | None, item.data(0, Qt.ItemDataRole.UserRole))
-                result = self._results.get(key) if key is not None else None
+        chosen: set[tuple[str, str]] = set()
+        action = action_override or PortAction(str(self.action_combo.currentData()))
+        for item in candidates:
+            key = cast(tuple[str, str] | None, item.data(0, Qt.ItemDataRole.UserRole))
+            if key is None:
+                continue
+            if eligible_only:
+                result = self._results.get(key)
                 if result is None:
                     continue
                 if require_powered and (
@@ -381,42 +493,28 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                     validate_batch_target(result, action)
                 except BatchControlError:
                     continue
-                chosen.append(item)
-        # One signal after the full selection prevents 14,400 repeated plan invalidations.
-        with QSignalBlocker(self.result_tree):
-            self.result_tree.clearSelection()
-            for item in chosen:
-                item.setSelected(True)
-        self._selection_changed_for_batch()
-        self._update_selection_summary()
-        if len(chosen) > 300:
-            self.selection_summary.setText(
-                self.selection_summary.text()
-                + " · 제어 1회 최대 300포트. 스위치/검색 범위로 나누세요."
-            )
+            chosen.add(key)
+        self._set_checked_keys(chosen)
 
     @Slot()
     def _clear_selection(self) -> None:
-        if self.is_busy:
-            return
-        self.result_tree.clearSelection()
-        self._selection_changed_for_batch()
-        self._update_selection_summary()
+        self._set_checked_keys(set())
 
     @Slot()
     def _update_selection_summary(self) -> None:
         if not hasattr(self, "selection_summary"):
             return
-        items = [
-            item
-            for item in self.result_tree.selectedItems()
-            if item.parent() is not None and not item.isHidden() and not item.parent().isHidden()
-        ]
+        keys = self._checked_port_keys
         action = PortAction(str(self.action_combo.currentData()))
         eligible = 0
-        for item in items:
-            key = cast(tuple[str, str] | None, item.data(0, Qt.ItemDataRole.UserRole))
-            result = self._results.get(key) if key is not None else None
+        hidden = 0
+        for key in keys:
+            item = self._items.get(key)
+            if item is not None and (
+                item.isHidden() or (item.parent() is not None and item.parent().isHidden())
+            ):
+                hidden += 1
+            result = self._results.get(key)
             if result is None:
                 continue
             try:
@@ -424,11 +522,27 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             except BatchControlError:
                 continue
             eligible += 1
-        selected = len(items)
-        self.selection_summary.setText(
-            f"선택 {selected}개 · {ACTION_TITLES[action]} 가능 {eligible}개 · "
-            f"제외/확인 필요 {selected - eligible}개 · 일괄 제어 1회 최대 300포트"
+        count = len(keys)
+        blocked = count - eligible
+        summary = (
+            f"체크 {count}개 · 화면 밖 {hidden}개 · {ACTION_TITLES[action]} 가능 {eligible}개"
+            f" · 차단/미확인 {blocked}개 · 실행 1회 최대 300포트"
         )
+        self.selection_summary.setText(summary)
+        if hasattr(self, "quick_summary"):
+            self.quick_summary.setText(summary)
+            if count > 300:
+                self.quick_summary.setToolTip(
+                    "한 번에 300포트 이하만 작업할 수 있습니다. 대상 범위를 나누세요."
+                )
+            elif blocked:
+                self.quick_summary.setToolTip(
+                    "검증되지 않은 포트는 자동 제외하지 않습니다. 제어 가능만 선택하세요."
+                )
+            else:
+                self.quick_summary.setToolTip("")
+        if hasattr(self, "quick_cycle_button"):
+            self._update_cycle_controls()
 
     def paste_targets(self, text: str, *, replace: bool = False) -> None:
         """Preserve old append API while offering a safe explicit replace choice."""
@@ -473,7 +587,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             self._update_control_buttons()
 
     def _selection_changed_for_batch(self) -> None:
-        self._clear_batch_plan("포트 선택이 변경되었습니다. 작업 계획을 다시 작성하세요.")
+        self._clear_batch_plan("체크된 포트가 변경되었습니다. 작업 계획을 다시 작성하세요.")
         self._selection_summary_timer.start()
 
     def _filter_changed(self, _value: object = None) -> None:
@@ -524,8 +638,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 else:
                     matched_status = True
                 shown = matched_term and matched_status
-                if not shown and item.isSelected():
-                    item.setSelected(False)
+                # The active search must not silently discard checked mutation targets.
                 item.setHidden(not shown)
                 visible = visible or shown
             parent.setHidden(not visible)
@@ -543,7 +656,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         group = QGroupBox("다중 포트 제어 · 작업 대기열", self)
         layout = QVBoxLayout(group)
         info = QLabel(
-            "조회 결과에서 Ctrl/Shift로 포트를 여러 개 선택하세요. "
+            "포트의 체크박스로 작업 대상을 선택하세요. 행 클릭은 상세 정보 보기 전용입니다. "
             "전원 OFF/포트 Down의 일괄 작업은 LLDP로 AP-535가 확인된 포트만 허용합니다. "
             "일반 포트나 LLDP 미확인 포트는 아래 '선택 포트 단일 제어'에서 개별 확인하세요.",
             group,
@@ -613,10 +726,120 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         parent_layout = cast(QVBoxLayout, self.layout())
         parent_layout.insertWidget(parent_layout.count() - 2, group)
 
+    def _build_quick_bar(self) -> None:
+        """Pinned fast controls; backend trust and state checks are unchanged."""
+        self.quick_action_bar = QFrame(self)
+        self.quick_action_bar.setObjectName("poeQuickActionBar")
+        self.quick_action_bar.setStyleSheet(
+            "QFrame#poeQuickActionBar { border: 1px solid palette(mid); "
+            "border-radius: 7px; background: palette(base); }"
+        )
+        vertical = QVBoxLayout(self.quick_action_bar)
+        vertical.setContentsMargins(9, 7, 9, 7)
+        vertical.setSpacing(5)
+        layout = QHBoxLayout()
+        layout.setSpacing(8)
+        self.quick_summary = QLabel("체크 0개 · 작업 대상을 선택하세요.", self.quick_action_bar)
+        self.quick_summary.setObjectName("poeQuickSummary")
+        self.quick_summary.setWordWrap(True)
+        self.quick_summary.setMinimumWidth(230)
+        layout.addWidget(self.quick_summary, 1)
+        self.quick_off_button = QPushButton("PoE OFF 즉시", self.quick_action_bar)
+        self.quick_on_button = QPushButton("PoE ON 즉시", self.quick_action_bar)
+        self.quick_cycle_button = QPushButton("PoE 재가동", self.quick_action_bar)
+        for button, name in (
+            (self.quick_off_button, "poeQuickOff"),
+            (self.quick_on_button, "poeQuickOn"),
+            (self.quick_cycle_button, "poeQuickCycle"),
+        ):
+            button.setObjectName(name)
+            button.setMinimumHeight(38)
+            layout.addWidget(button)
+        self.quick_off_button.setToolTip(
+            "체크된 포트를 즉시 OFF합니다. 2개 이상이면 한 번만 확인합니다. "
+            "명령 직전 장비 확인·변경 이력·불확실 결과 중단은 유지합니다."
+        )
+        self.quick_on_button.setToolTip(
+            "체크된 포트를 즉시 ON합니다. 별도 계획 버튼·확인 문자열 입력 없음. "
+            "명령 직전 장비 확인·변경 이력은 유지합니다."
+        )
+        self.quick_off_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_OFF))
+        self.quick_on_button.clicked.connect(lambda: self._quick_poe_action(PortAction.POE_ON))
+        self.quick_cycle_button.clicked.connect(self._quick_cycle)
+        vertical.addLayout(layout)
+
+        # Keep stop, progress and the last result visible without expanding
+        # the legacy advanced-plan console.
+        self.quick_job_widget = QWidget(self.quick_action_bar)
+        self.quick_job_widget.setObjectName("poeQuickJobStatus")
+        job_layout = QHBoxLayout(self.quick_job_widget)
+        job_layout.setContentsMargins(0, 0, 0, 0)
+        job_layout.setSpacing(7)
+        self.quick_job_progress = QProgressBar(self.quick_job_widget)
+        self.quick_job_progress.setObjectName("poeQuickJobProgress")
+        self.quick_job_progress.setMaximumWidth(120)
+        job_layout.addWidget(self.quick_job_progress)
+        self.quick_job_status = QLabel("작업 대기", self.quick_job_widget)
+        self.quick_job_status.setObjectName("poeQuickJobText")
+        self.quick_job_status.setWordWrap(True)
+        job_layout.addWidget(self.quick_job_status, 1)
+        self.quick_stop_button = QPushButton("작업 중지", self.quick_job_widget)
+        self.quick_stop_button.setObjectName("poeQuickJobStop")
+        self.quick_stop_button.clicked.connect(self._cancel_batch)
+        self.quick_stop_button.setEnabled(False)
+        job_layout.addWidget(self.quick_stop_button)
+        vertical.addWidget(self.quick_job_widget)
+        self.quick_job_widget.setVisible(False)
+        root = cast(QVBoxLayout, self.layout())
+        root.insertWidget(root.count() - 2, self.quick_action_bar)
+
+    def _sync_quick_job(self) -> None:
+        """Mirror the existing job status with a visible stop control."""
+        if not hasattr(self, "quick_job_widget"):
+            return
+        self.quick_job_progress.setRange(
+            self.batch_progress.minimum(), self.batch_progress.maximum()
+        )
+        self.quick_job_progress.setValue(self.batch_progress.value())
+        self.quick_job_status.setText(self.batch_status.text())
+        worker = self._batch_worker
+        self.quick_stop_button.setEnabled(worker is not None and not worker.cancel_event.is_set())
+
+    def _quick_poe_action(self, action: PortAction) -> None:
+        """Direct PoE action: construct the internal frozen plan transparently."""
+        if self._selection_locked() or not self._checked_port_keys:
+            return
+        index = self.action_combo.findData(action.value)
+        if index < 0:
+            return
+        self.action_combo.setCurrentIndex(index)
+        self._prepare_batch()
+        if self._batch_plan is not None and self._batch_plan.action is action:
+            self._run_batch(quick=True)
+
+    @Slot()
+    def _quick_cycle(self) -> None:
+        """Advance without automatic ON; each OFF/ON has a separate approval."""
+        if self.is_busy:
+            return
+        phase = self._cycle.phase if self._cycle is not None else None
+        if phase in (PowerCyclePhase.OFF_READY, PowerCyclePhase.ON_READY):
+            if self._batch_plan is not None:
+                self._run_batch(quick=True)
+            return
+        self._cycle_next()
+        phase = self._cycle.phase if self._cycle is not None else None
+        if (
+            phase in (PowerCyclePhase.OFF_READY, PowerCyclePhase.ON_READY)
+            and self._batch_plan is not None
+        ):
+            self._run_batch(quick=True)
+
     def _set_busy(self, busy: bool) -> None:
         super()._set_busy(busy)
         if hasattr(self, "plan_button"):
             self._update_control_buttons()
+        self._sync_quick_job()
 
     def _invalidate(self) -> None:
         cycle = getattr(self, "_cycle", None)
@@ -627,6 +850,15 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             cycle.interrupt()
         if hasattr(self, "_batch_plan"):
             self._batch_plan = None
+        if hasattr(self, "_checked_port_keys"):
+            with QSignalBlocker(self.result_tree):
+                for key in self._checked_port_keys:
+                    item = self._items.get(key)
+                    if item is not None:
+                        item.setCheckState(0, Qt.CheckState.Unchecked)
+                for parent in self._parents.values():
+                    parent.setCheckState(0, Qt.CheckState.Unchecked)
+            self._checked_port_keys.clear()
         super()._invalidate()
         if hasattr(self, "plan_preview"):
             self.plan_preview.setText("입력 대상이 변경되어 작업 계획을 초기화했습니다.")
@@ -651,20 +883,28 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         super()._start(groups, credentials)
 
     def _selected_rows(self) -> tuple[PoEQueryResult, ...]:
-        selected: set[tuple[str, str]] = set()
-        for item in self.result_tree.selectedItems():
-            if item.isHidden() or (item.parent() is not None and item.parent().isHidden()):
-                continue
-            key = cast(tuple[str, str] | None, item.data(0, Qt.ItemDataRole.UserRole))
-            if key is not None and key[1]:
-                selected.add(key)
-        # One accidental parent selection must never select all child ports.
+        """Only checked ports can enter a change plan; focus is for details."""
+        checked = self._checked_port_keys
         return tuple(
             self._results[key]
             for group in self._groups
             for interface in group.interfaces
-            if (key := (group.target.endpoint, interface)) in selected and key in self._results
+            if (key := (group.target.endpoint, interface)) in checked and key in self._results
         )
+
+    def _checked_rows_for_plan(self) -> tuple[PoEQueryResult, ...]:
+        """Fail closed: missing observations must not silently drop checked ports."""
+        if not self._checked_port_keys:
+            raise BatchControlError("작업할 포트를 체크하세요.")
+        if len(self._checked_port_keys) > 300:
+            raise BatchControlError("일괄 작업은 300포트 이하로 나눠 실행해야 합니다.")
+        rows = self._selected_rows()
+        if len(rows) != len(self._checked_port_keys):
+            raise BatchControlError(
+                "체크된 포트 중 조회 결과가 없는 대상이 있습니다. 전체 대상 상태를 확인하고 "
+                "다시 조회하세요. 임의로 일부 포트를 제외하여 실행하지 않습니다."
+            )
+        return rows
 
     @Slot()
     def _update_control_buttons(self) -> None:
@@ -678,13 +918,10 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.cancel_batch_button.setEnabled(self._batch_thread is not None)
         self.action_combo.setEnabled(not busy)
         self.history_button.setEnabled(not busy)
-        self.search_input.setEnabled(not busy)
-        self.filter_combo.setEnabled(not busy)
+        locked = self._selection_locked()
+        self.search_input.setEnabled(not locked)
+        self.filter_combo.setEnabled(not locked)
         if hasattr(self, "selection_scope"):
-            locked = self._cycle is not None and self._cycle.phase not in (
-                PowerCyclePhase.COMPLETE,
-                PowerCyclePhase.INTERRUPTED,
-            )
             for button in (
                 self.selection_scope,
                 self.select_all_button,
@@ -692,9 +929,22 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 self.select_cycle_eligible_button,
                 self.clear_selection_button,
             ):
-                button.setEnabled(not busy and not locked)
+                button.setEnabled(not locked)
             self.plan_button.setEnabled(self.plan_button.isEnabled() and not locked)
-            self.action_combo.setEnabled(not busy and not locked)
+            self.action_combo.setEnabled(not locked)
+            self.single_button.setEnabled(self.single_button.isEnabled() and not locked)
+            for control in (
+                self.collect_button,
+                self.refresh_group_button,
+                self.refresh_port_button,
+                self.add_button,
+                self.remove_button,
+                self.paste_button,
+                self.load_button,
+                self.advanced_toggle,
+                self.targets_table,
+            ):
+                control.setEnabled(not locked)
         if hasattr(self, "cycle_button"):
             self._update_cycle_controls()
 
@@ -702,11 +952,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
     def _prepare_batch(self) -> None:
         if self.is_busy:
             return
-        selected = self._selected_rows()
-        if not selected:
-            QMessageBox.information(self, "작업 대상 선택", "조회 결과에서 포트 행을 선택하세요.")
-            return
         try:
+            selected = self._checked_rows_for_plan()
             action = PortAction(str(self.action_combo.currentData()))
             self._batch_plan = create_batch_plan(selected, action)
         except (BatchControlError, ValueError) as exc:
@@ -723,13 +970,36 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self._update_control_buttons()
 
     @Slot()
-    def _run_batch(self) -> None:
+    def _run_batch(self, *, quick: bool = False) -> None:
         if self.is_busy or self._batch_plan is None:
             return
         plan = self._batch_plan
-        confirmation = BatchConfirmationDialog(plan, self)
-        if confirmation.exec() != QDialog.DialogCode.Accepted:
-            return
+        if quick:
+            # Single-port OFF and all ON actions begin from one deliberate click.
+            # Bulk OFF has one concise confirmation to prevent accidental AP outages.
+            if plan.action is PortAction.POE_OFF and len(plan.targets) > 1:
+                summary = "\n".join(
+                    f"{item.expected_hostname} ({item.target.ip}) / {item.interface}"
+                    for item in plan.targets[:12]
+                )
+                if len(plan.targets) > 12:
+                    summary += f"\n외 {len(plan.targets) - 12}개 포트"
+                answer = QMessageBox.question(
+                    self,
+                    "다중 PoE 전원 OFF 확인",
+                    f"선택한 {len(plan.targets)}개 포트의 PoE를 끕니다. "
+                    "연결된 AP 서비스가 중단될 수 있습니다.\n\n"
+                    f"{summary}\n\n진행하시겠습니까?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+        else:
+            # Legacy advanced mode preserves typed EXECUTE N and 10-port approvals.
+            confirmation = BatchConfirmationDialog(plan, self)
+            if confirmation.exec() != QDialog.DialogCode.Accepted:
+                return
         try:
             credentials = self._credentials()
         except ValueError:
@@ -754,7 +1024,12 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 QMessageBox.warning(self, "PoE 재가동 승인", str(exc))
                 return
         thread = QThread(self)
-        worker = _BatchWorker(plan, credentials, controller=self._batch_controller)
+        worker = _BatchWorker(
+            plan,
+            credentials,
+            controller=self._batch_controller,
+            auto_continue_chunks=quick,
+        )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._batch_progress)
@@ -770,6 +1045,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.batch_progress.setRange(0, len(plan.targets))
         self.batch_progress.setValue(0)
         self.batch_status.setText(f"일괄 작업 실행 중 · 0/{len(plan.targets)}개 완료")
+        self.quick_job_widget.setVisible(True)
         self._set_busy(True)
         thread.start()
 
@@ -805,6 +1081,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             f"일괄 작업: {self._batch_count}/{len(self._batch_plan.targets) if self._batch_plan else '?'}개 처리 · "
             f"현재 결과 {result.status.value} · {result.message}"
         )
+        self._sync_quick_job()
 
     @Slot(object)
     def _batch_completed(self, value: object) -> None:
@@ -826,6 +1103,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             f"미실행 {counts['paused'] + counts['cancelled']}\n"
             f"작업 이력: {result.journal_path}"
         )
+        self._sync_quick_job()
         self._batch_plan = None
 
     @Slot(str)
@@ -857,6 +1135,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             "실제 스위치 상태를 수동 재조회하세요. 자동 재실행하지 않습니다."
         )
         self._batch_plan = None
+        self._sync_quick_job()
         self.plan_preview.setText("일괄 제어 실패 · 대상 포트를 다시 조회한 뒤 계획을 작성하세요.")
         self._update_control_buttons()
         if self.search_input.text() or self.filter_combo.currentData() != "all":
@@ -887,6 +1166,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 "일괄 작업 중지 요청 · 실행 중 명령이 끝나면 남은 대상은 수행하지 않습니다."
             )
             self.cancel_batch_button.setEnabled(False)
+            self._sync_quick_job()
 
     @Slot()
     def _batch_thread_finished(self) -> None:
@@ -900,6 +1180,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             thread.deleteLater()
         self._set_busy(False)
         self._update_cycle_controls()
+        self._sync_quick_job()
         if self._close_after_batch:
             self._close_after_batch = False
             self.reject()
@@ -930,7 +1211,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 self._update_cycle_controls()
                 return
             try:
-                plan = prepare_cycle_off(self._selected_rows())
+                plan = prepare_cycle_off(self._checked_rows_for_plan())
             except (BatchControlError, ValueError) as exc:
                 QMessageBox.warning(self, "재가동 OFF 계획 확인", str(exc))
                 return
@@ -1016,6 +1297,32 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 PowerCyclePhase.ON_RUNNING,
             )
         )
+        if hasattr(self, "quick_cycle_button"):
+            active = phase not in (None, PowerCyclePhase.COMPLETE, PowerCyclePhase.INTERRUPTED)
+            locked = self.is_busy or active
+            self.quick_off_button.setEnabled(bool(self._checked_port_keys) and not locked)
+            self.quick_on_button.setEnabled(bool(self._checked_port_keys) and not locked)
+            short_labels = {
+                PowerCyclePhase.OFF_READY: "OFF 승인…",
+                PowerCyclePhase.OFF_RUNNING: "OFF 진행 중",
+                PowerCyclePhase.REQUERY_OFF: "OFF 재조회",
+                PowerCyclePhase.ON_PREPARE: "PoE ON 실행",
+                PowerCyclePhase.ON_READY: "ON 승인…",
+                PowerCyclePhase.ON_RUNNING: "ON 진행 중",
+                PowerCyclePhase.REQUERY_ON: "복구 재조회",
+                PowerCyclePhase.VERIFY_ON: "PoE 복구 확인",
+                PowerCyclePhase.INTERRUPTED: "중단 상태 확인",
+            }
+            label = "PoE 재가동"
+            if phase is not None:
+                label = short_labels.get(phase, label)
+            self.quick_cycle_button.setText(label)
+            self.quick_cycle_button.setEnabled(
+                not self.is_busy
+                and (
+                    active or phase is PowerCyclePhase.INTERRUPTED or bool(self._checked_port_keys)
+                )
+            )
         if session is None:
             self.cycle_status.setText(
                 "포트를 선택한 뒤 OFF → 재조회 → 별도 승인 ON → 복구 재조회를 진행합니다."
