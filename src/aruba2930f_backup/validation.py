@@ -329,9 +329,7 @@ def _config_lines_outside_banners(text: str) -> tuple[str, ...] | None:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     for line in normalized.split("\n"):
         if delimiter is None:
-            match = re.fullmatch(
-                r"[ \t]*banner[ \t]+motd(?:[ \t]+(.*))?", line, re.IGNORECASE
-            )
+            match = re.fullmatch(r"[ \t]*banner[ \t]+motd(?:[ \t]+(.*))?", line, re.IGNORECASE)
             if match is None:
                 outside.append(line)
                 continue
