@@ -708,51 +708,54 @@ class PoEQueryDialog(QDialog):
                 LLDPStatus.FAILED: "조회 실패",
                 LLDPStatus.CANCELLED: "조회 취소",
             }[lldp.status]
-        item.setText(1, ap_name)
-        item.setText(
-            2,
-            "확인 안 됨" if snapshot is None or snapshot.watts is None else f"{snapshot.watts:g} W",
-        )
-        diagnosis = diagnose_port_power(snapshot)
-        if snapshot is not None:
-            port_state = port_admin_link_label(snapshot)
-            poe_state = poe_supply_label(snapshot)
-            port_detail = (
-                f"관리 설정: {'Disable' if not snapshot.enabled else 'Enable'} · "
-                f"실제 링크: {snapshot.link_status}. "
-                "포트 Disable와 PoE OFF는 별개의 설정입니다."
+        # Qt itemChanged is not an observation event: avoid thousands of
+        # redundant checkbox callbacks when merely painting measured values.
+        with QSignalBlocker(self.result_tree):
+            item.setText(1, ap_name)
+            item.setText(
+                2,
+                "확인 안 됨" if snapshot is None or snapshot.watts is None else f"{snapshot.watts:g} W",
             )
-            poe_detail = diagnosis.reason
-        elif result.complete:
-            # A failed query is unknown, never a measured 0W or assumed OFF.
-            query_state = "취소" if result.status is QueryStatus.CANCELLED else "조회 실패"
-            port_state = query_state
-            poe_state = query_state
-            port_detail = result.message or "포트 관리 설정을 확인하지 못했습니다."
-            poe_detail = result.message or "PoE 설정과 실측 전력을 확인하지 못했습니다."
-        else:
-            port_state = "조회 중"
-            poe_state = "조회 중"
-            port_detail = "포트 관리 설정을 조회하고 있습니다."
-            poe_detail = "PoE 설정을 조회하고 있습니다."
-        item.setText(3, port_state)
-        item.setToolTip(3, _tooltip(port_detail))
-        item.setText(4, _local_time(snapshot.observed_at if snapshot else result.finished_at))
-        item.setText(5, poe_state)
-        notes = " · ".join(
-            filter(
-                None,
-                (
-                    poe_detail,
-                    result.message,
-                    lldp.message if lldp else "",
-                    "LLDP 조회 중" if not result.complete else "",
-                    "LLDP 실패" if lldp is not None and lldp.status is LLDPStatus.FAILED else "",
-                    "LLDP 취소" if lldp is not None and lldp.status is LLDPStatus.CANCELLED else "",
-                ),
+            diagnosis = diagnose_port_power(snapshot)
+            if snapshot is not None:
+                port_state = port_admin_link_label(snapshot)
+                poe_state = poe_supply_label(snapshot)
+                port_detail = (
+                    f"관리 설정: {'Disable' if not snapshot.enabled else 'Enable'} · "
+                    f"실제 링크: {snapshot.link_status}. "
+                    "포트 Disable와 PoE OFF는 별개의 설정입니다."
+                )
+                poe_detail = diagnosis.reason
+            elif result.complete:
+                # A failed query is unknown, never a measured 0W or assumed OFF.
+                query_state = "취소" if result.status is QueryStatus.CANCELLED else "조회 실패"
+                port_state = query_state
+                poe_state = query_state
+                port_detail = result.message or "포트 관리 설정을 확인하지 못했습니다."
+                poe_detail = result.message or "PoE 설정과 실측 전력을 확인하지 못했습니다."
+            else:
+                port_state = "조회 중"
+                poe_state = "조회 중"
+                port_detail = "포트 관리 설정을 조회하고 있습니다."
+                poe_detail = "PoE 설정을 조회하고 있습니다."
+            item.setText(3, port_state)
+            item.setToolTip(3, _tooltip(port_detail))
+            item.setText(4, _local_time(snapshot.observed_at if snapshot else result.finished_at))
+            item.setText(5, poe_state)
+            notes = " · ".join(
+                filter(
+                    None,
+                    (
+                        poe_detail,
+                        result.message,
+                        lldp.message if lldp else "",
+                        "LLDP 조회 중" if not result.complete else "",
+                        "LLDP 실패" if lldp is not None and lldp.status is LLDPStatus.FAILED else "",
+                        "LLDP 취소" if lldp is not None and lldp.status is LLDPStatus.CANCELLED else "",
+                    ),
+                )
             )
-        )
-        item.setToolTip(5, _tooltip(notes))
+            item.setToolTip(5, _tooltip(notes))
         if self._coalescing_groups:
             self._dirty_groups.add(key[0])
         else:
