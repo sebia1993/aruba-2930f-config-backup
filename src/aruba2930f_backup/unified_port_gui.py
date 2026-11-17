@@ -531,10 +531,31 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
 
     @Slot(str)
     def _batch_failed(self, message: str) -> None:
+        # A result-journal write can fail *after* a switch mutation but
+        # before on_result is emitted. Treat all planned rows as potentially
+        # stale and require an explicit new query before another control.
+        plan = self._batch_plan
+        if plan is not None:
+            for target in plan.targets:
+                key = (target.target.endpoint, target.interface)
+                self._results.pop(key, None)
+                item = self._items.get(key)
+                if item is not None:
+                    item.setText(1, "재조회 필요")
+                    item.setText(2, "—")
+                    item.setText(3, "확인 필요")
+                    item.setText(5, "일괄 작업 실패 · 결과 불확실")
+                    item.setToolTip(5, "작업 이력을 확인하고 수동 재조회하세요.")
+        self._batch_outcome = None
         self.batch_status.setText(
-            message + "\n명령 전송 여부가 불확실한 항목은 자동 재실행하지 않습니다."
+            message + "\n계획 대상의 이전 AP·전력 조회값을 무효화했습니다. "
+            "실제 스위치 상태를 수동 재조회하세요. 자동 재실행하지 않습니다."
         )
         self._batch_plan = None
+        self.plan_preview.setText("일괄 제어 실패 · 대상 포트를 다시 조회한 뒤 계획을 작성하세요.")
+        self._update_control_buttons()
+        if self.search_input.text() or self.filter_combo.currentData() != "all":
+            self._filter_timer.start()
 
     @Slot(int, int)
     def _approve_next_chunk(self, processed: int, total: int) -> None:

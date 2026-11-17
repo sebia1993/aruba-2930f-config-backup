@@ -245,3 +245,38 @@ def test_change_action_after_plan_forces_new_explicit_approval(app: QApplication
     assert dialog._batch_plan is None
     assert not dialog.run_button.isEnabled()
     dialog.close()
+
+
+def test_failed_batch_without_result_callbacks_invalidates_planned_ports(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aruba2930f_backup.batch_port_control import BatchControlError
+
+    class FailedAuditController:
+        def execute(self, plan: object, credentials: object, **kwargs: object) -> None:
+            del plan, credentials, kwargs
+            # Represents a durable result record failure after mutation.
+            raise BatchControlError("result journal append failed")
+
+    dialog = setup_dialog()
+    dialog._batch_controller = FailedAuditController()  # type: ignore[assignment]
+    first = dialog._items[(TARGET.endpoint, "1")]
+    first.setSelected(True)
+    dialog._prepare_batch()
+    assert dialog._batch_plan is not None
+    monkeypatch.setattr(BatchConfirmationDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
+    dialog._run_batch()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and dialog._batch_thread is not None:
+        app.processEvents()
+        time.sleep(0.01)
+    assert dialog._batch_thread is None
+    assert dialog._batch_outcome is None
+    assert (TARGET.endpoint, "1") not in dialog._results
+    assert (TARGET.endpoint, "2") in dialog._results
+    assert first.text(1) == "재조회 필요"
+    assert first.text(2) == "—"
+    assert "결과 불확실" in first.text(5)
+    assert dialog._batch_plan is None
+    assert not dialog.run_button.isEnabled()
+    dialog.close()
