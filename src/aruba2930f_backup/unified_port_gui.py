@@ -39,7 +39,6 @@ from .poe_query_gui import PoEQueryDialog, PoEQueryServiceProtocol
 from .poe_query_models import PoEQueryResult, PoETarget
 from .port_control import PortAction
 
-
 ACTION_TITLES: dict[PortAction, str] = {
     PortAction.POE_ON: "PoE 전원 ON",
     PortAction.POE_OFF: "PoE 전원 OFF",
