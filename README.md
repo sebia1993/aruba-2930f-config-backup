@@ -7,9 +7,13 @@
 
 > **v0.3.0에서는 스위치 IP·포트 목록을 입력해 포트별 전력, LLDP AP 이름, AP-535 공급 판정을 함께 조회합니다.** 결과는 IP·실제 호스트네임으로 묶고 대상 목록을 저장·불러오기 할 수 있습니다. [전력·LLDP 조회 안내](docs/POE_QUERY_KO.md)에서 판정 근거와 사용법을 확인하십시오. v0.2.0의 [단일 포트 제어](docs/PORT_CONTROL_KO.md)도 계속 제공합니다.
 
+> **v0.4.0 개발:** 기존 전력·LLDP 조회와 단일 포트 제어를 [포트 통합 관리](docs/PORT_UNIFIED_KO.md) 한 화면에 합쳤습니다. 최대 300개 스위치·14,400포트 조회, 포트 다중 선택, 일괄 제어 작업 계획과 확인·중단·이력 추적 기능을 추가합니다. 실제 운영망 검증 전까지 일괄 제어는 검증된 테스트 환경에서만 사용하십시오.
+
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
-> 현재 개발 버전은 **v0.3.0**입니다. 사전릴리즈 게시 여부와 다운로드는 GitHub Releases에서, 병합 전 Windows 빌드와 해당 커밋의 검증 결과는 Actions에서 확인하십시오. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다. v0.2.0의 RSA/SHA-1 차단 보완과 Paramiko 의존성 감사 예외를 유지합니다. [의존성 감사 예외](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)의 배포 경계를 확인하십시오.
+> 현재 개발 브랜치는 **v0.4.0**입니다. 기존 v0.3.0 사전릴리즈는 계속 사용할 수 있습니다. 개발 중인 Windows CI 패키지는 `Aruba2930FConfigBackup_v0.4.0_windows_x64.zip`이며 정식 게시 전에는 Release 다운로드가 아닌 CI 검증용입니다.
+
+> 현재 공개 버전은 **v0.3.0**입니다. 사전릴리즈 게시 여부와 다운로드는 GitHub Releases에서, 병합 전 Windows 빌드와 해당 커밋의 검증 결과는 Actions에서 확인하십시오. 단위 테스트, 가상/루프백 SSH 검증, Windows 패키지 점검, SHA-256 및 SBOM 검증을 자동화했습니다. 실제 Aruba 2930F 현장 검증은 [검증 보고서](docs/VALIDATION_REPORT.md)에서 별도로 관리합니다. v0.2.0의 RSA/SHA-1 차단 보완과 Paramiko 의존성 감사 예외를 유지합니다. [의존성 감사 예외](docs/DEPENDENCY_AUDIT_EXCEPTIONS_KO.md)의 배포 경계를 확인하십시오.
 
 ## 포트폴리오 요약
 
