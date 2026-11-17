@@ -407,3 +407,16 @@ def test_excel_two_columns_with_common_korean_headers_merge_identical_switches(
 def test_bad_excel_row_has_line_number_and_never_uses_csv_fallback() -> None:
     with pytest.raises(ValueError, match="2행"):
         parse_pasted_targets("192.0.2.10\t1\n192.0.2.20\tall,24")
+
+
+def test_quoted_csv_alias_with_embedded_tab_remains_supported() -> None:
+    groups = parse_pasted_targets('192.0.2.10,22,12,"floor\tA"')
+    assert len(groups) == 1
+    assert groups[0].target.endpoint == "192.0.2.10:22"
+    assert groups[0].interfaces == ("12",)
+    assert groups[0].label == "floor\tA"
+
+
+def test_reported_error_line_accounts_for_excel_header() -> None:
+    with pytest.raises(ValueError, match="3행"):
+        parse_pasted_targets("스위치 IP\t포트\n192.0.2.10\t12\n192.0.2.20\tall")

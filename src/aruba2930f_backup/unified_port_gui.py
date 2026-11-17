@@ -634,9 +634,20 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             self._update_cycle_controls()
 
     def _start(self, groups: tuple[PoETarget, ...], credentials: Credentials) -> None:
+        # A manual refresh invalidates frozen control plans. An ON plan must
+        # remain recoverable via a fresh read of the *original verified OFF*
+        # targets; never strand powered-off APs behind a disabled wizard.
+        session = self._cycle
+        if session is not None and session.phase is PowerCyclePhase.OFF_READY:
+            session.interrupt()
+        elif session is not None and session.phase is PowerCyclePhase.ON_READY:
+            session.on_plan = None
+            session.phase = PowerCyclePhase.REQUERY_OFF
         self._batch_plan = None
         if hasattr(self, "plan_preview"):
             self.plan_preview.setText("재조회 중 · 완료 후 포트 제어 계획을 다시 작성하세요.")
+        if hasattr(self, "cycle_button"):
+            self._update_cycle_controls()
         super()._start(groups, credentials)
 
     def _selected_rows(self) -> tuple[PoEQueryResult, ...]:

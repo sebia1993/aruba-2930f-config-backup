@@ -403,3 +403,50 @@ def test_cycle_eligible_button_uses_ap535_and_current_poe_on_not_generic_on(
     assert not dialog._items[(TARGET.endpoint, "2")].isSelected()
     assert len(dialog._selected_rows()) == 1
     dialog.close()
+
+
+def test_refresh_invalidates_ready_off_plan_without_stranding_wizard(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aruba2930f_backup.models import Credentials
+    from aruba2930f_backup.poe_cycle import PowerCyclePhase
+    from aruba2930f_backup.poe_query_gui import PoEQueryDialog
+
+    dialog = setup_dialog()
+    dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
+    dialog._cycle_next()
+    assert dialog._cycle is not None
+    assert dialog._cycle.phase is PowerCyclePhase.OFF_READY
+    monkeypatch.setattr(PoEQueryDialog, "_start", lambda *_args: None)
+    dialog._start(dialog._groups, Credentials("operator", "test-password"))
+    assert dialog._batch_plan is None
+    assert dialog._cycle.phase is PowerCyclePhase.INTERRUPTED
+    assert dialog.cycle_button.isEnabled()
+    dialog.close()
+
+
+def test_refresh_invalidates_on_plan_but_recovers_original_off_targets(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aruba2930f_backup.batch_port_control import create_batch_plan
+    from aruba2930f_backup.models import Credentials
+    from aruba2930f_backup.poe_cycle import PowerCyclePhase, PowerCycleSession
+    from aruba2930f_backup.poe_query_gui import PoEQueryDialog
+
+    dialog = setup_dialog()
+    dialog.result_tree.setCurrentItem(dialog._items[(TARGET.endpoint, "1")])
+    plan = create_batch_plan([queried("1")], PortAction.POE_OFF)
+    session = PowerCycleSession(plan)
+    session.off_verified = plan.targets
+    session.on_plan = create_batch_plan([queried("1")], PortAction.POE_ON)
+    session.phase = PowerCyclePhase.ON_READY
+    dialog._cycle = session
+    dialog._batch_plan = session.on_plan
+    monkeypatch.setattr(PoEQueryDialog, "_start", lambda *_args: None)
+    dialog._start(dialog._groups, Credentials("operator", "test-password"))
+    assert dialog._batch_plan is None
+    assert session.on_plan is None
+    assert session.phase is PowerCyclePhase.REQUERY_OFF
+    assert dialog.cycle_button.isEnabled()
+    assert session.off_requery_groups()[0].interfaces == ("1",)
+    dialog.close()

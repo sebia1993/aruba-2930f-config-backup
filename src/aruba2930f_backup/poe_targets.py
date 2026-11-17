@@ -100,9 +100,20 @@ def _check_quotes(text: str, delimiter: str) -> None:
 
 def _is_header(row: list[str]) -> bool:
     aliases = (
-        {"ip", "sw ip", "switch ip", "ip 주소"},
+        {"ip", "sw ip", "switch ip", "ip 주소", "스위치 ip", "스위치ip", "스위치 ip 주소"},
         {"ssh port", "ssh_port", "ssh 포트"},
-        {"interfaces", "interface", "interface list", "ports", "인터페이스", "인터페이스 목록"},
+        {
+            "interfaces",
+            "interface",
+            "interface list",
+            "ports",
+            "port",
+            "포트",
+            "포트 번호",
+            "포트번호",
+            "인터페이스",
+            "인터페이스 목록",
+        },
         {"label", "name", "이름", "이름(선택)"},
     )
     selected = (aliases[0], aliases[2]) if len(row) == 2 else aliases[: len(row)]
@@ -150,6 +161,23 @@ def _parse_table(text: str, delimiter: str) -> tuple[PoETarget, ...]:
     return merge_targets(parsed)
 
 
+def _has_unquoted_tab(text: str) -> bool:
+    """Classify Excel TSV without mistaking tabs inside quoted CSV labels."""
+    in_quotes = False
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character == '"':
+            if in_quotes and index + 1 < len(text) and text[index + 1] == '"':
+                index += 2
+                continue
+            in_quotes = not in_quotes
+        elif character == "\t" and not in_quotes:
+            return True
+        index += 1
+    return False
+
+
 def parse_pasted_targets(text: str) -> tuple[PoETarget, ...]:
     """Validate the complete TSV or quoted CSV before returning any targets."""
     if not isinstance(text, str) or len(text) > MAX_PASTE_CHARACTERS:
@@ -157,7 +185,7 @@ def parse_pasted_targets(text: str) -> tuple[PoETarget, ...]:
     text = text.removeprefix("\ufeff")
     # Excel clipboard data uses tabs even when the interface cell has commas.
     # Never reinterpret an invalid TSV block as comma-separated CSV.
-    delimiter = "\t" if "\t" in text else ","
+    delimiter = "\t" if _has_unquoted_tab(text) else ","
     return _parse_table(text, delimiter)
 
 
