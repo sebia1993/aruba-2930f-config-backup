@@ -41,7 +41,7 @@ def measured(port: str, *, enabled: bool = True, model: str = "AP-535") -> PoEQu
     )
     lldp = LLDPObservation(
         LLDPStatus.OK,
-        (LLDPNeighbor(system_name=f"AP-{port}", model=model),) if enabled else (),
+        (LLDPNeighbor(system_name=f"AP-{port}", model=model, chassis_id=f"chassis-{port}", port_id=f"eth-{port}"),) if enabled else (),
     )
     return PoEQueryResult(
         PoETarget(TARGET, (port,)),
