@@ -159,24 +159,27 @@ def write_config_atomic(
     payload = normalize_config_text(config_text).encode("utf-8")
     # A fixed .part name may already be owned by another writer or be a link.
     # Create a fresh exclusive sibling file while preserving the final TXT name.
-    stream = tempfile.NamedTemporaryFile(
-        mode="wb",
-        prefix=f"{final_path.name}.",
-        suffix=".part",
-        dir=final_path.parent,
-        delete=False,
-    )
-    partial_path = Path(stream.name)
+    partial_path: Path | None = None
     try:
-        with stream:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f"{final_path.name}.",
+            suffix=".part",
+            dir=final_path.parent,
+            delete=False,
+        ) as stream:
+            partial_path = Path(stream.name)
             if os.name != "nt":
                 os.chmod(partial_path, 0o600)
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
+        if partial_path is None:
+            raise OSError("Configuration temporary file was not created.")
         os.replace(partial_path, final_path)
     except BaseException:
-        partial_path.unlink(missing_ok=True)
+        if partial_path is not None:
+            partial_path.unlink(missing_ok=True)
         raise
 
     return StoredConfig(
