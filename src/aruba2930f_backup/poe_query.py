@@ -192,18 +192,22 @@ class PoEQueryService:
         approve: Callable[[HostKeyCheck], bool],
         cancel: threading.Event,
     ) -> HostKeyObservation:
-        _check_cancel(cancel)
+        # Network probes are read-only and independently bounded. Do not hold
+        # the global approval lock while a slow/unreachable switch is probed:
+        # otherwise one timeout serializes all three query workers.
+        observation = _bounded(
+            cancel,
+            lambda: self._probe.probe(target, timeout=self._options.connect_timeout_seconds),
+        )
+        if observation.target != target:
+            raise CollectionFailure(
+                ErrorCode.HOST_KEY_REJECTED, "SSH 지문 조회 대상이 일치하지 않습니다."
+            )
+        # Keep check / operator approval / store commit serialized to preserve
+        # the existing no-auto-trust policy and deterministic prompt handling.
         while not self._trust_lock.acquire(timeout=0.05):
             _check_cancel(cancel)
         try:
-            observation = _bounded(
-                cancel,
-                lambda: self._probe.probe(target, timeout=self._options.connect_timeout_seconds),
-            )
-            if observation.target != target:
-                raise CollectionFailure(
-                    ErrorCode.HOST_KEY_REJECTED, "SSH 지문 조회 대상이 일치하지 않습니다."
-                )
             check = _bounded(cancel, lambda: self.host_key_store.check(observation))
             if (
                 check.state is HostKeyTrustState.UNKNOWN
