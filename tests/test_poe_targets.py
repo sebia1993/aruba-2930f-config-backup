@@ -87,24 +87,19 @@ def test_target_limits_apply_after_merge() -> None:
         parse_interfaces(ports + ",385")
     with pytest.raises(ValueError):
         make_target("192.0.2.1", 22, "1", "x" * 81)
-    targets = [make_target(f"192.0.2.{i}", 22, "1") for i in range(1, 101)]
-    assert len(merge_targets(targets)) == 100
-    with pytest.raises(ValueError):
-        merge_targets([*targets, make_target("192.0.2.101", 22, "1")])
-    full = [make_target(f"192.0.2.{i}", 22, ports) for i in range(1, 6)]
-    assert (
-        sum(
-            len(g.interfaces)
-            for g in merge_targets(
-                [*full, make_target("192.0.2.6", 22, ",".join(str(i) for i in range(1, 81)))]
-            )
-        )
-        == 2000
-    )
-    with pytest.raises(ValueError):
-        merge_targets([*full, make_target("192.0.2.6", 22, ",".join(str(i) for i in range(1, 82)))])
-    with pytest.raises(ValueError):
-        merge_targets([make_target("192.0.2.1", 22, ports), make_target("192.0.2.1", 22, "385")])
+
+    targets = [make_target(f"192.0.2.{i}", 22, "1") for i in range(1, 251)]
+    targets += [make_target(f"198.51.100.{i}", 22, "1") for i in range(1, 51)]
+    assert len(merge_targets(targets)) == 300
+    with pytest.raises(ValueError, match="300"):
+        merge_targets([*targets, make_target("203.0.113.1", 22, "1")])
+
+    full = [make_target(f"192.0.2.{i}", 22, ports) for i in range(1, 38)]
+    remainder = ",".join(str(i) for i in range(1, 193))
+    groups = merge_targets([*full, make_target("192.0.2.38", 22, remainder)])
+    assert sum(len(g.interfaces) for g in groups) == 14_400
+    with pytest.raises(ValueError, match="14,400"):
+        merge_targets([*full, make_target("192.0.2.38", 22, remainder + ",193")])
 
 
 def test_direct_target_construction_enforces_interface_and_port_safety() -> None:
@@ -250,7 +245,7 @@ def test_profile_rejects_invalid_or_secret_bearing_content(tmp_path: Path, mutat
     elif mutation == "invalid_ip":
         entry["ip"] = "example.com"
     elif mutation == "too_many_targets":
-        document["targets"] = [entry] * 101
+        document["targets"] = [entry] * 301
     elif mutation == "too_many_ports":
         entry["interfaces"] = [str(i) for i in range(1, 386)]
     raw = json.dumps(document).encode()

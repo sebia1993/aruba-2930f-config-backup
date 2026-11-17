@@ -65,9 +65,9 @@ def merge_targets(targets: Sequence[PoETarget]) -> tuple[PoETarget, ...]:
             )
         merged[group.target] = group
         if len(merged) > MAX_TARGETS:
-            raise ValueError("접속 대상은 최대 100개입니다.")
+            raise ValueError("접속 대상은 최대 300개입니다.")
         if sum(len(item.interfaces) for item in merged.values()) > MAX_TOTAL_INTERFACES:
-            raise ValueError("전체 인터페이스는 최대 2,000개입니다.")
+            raise ValueError("전체 인터페이스는 최대 14,400개입니다.")
     return tuple(merged.values())
 
 

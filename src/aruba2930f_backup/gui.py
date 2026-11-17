@@ -1267,8 +1267,11 @@ class MainWindow(QMainWindow):
         self.port_control_button = QPushButton("포트 제어…", options_group)
         self.port_control_button.setObjectName("portControlButton")
         self.port_control_button.clicked.connect(self._open_port_control)
+        # Keep the legacy single-port dialog callable for compatibility, but
+        # present one unified operator entrypoint instead of competing menus.
+        self.port_control_button.hide()
         options_layout.addWidget(self.port_control_button, 1, 2)
-        self.poe_query_button = QPushButton("포트 전력 조회…", options_group)
+        self.poe_query_button = QPushButton("포트 통합 관리…", options_group)
         self.poe_query_button.setObjectName("poeQueryButton")
         self.poe_query_button.clicked.connect(self._open_poe_query)
         options_layout.addWidget(self.poe_query_button, 3, 2)
@@ -2033,9 +2036,9 @@ class MainWindow(QMainWindow):
             or self._poe_query_dialog is not None
         ):
             return
-        from .poe_query_gui import PoEQueryDialog
+        from .unified_port_gui import UnifiedPortManagementDialog
 
-        dialog = PoEQueryDialog(
+        dialog = UnifiedPortManagementDialog(
             self,
             initial_ips=tuple(
                 line.strip() for line in self.ip_input.toPlainText().splitlines() if line.strip()

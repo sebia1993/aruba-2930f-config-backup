@@ -842,3 +842,31 @@ def test_cross_schema_paste_keeps_existing_targets_atomic(
         == before_cells
     )
     assert service.calls == []
+
+
+def test_large_query_gui_batches_result_signals_without_losing_final_state(
+    app: QApplication, qtbot: object
+) -> None:
+    from aruba2930f_backup.models import DeviceTarget
+
+    dialog = PoEQueryDialog(username="operator", password="test-password")
+    qtbot.addWidget(dialog)
+    group = PoETarget(DeviceTarget("192.0.2.10"), ("24",))
+    dialog._build_results((group,))
+    dialog._run_total = 1_000
+    item = dialog._items[(group.target.endpoint, "24")]
+    assert item.text(5) == ""
+    row = PoEQueryResult(
+        group,
+        "24",
+        QueryStatus.FAILED,
+        message="synthetic query failure",
+        complete=True,
+    )
+    dialog._on_result(row)
+    assert len(dialog._render_queue) == 1
+    assert item.text(5) == ""
+    dialog._flush_result_queue()
+    assert not dialog._render_queue
+    assert item.text(5) == "실패"
+    dialog.close()

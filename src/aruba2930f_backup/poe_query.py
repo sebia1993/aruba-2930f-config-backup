@@ -263,10 +263,15 @@ class PoEQueryService:
                 modules,
                 hostname=hostname_from_prompt(_bounded(cancel, session.get_prompt)),
             )
+            # AOS-S show interfaces brief reports all local interfaces.
+            # Reading it once per switch prevents hundreds of duplicate SSH
+            # commands when an operator selects many AP ports.
+            interfaces_output: str | None = None
             for interface in group.interfaces:
                 try:
-                    output = _bounded(cancel, session.read_interfaces)
-                    port = parse_interface_status(output, interface)
+                    if interfaces_output is None:
+                        interfaces_output = _bounded(cancel, session.read_interfaces)
+                    port = parse_interface_status(interfaces_output, interface)
                     poe, evidence = self._read_poe(session, interface, identity, port, cancel)
                     _check_cancel(cancel)
                     snapshot = PortSnapshot(

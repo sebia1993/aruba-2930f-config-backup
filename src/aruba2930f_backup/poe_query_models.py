@@ -12,9 +12,9 @@ from .port_control import PortSnapshot, validate_interface
 if TYPE_CHECKING:
     from .poe_power import LLDPObservation, PowerAssessment, PowerEvidence
 
-MAX_TARGETS = 100
+MAX_TARGETS = 300
 MAX_INTERFACES_PER_TARGET = 384
-MAX_TOTAL_INTERFACES = 2_000
+MAX_TOTAL_INTERFACES = 14_400
 MAX_LABEL_LENGTH = 80
 
 

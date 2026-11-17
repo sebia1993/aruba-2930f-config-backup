@@ -190,6 +190,10 @@ class PoEQueryDialog(QDialog):
         self._parents: dict[str, QTreeWidgetItem] = {}
         self._pending: set[tuple[str, str]] = set()
         self._run_total = 0
+        self._render_queue: list[PoEQueryResult] = []
+        self._render_timer = QTimer(self)
+        self._render_timer.setInterval(35)
+        self._render_timer.timeout.connect(self._flush_result_queue)
         self.setWindowTitle("Aruba 2930F · 포트 전력 조회")
         self.resize(1080, 800)
         self.setMinimumSize(820, 650)
@@ -495,6 +499,8 @@ class PoEQueryDialog(QDialog):
                 QMessageBox.warning(self, "CSV 저장 실패", str(exc))
 
     def _build_results(self, groups: tuple[PoETarget, ...]) -> None:
+        self._render_timer.stop()
+        self._render_queue.clear()
         self.result_tree.clear()
         self._items.clear()
         self._parents.clear()
@@ -629,6 +635,25 @@ class PoEQueryDialog(QDialog):
 
     @Slot(object)
     def _on_result(self, value: object) -> None:
+        # Large jobs deliver up to two observations per port. Coalescing GUI
+        # writes keeps the main event loop responsive even at 14,400 ports.
+        if self._run_total > 750:
+            self._render_queue.append(cast(PoEQueryResult, value))
+            if not self._render_timer.isActive():
+                self._render_timer.start()
+            return
+        self._apply_result(value)
+
+    @Slot()
+    def _flush_result_queue(self) -> None:
+        batch = self._render_queue[:120]
+        del self._render_queue[:120]
+        for result in batch:
+            self._apply_result(result)
+        if not self._render_queue:
+            self._render_timer.stop()
+
+    def _apply_result(self, value: object) -> None:
         result = cast(PoEQueryResult, value)
         key = (result.group.target.endpoint, result.interface)
         if key not in self._items:
@@ -685,7 +710,8 @@ class PoEQueryDialog(QDialog):
         if self._run_total:
             self.progress_bar.setValue(round(completed * 100 / self._run_total))
         self.status_label.setText(f"조회 중: {completed}/{self._run_total}개 포트 처리")
-        self._selection_changed()
+        if self._selected_key() == key:
+            self._selection_changed()
 
     def _update_group(self, group: PoETarget) -> None:
         results = [
@@ -788,6 +814,9 @@ class PoEQueryDialog(QDialog):
         if thread is not None and not thread.wait(100):
             QTimer.singleShot(20, self._thread_finished)
             return
+        self._render_timer.stop()
+        while self._render_queue:
+            self._flush_result_queue()
         cancelled = self._worker is not None and self._worker.cancel_event.is_set()
         # A broken service must never leave pending rows looking measured.
         for endpoint, interface in tuple(self._pending):
@@ -825,7 +854,7 @@ class PoEQueryDialog(QDialog):
                     message=message,
                     finished_at=now,
                 )
-            self._on_result(result)
+            self._apply_result(result)
 
         self._thread = None
         self._worker = None
