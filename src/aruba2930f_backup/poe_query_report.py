@@ -164,7 +164,9 @@ def write_query_csv(path: Path, results: Sequence[PoEQueryResult]) -> None:
                     diagnose_port_power(snapshot).label,
                     diagnose_port_power(snapshot).reason,
                 )
-                writer.writerow(_safe_string(cell) if isinstance(cell, str) else cell for cell in row)
+                writer.writerow(
+                    _safe_string(cell) if isinstance(cell, str) else cell for cell in row
+                )
             output.flush()
             os.fsync(output.fileno())
         if temporary is None:
