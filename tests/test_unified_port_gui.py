@@ -540,17 +540,18 @@ def test_rebuilding_targets_clears_checkboxes_and_prepared_plans(app: QApplicati
     dialog.close()
 
 
-def test_quick_off_uses_existing_reviewed_plan_without_skipping_confirmation(
+def test_quick_off_starts_with_an_internal_plan_but_no_extra_plan_button(
     app: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dialog = setup_dialog()
     dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
     dispatched: list[PortAction] = []
-    monkeypatch.setattr(
-        dialog,
-        "_run_batch",
-        lambda: dispatched.append(dialog._batch_plan.action) if dialog._batch_plan else None,
-    )
+    def capture(*, quick: bool = False) -> None:
+        assert quick
+        if dialog._batch_plan is not None:
+            dispatched.append(dialog._batch_plan.action)
+
+    monkeypatch.setattr(dialog, "_run_batch", capture)
     dialog.quick_off_button.click()
     assert dispatched == [PortAction.POE_OFF]
     assert dialog._batch_plan is not None
@@ -566,11 +567,12 @@ def test_quick_cycle_still_requires_distinct_off_on_operator_approvals(
     dialog = setup_dialog()
     dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
     reviewed: list[PortAction] = []
-    monkeypatch.setattr(
-        dialog,
-        "_run_batch",
-        lambda: reviewed.append(dialog._batch_plan.action) if dialog._batch_plan else None,
-    )
+    def capture(*, quick: bool = False) -> None:
+        assert quick
+        if dialog._batch_plan is not None:
+            reviewed.append(dialog._batch_plan.action)
+
+    monkeypatch.setattr(dialog, "_run_batch", capture)
     dialog.quick_cycle_button.click()
     assert reviewed == [PortAction.POE_OFF]
     assert dialog._cycle is not None
@@ -644,4 +646,88 @@ def test_changed_target_input_clears_old_checks(app: QApplication) -> None:
     assert not dialog._checked_port_keys
     assert (TARGET.endpoint, "1") not in dialog._items
     assert dialog._batch_plan is None
+    dialog.close()
+
+
+def test_quick_single_port_off_executes_without_typed_confirmation(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    dialog._batch_controller = OfflineBatch()  # type: ignore[assignment]
+    dialog._items[(TARGET.endpoint, "1")].setCheckState(0, Qt.CheckState.Checked)
+
+    def forbid_typed_confirmation(_self: object) -> None:
+        raise AssertionError("Quick action must not open EXECUTE N dialog")
+
+    monkeypatch.setattr(BatchConfirmationDialog, "exec", forbid_typed_confirmation)
+    dialog.quick_off_button.click()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and dialog._batch_thread is not None:
+        app.processEvents()
+        time.sleep(0.01)
+    assert dialog._batch_thread is None
+    assert dialog._batch_outcome is not None
+    assert dialog._batch_outcome.plan.action is PortAction.POE_OFF
+    assert len(dialog._batch_outcome.results) == 1
+    dialog.close()
+
+
+def test_quick_bulk_off_requires_one_cancellable_confirmation(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
+    shown: list[str] = []
+
+    def deny(_parent: object, _title: str, message: str, *_args: object) -> object:
+        shown.append(message)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", deny)
+    dialog.quick_off_button.click()
+    assert shown and "2개 포트" in shown[0]
+    assert dialog._batch_thread is None
+    assert dialog._batch_outcome is None
+    assert dialog._batch_plan is not None
+    dialog.close()
+
+
+def test_quick_chunk_continues_without_extra_operator_dialog(
+    app: QApplication,
+) -> None:
+    from aruba2930f_backup.batch_port_control import create_batch_plan
+    from aruba2930f_backup.models import Credentials
+    from aruba2930f_backup.unified_port_gui import _BatchWorker
+
+    del app
+    plan = create_batch_plan([queried("1")], PortAction.POE_OFF)
+    worker = _BatchWorker(
+        plan,
+        Credentials("operator", "test-password"),
+        auto_continue_chunks=True,
+    )
+    checkpoints: list[tuple[int, int]] = []
+    worker.checkpoint.connect(lambda done, total: checkpoints.append((done, total)))
+    assert worker._wait_for_checkpoint(10, 30)
+    assert not checkpoints
+    worker.cancel()
+    assert not worker._wait_for_checkpoint(20, 30)
+
+
+def test_quick_off_rejects_unsafe_selected_port_even_in_direct_mode(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    dialog._on_result(queried("2", model="Aruba 2930F"))
+    dialog._items[(TARGET.endpoint, "2")].setCheckState(0, Qt.CheckState.Checked)
+    messages: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, _title, message: messages.append(message) or QMessageBox.StandardButton.Ok,
+    )
+    dialog.quick_off_button.click()
+    assert dialog._batch_thread is None
+    assert dialog._batch_plan is None
+    assert messages and "AP-535" in messages[0]
     dialog.close()
