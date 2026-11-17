@@ -49,7 +49,16 @@ def row(
     )
     lldp = LLDPObservation(
         LLDPStatus.OK,
-        (LLDPNeighbor(system_name=f"AP-{port}", model=connected_model, chassis_id=f"chassis-{port}", port_id=f"eth-{port}"),) if neighbor else (),
+        (
+            LLDPNeighbor(
+                system_name=f"AP-{port}",
+                model=connected_model,
+                chassis_id=f"chassis-{port}",
+                port_id=f"eth-{port}",
+            ),
+        )
+        if neighbor
+        else (),
     )
     return PoEQueryResult(
         PoETarget(SWITCH, (port,)),
@@ -92,7 +101,10 @@ class FakeControl:
     ) -> PortOperationResult:
         assert credentials is CREDS
         if action in (PortAction.POE_OFF, PortAction.DISABLE):
-            assert expected_lldp_identity == (f"chassis-{snapshot.interface}", f"eth-{snapshot.interface}")
+            assert expected_lldp_identity == (
+                f"chassis-{snapshot.interface}",
+                f"eth-{snapshot.interface}",
+            )
         assert confirmation == snapshot.confirmation_text
         self.applied.append((snapshot.interface, action))
         return PortOperationResult(self.result, self.result, snapshot, snapshot)

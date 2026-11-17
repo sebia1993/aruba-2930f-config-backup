@@ -236,13 +236,11 @@ def backup_storage_permission_warnings(
                 text=True,
                 errors="replace",
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except OSError, subprocess.TimeoutExpired:
             notes.append("백업 폴더의 NTFS ACL을 자동 확인하지 못했습니다. 권한을 직접 확인하세요.")
         else:
             if result.returncode != 0:
-                notes.append(
-                    "백업 폴더의 NTFS ACL 확인이 실패했습니다. 권한을 직접 확인하세요."
-                )
+                notes.append("백업 폴더의 NTFS ACL 확인이 실패했습니다. 권한을 직접 확인하세요.")
             elif any(
                 _PUBLIC_ACL_PRINCIPALS.search(line)
                 and _ACL_READ_OR_WRITE.search(line)

@@ -714,7 +714,9 @@ class PoEQueryDialog(QDialog):
             item.setText(1, ap_name)
             item.setText(
                 2,
-                "확인 안 됨" if snapshot is None or snapshot.watts is None else f"{snapshot.watts:g} W",
+                "확인 안 됨"
+                if snapshot is None or snapshot.watts is None
+                else f"{snapshot.watts:g} W",
             )
             diagnosis = diagnose_port_power(snapshot)
             if snapshot is not None:
@@ -750,8 +752,12 @@ class PoEQueryDialog(QDialog):
                         result.message,
                         lldp.message if lldp else "",
                         "LLDP 조회 중" if not result.complete else "",
-                        "LLDP 실패" if lldp is not None and lldp.status is LLDPStatus.FAILED else "",
-                        "LLDP 취소" if lldp is not None and lldp.status is LLDPStatus.CANCELLED else "",
+                        "LLDP 실패"
+                        if lldp is not None and lldp.status is LLDPStatus.FAILED
+                        else "",
+                        "LLDP 취소"
+                        if lldp is not None and lldp.status is LLDPStatus.CANCELLED
+                        else "",
                     ),
                 )
             )

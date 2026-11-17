@@ -550,9 +550,7 @@ def test_bulk_off_requires_current_lldp_identity_in_the_write_session(setup: Any
     assert all(session.closed for session in d.sessions)
 
 
-@pytest.mark.parametrize(
-    "change", ["chassis", "port", "model", "missing", "failed"]
-)
+@pytest.mark.parametrize("change", ["chassis", "port", "model", "missing", "failed"])
 def test_bulk_off_rejects_rewired_missing_or_unverified_lldp_before_write(
     setup: Any, change: str
 ) -> None:

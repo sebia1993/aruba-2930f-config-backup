@@ -1462,6 +1462,7 @@ def test_log_failure_does_not_hide_primary_storage_failure(
     monkeypatch.setattr(
         "aruba2930f_backup.gui.backup_storage_permission_warnings", lambda _path: ()
     )
+
     def fail_write(*args: object, **kwargs: object) -> None:
         raise PermissionError("secret-password /private/output")
 
@@ -1714,10 +1715,7 @@ def test_backup_acl_warning_is_visible_but_does_not_suppress_logging(
         ),
     )
     assert outcome.warnings == ("백업 폴더 NTFS ACL 확인 필요",)
-    assert any(
-        isinstance(event, dict) and event.get("stage") == "warning"
-        for event in events
-    )
+    assert any(isinstance(event, dict) and event.get("stage") == "warning" for event in events)
     assert (outcome.run_directory / "operation.jsonl").stat().st_size > 0
     assert outcome.report_path.exists()
     assert collector.result is not None and collector.result.config_path is not None

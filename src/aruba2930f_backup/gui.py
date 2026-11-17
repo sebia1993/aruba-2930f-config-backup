@@ -351,9 +351,7 @@ class CollectorBackupService:
         # backup results. Store them independently from logger I/O failures.
         storage_warnings = backup_storage_permission_warnings(run_directory)
         for message in storage_warnings:
-            callbacks.on_event(
-                {"stage": "warning", "phase": "report_storage", "message": message}
-            )
+            callbacks.on_event({"stage": "warning", "phase": "report_storage", "message": message})
         log_lock = threading.Lock()
 
         def log_safely(event: object | None = None, **fields: Any) -> None:

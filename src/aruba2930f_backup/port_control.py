@@ -384,8 +384,7 @@ class PortControlService:
                     if (
                         len(neighbors) != 1
                         or neighbors[0].model != "AP-535"
-                        or (neighbors[0].chassis_id, neighbors[0].port_id)
-                        != expected_lldp_identity
+                        or (neighbors[0].chassis_id, neighbors[0].port_id) != expected_lldp_identity
                     ):
                         raise CollectionFailure(
                             ErrorCode.INPUT_INVALID,

@@ -261,6 +261,6 @@ def test_windows_acl_unknown_is_warning_not_false_security_assurance(
         raise OSError("unavailable")
 
     monkeypatch.setattr(storage.subprocess, "run", inaccessible)
-    assert "자동 확인하지 못했습니다" in backup_storage_permission_warnings(
-        tmp_path, platform="nt"
-    )[0]
+    assert (
+        "자동 확인하지 못했습니다" in backup_storage_permission_warnings(tmp_path, platform="nt")[0]
+    )

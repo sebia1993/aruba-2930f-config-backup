@@ -159,10 +159,14 @@ def validate_batch_target(
         row.lldp.neighbors if row.lldp is not None and row.lldp.status is LLDPStatus.OK else ()
     )
     confirmed = len(neighbors) == 1 and neighbors[0].model == "AP-535"
-    if action in (PortAction.POE_OFF, PortAction.DISABLE) and confirmed and (
-        not neighbors[0].chassis_id or not neighbors[0].port_id
+    if (
+        action in (PortAction.POE_OFF, PortAction.DISABLE)
+        and confirmed
+        and (not neighbors[0].chassis_id or not neighbors[0].port_id)
     ):
-        raise BatchControlError("AP-535의 LLDP Chassis ID와 Port ID를 확인해야 일괄 차단할 수 있습니다.")
+        raise BatchControlError(
+            "AP-535의 LLDP Chassis ID와 Port ID를 확인해야 일괄 차단할 수 있습니다."
+        )
     if action in (PortAction.POE_OFF, PortAction.DISABLE) and not (
         confirmed or allow_unverified_ap
     ):
