@@ -620,7 +620,7 @@ def test_lldp_columns_details_and_incremental_completion_are_idempotent(
     assert _local_time(final.lldp.observed_at) in details
     assert dialog.details_label.textFormat() == Qt.TextFormat.PlainText
     parent = item.parent()
-    assert parent.text(0) == "192.0.2.1 · real-sw"
+    assert parent.text(0) == "real-sw · 192.0.2.1"
     assert "A" in parent.toolTip(0)
     assert all(" W" not in parent.text(column) for column in range(6))
     assert [dialog.result_tree.headerItem().text(i) for i in range(6)] == [
@@ -693,7 +693,7 @@ def test_hostname_survives_all_port_failures(app: QApplication, qtbot: object) -
                 identity=DeviceIdentity("real-sw", "Aruba 2930F", None),
             )
         )
-    assert dialog._parents[groups[0].target.endpoint].text(0) == "192.0.2.1 · real-sw"
+    assert dialog._parents[groups[0].target.endpoint].text(0) == "real-sw · 192.0.2.1"
 
 
 def test_worker_fallback_preserves_partial_poe_and_identity(
