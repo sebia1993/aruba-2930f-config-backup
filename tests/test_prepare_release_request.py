@@ -5,7 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
-
 from tools.prepare_release import ReleasePreparationError
 from tools.prepare_release_request import (
     BOOTSTRAP_ADDITIONS,
