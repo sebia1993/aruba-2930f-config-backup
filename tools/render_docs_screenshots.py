@@ -278,7 +278,6 @@ def _save_poe_query(output: Path) -> None:
     app.processEvents()
 
 
-
 def _save_network_manager(output: Path) -> None:
     """Capture the real embedded app shell with synthetic, offline 2930F data."""
     from aruba2930f_backup.manager_gui import NetworkManagerWindow
