@@ -6,6 +6,7 @@ Existing standalone GUIs retain their own temporary credential fields.
 
 from __future__ import annotations
 
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -126,6 +127,6 @@ class SessionCredentialDialog(QDialog):
         self._clear_secret_fields()
         super().reject()
 
-    def closeEvent(self, event: object) -> None:
+    def closeEvent(self, event: QCloseEvent) -> None:
         self._clear_secret_fields()
-        super().closeEvent(event)  # type: ignore[arg-type]
+        super().closeEvent(event)
