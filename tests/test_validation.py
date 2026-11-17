@@ -337,4 +337,3 @@ def test_running_config_hostname_ignores_unindented_banner_content() -> None:
         hostname_from_running_config('banner motd "hostname forged-device"\nhostname legitimate\n')
         == "legitimate"
     )
-
