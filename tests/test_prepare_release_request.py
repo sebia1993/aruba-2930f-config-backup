@@ -76,7 +76,7 @@ def test_untrusted_event_commit_or_repository_rejected(changes: dict[str, str]) 
 
 
 @pytest.mark.parametrize(
-    "request",
+    "payload",
     [
         {"schema": 1, "tag": TAG, "expected_source_main_sha": HEAD},
         {"schema": True, "tag": TAG, "expected_source_main_sha": PARENT},
@@ -86,6 +86,6 @@ def test_untrusted_event_commit_or_repository_rejected(changes: dict[str, str]) 
         [],
     ],
 )
-def test_invalid_request_is_rejected(request: object) -> None:
+def test_invalid_request_is_rejected(payload: object) -> None:
     with pytest.raises(ReleasePreparationError):
-        check(request=request)
+        check(request=payload)
