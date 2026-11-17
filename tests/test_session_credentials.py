@@ -103,12 +103,12 @@ def test_legacy_single_port_keeps_original_temporary_credentials(
     dialog = PortControlDialog(
         ip="192.0.2.10",
         username="legacy-user",
-        password="legacy-password",
+        password="test-password",
         enable_password="legacy-enable",
     )
     credentials = dialog._credentials()
     assert credentials.username == "legacy-user"
-    assert credentials.password == "legacy-password"
+    assert credentials.password == "test-password"
     assert credentials.enable_secret == "legacy-enable"
     form = dialog.username_input.parentWidget().layout()
     assert isinstance(form, QFormLayout)
