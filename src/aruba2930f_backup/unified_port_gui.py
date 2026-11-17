@@ -48,7 +48,9 @@ from .poe_cycle import (
     prepare_cycle_off,
 )
 from .poe_query_gui import PoEQueryDialog, PoEQueryServiceProtocol
-from .poe_query_models import PoEQueryResult, PoETarget
+from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
+from .poe_power import LLDPStatus
+from .poe_quick_review_dialog import QuickPoEReviewDialog
 from .poe_targets import merge_targets, parse_pasted_targets
 from .port_control import PortAction
 from .port_paste_dialog import PortTargetPasteDialog
@@ -224,6 +226,12 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self._close_after_batch = False
         self._cycle: PowerCycleSession | None = None
         self._cycle_query_stage = ""
+        # A quick action may refresh *only* missing observations. No port
+        # command is ever sent as a consequence of the read-only refresh.
+        self._quick_requery_pending: (
+            tuple[PortAction, frozenset[tuple[str, str]]] | None
+        ) = None
+        self._quick_review_approved_plan_id: str | None = None
         # Only explicitly checked ports can enter a mutation plan.
         self._checked_port_keys: set[tuple[str, str]] = set()
         self._selection_summary_timer = QTimer(self)
@@ -817,17 +825,135 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         worker = self._batch_worker
         self.quick_stop_button.setEnabled(worker is not None and not worker.cancel_event.is_set())
 
+    @staticmethod
+    def _needs_quick_readonly_requery(
+        row: PoEQueryResult | None, action: PortAction
+    ) -> bool:
+        """Only missing/incomplete read evidence is refreshed, never a configuration."""
+        if (
+            row is None
+            or not row.complete
+            or row.snapshot is None
+            or row.status not in (QueryStatus.OK, QueryStatus.UNSUPPORTED)
+        ):
+            return True
+        # A failed LLDP read may recover, but LLDP OK/no neighbor is a
+        # meaningful observation: do not retry it or bypass the AP-535 guard.
+        return action is PortAction.POE_OFF and (
+            row.lldp is None or row.lldp.status is not LLDPStatus.OK
+        )
+
     def _quick_poe_action(self, action: PortAction) -> None:
-        """Direct PoE action: construct the internal frozen plan transparently."""
+        """One read-only requery, then a separate operator-approved mutation."""
         if self._selection_locked() or not self._checked_port_keys:
+            return
+        if len(self._checked_port_keys) > 300:
+            QMessageBox.warning(
+                self, "PoE 작업 범위",
+                "일괄 제어는 최대 300포트입니다. 범위를 나눠 다시 선택하세요.",
+            )
             return
         index = self.action_combo.findData(action.value)
         if index < 0:
             return
         self.action_combo.setCurrentIndex(index)
-        self._prepare_batch()
-        if self._batch_plan is not None and self._batch_plan.action is action:
-            self._run_batch(quick=True)
+        keys = frozenset(self._checked_port_keys)
+        groups: list[PoETarget] = []
+        for group in self._groups:
+            ports = tuple(
+                interface
+                for interface in group.interfaces
+                if (group.target.endpoint, interface) in keys
+                and self._needs_quick_readonly_requery(
+                    self._results.get((group.target.endpoint, interface)), action
+                )
+            )
+            if ports:
+                groups.append(PoETarget(group.target, ports, group.label))
+        if not groups:
+            self._review_quick_action(action, keys)
+            return
+        try:
+            credentials = self._credentials()
+        except ValueError as exc:
+            QMessageBox.warning(self, "SSH 접속 정보", str(exc))
+            return
+        self._quick_requery_pending = (action, keys)
+        try:
+            # Existing PoEQueryDialog._start performs show reads only, with
+            # fingerprint approval, QThread cancellation and result isolation.
+            self._start(tuple(groups), credentials)
+        except Exception:
+            self._quick_requery_pending = None
+            raise
+        count = sum(len(group.interfaces) for group in groups)
+        self.status_label.setText(
+            f"PoE {action.value} 사전 확인 · 미확인 {count}포트 읽기 전용 재조회 중. "
+            "완료 후 실행 대상 확인창을 표시합니다."
+        )
+
+    def _review_quick_action(
+        self, action: PortAction, keys: frozenset[tuple[str, str]]
+    ) -> None:
+        """Never drop an unverified checkbox without displaying its reason."""
+        if self._selection_locked() or self._checked_port_keys != set(keys):
+            self.status_label.setText(
+                "조회 중 작업 대상이 변경되어 PoE 실행을 중단했습니다. 다시 선택하세요."
+            )
+            return
+        ready: list[PoEQueryResult] = []
+        excluded: list[tuple[str, str, str]] = []
+        visited: set[tuple[str, str]] = set()
+        for group in self._groups:
+            for interface in group.interfaces:
+                key = (group.target.endpoint, interface)
+                if key not in keys:
+                    continue
+                visited.add(key)
+                row = self._results.get(key)
+                if row is None:
+                    excluded.append((*key, "새 포트 조회 결과 없음"))
+                    continue
+                try:
+                    validate_batch_target(row, action)
+                except BatchControlError as exc:
+                    reason = str(exc)
+                    if row.message:
+                        reason += f" · {row.message}"
+                    if row.lldp is not None and row.lldp.message:
+                        reason += f" · LLDP: {row.lldp.message}"
+                    excluded.append((*key, reason))
+                else:
+                    ready.append(row)
+        for key in sorted(keys - visited):
+            excluded.append((*key, "등록된 조회 대상에서 제외되었거나 대상 정보가 변경됨"))
+        review = QuickPoEReviewDialog(action, ready, excluded, self)
+        try:
+            approved = review.exec() == QDialog.DialogCode.Accepted
+        finally:
+            review.deleteLater()
+        if not approved:
+            self._batch_plan = None
+            self.status_label.setText(
+                f"PoE 제어 취소 · 실행 가능 {len(ready)}포트 · 제외 {len(excluded)}포트"
+            )
+            self._update_control_buttons()
+            return
+        if self._selection_locked() or self._checked_port_keys != set(keys):
+            self._batch_plan = None
+            self.status_label.setText("대상이 변경되어 실행을 중단했습니다. 다시 검토하세요.")
+            return
+        try:
+            # Construct the plan solely from the operator-reviewed ready set;
+            # the backend still validates every row and re-inspects on-device
+            # configuration and identity before any mutation.
+            plan = create_batch_plan(ready, action)
+        except BatchControlError as exc:
+            QMessageBox.warning(self, "PoE 실행 계획 확인", str(exc))
+            return
+        self._batch_plan = plan
+        self._quick_review_approved_plan_id = plan.plan_id
+        self._run_batch(quick=True)
 
     @Slot()
     def _quick_cycle(self) -> None:
@@ -854,6 +980,9 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self._sync_quick_job()
 
     def _invalidate(self) -> None:
+        if hasattr(self, "_quick_requery_pending"):
+            self._quick_requery_pending = None
+            self._quick_review_approved_plan_id = None
         cycle = getattr(self, "_cycle", None)
         if cycle is not None and cycle.phase not in (
             PowerCyclePhase.COMPLETE,
@@ -986,10 +1115,13 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         if self.is_busy or self._batch_plan is None:
             return
         plan = self._batch_plan
+        reviewed = self._quick_review_approved_plan_id == plan.plan_id
+        # A confirmation is bound to one frozen plan ID and cannot be reused.
+        self._quick_review_approved_plan_id = None
         if quick:
-            # Single-port OFF and all ON actions begin from one deliberate click.
+            # The detailed target review replaces the old second OFF prompt.
             # Bulk OFF has one concise confirmation to prevent accidental AP outages.
-            if plan.action is PortAction.POE_OFF and len(plan.targets) > 1:
+            if plan.action is PortAction.POE_OFF and len(plan.targets) > 1 and not reviewed:
                 summary = "\n".join(
                     f"{item.expected_hostname} ({item.target.ip}) / {item.interface}"
                     for item in plan.targets[:12]
@@ -1379,8 +1511,21 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             )
 
     def _thread_finished(self) -> None:
+        cancelled = self._worker is not None and self._worker.cancel_event.is_set()
         super()._thread_finished()
-        if self._thread is not None or not self._cycle_query_stage:
+        if self._thread is not None:
+            return
+        pending = self._quick_requery_pending
+        self._quick_requery_pending = None
+        if pending is not None:
+            if cancelled or self._close_when_done:
+                self.status_label.setText(
+                    "읽기 전용 재조회가 취소되어 PoE 변경 명령을 실행하지 않았습니다."
+                )
+            else:
+                self._review_quick_action(*pending)
+            return
+        if not self._cycle_query_stage:
             return
         stage = self._cycle_query_stage
         self._cycle_query_stage = ""
@@ -1486,9 +1631,11 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         if self._batch_thread is not None:
             self._cancel_batch()
         else:
+            self._quick_requery_pending = None
             super().stop()
 
     def reject(self) -> None:
+        self._quick_requery_pending = None
         if self._batch_thread is not None:
             self._close_after_batch = True
             self._cancel_batch()
@@ -1496,6 +1643,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         super().reject()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._quick_requery_pending = None
         if self._batch_thread is not None:
             self._close_after_batch = True
             self._cancel_batch()
