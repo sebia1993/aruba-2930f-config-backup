@@ -777,9 +777,11 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             return
         self._cycle_next()
         phase = self._cycle.phase if self._cycle is not None else None
-        if phase in (PowerCyclePhase.OFF_READY, PowerCyclePhase.ON_READY):
-            if self._batch_plan is not None:
-                self._run_batch()
+        if (
+            phase in (PowerCyclePhase.OFF_READY, PowerCyclePhase.ON_READY)
+            and self._batch_plan is not None
+        ):
+            self._run_batch()
 
     def _set_busy(self, busy: bool) -> None:
         super()._set_busy(busy)
