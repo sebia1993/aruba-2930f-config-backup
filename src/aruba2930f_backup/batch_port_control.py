@@ -129,6 +129,7 @@ class SinglePortController(Protocol):
         credentials: Credentials,
         *,
         confirmation: str,
+        expected_lldp_identity: tuple[str, str] | None = None,
     ) -> PortOperationResult: ...
 
 
@@ -402,13 +403,18 @@ class BatchPortController:
             journal.append(index, "intent", action=action.value)
             # A fresh, same-session LLDP identity check happens inside apply,
             # immediately before OFF/Down. A stale AP model alone is not enough.
-            apply_kwargs: dict[str, object] = {"confirmation": snapshot.confirmation_text}
             if action in (PortAction.POE_OFF, PortAction.DISABLE) and item.confirmed_ap535:
-                apply_kwargs["expected_lldp_identity"] = (
-                    item.expected_chassis_id,
-                    item.expected_remote_port_id,
+                result = controller.apply(
+                    snapshot,
+                    action,
+                    credentials,
+                    confirmation=snapshot.confirmation_text,
+                    expected_lldp_identity=(item.expected_chassis_id, item.expected_remote_port_id),
                 )
-            result = controller.apply(snapshot, action, credentials, **apply_kwargs)
+            else:
+                result = controller.apply(
+                    snapshot, action, credentials, confirmation=snapshot.confirmation_text
+                )
             if result.status == "verified":
                 state = BatchStatus.VERIFIED
             elif result.status == "unchanged":
