@@ -768,11 +768,13 @@ class PoEQueryDialog(QDialog):
             )
             for r in results
         )
-        item.setText(5, f"처리 {completed}/{len(group.interfaces)} · 실패/취소 {failures}")
+        # Parent rows describe switches, not individual PoE port state.
+        item.setText(5, "")
+        summary = f"조회 진행: {completed}/{len(group.interfaces)} · 실패/취소 {failures}"
         item.setToolTip(
-            0, _tooltip(f"{name}\nSSH: {group.target.endpoint}\n별칭: {group.label or '없음'}")
+            0, _tooltip(f"{name}\nSSH: {group.target.endpoint}\n별칭: {group.label or '없음'}\n{summary}")
         )
-        item.setToolTip(5, item.text(5))
+        item.setToolTip(5, "")
 
     @Slot()
     def _selection_changed(self) -> None:
