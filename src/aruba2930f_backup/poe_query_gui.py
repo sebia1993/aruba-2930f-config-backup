@@ -772,7 +772,10 @@ class PoEQueryDialog(QDialog):
         item.setText(5, "")
         summary = f"조회 진행: {completed}/{len(group.interfaces)} · 실패/취소 {failures}"
         item.setToolTip(
-            0, _tooltip(f"{name}\nSSH: {group.target.endpoint}\n별칭: {group.label or '없음'}\n{summary}")
+            0,
+            _tooltip(
+                f"{name}\nSSH: {group.target.endpoint}\n별칭: {group.label or '없음'}\n{summary}"
+            ),
         )
         item.setToolTip(5, "")
 
