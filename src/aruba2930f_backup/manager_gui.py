@@ -760,9 +760,7 @@ class NetworkManagerWindow(QMainWindow):
             f"SSH 계정: {username} · 현재 실행에만 사용" if username else "SSH 계정 미설정"
         )
         self.ssh_session_button.setText("계정 변경…" if username else "SSH 계정 설정…")
-        self.ssh_session_clear_button.setEnabled(
-            username is not None and not self._is_busy()
-        )
+        self.ssh_session_clear_button.setEnabled(username is not None and not self._is_busy())
 
     @Slot()
     def _apply_output(self) -> None:
@@ -839,9 +837,7 @@ class NetworkManagerWindow(QMainWindow):
         self.home_port_status.setText("포트 통합 관리 · " + self.port_page.status_label.text())
         busy = self._is_busy()
         self.ssh_session_button.setEnabled(not busy)
-        self.ssh_session_clear_button.setEnabled(
-            self._ssh_credentials.configured and not busy
-        )
+        self.ssh_session_clear_button.setEnabled(self._ssh_credentials.configured and not busy)
         if busy:
             self.sidebar_status.setText("작업 진행 중 · 현재 화면에서 확인")
         else:
