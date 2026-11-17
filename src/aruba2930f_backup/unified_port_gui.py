@@ -225,9 +225,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         row = QHBoxLayout(container)
         self.search_input = QLineEdit(container)
         self.search_input.setObjectName("unifiedSearch")
-        self.search_input.setPlaceholderText(
-            "스위치 IP / 호스트네임 / 포트 / AP 이름 / 별칭 검색"
-        )
+        self.search_input.setPlaceholderText("스위치 IP / 호스트네임 / 포트 / AP 이름 / 별칭 검색")
         row.addWidget(self.search_input, 3)
         self.filter_combo = QComboBox(container)
         self.filter_combo.setObjectName("unifiedStatusFilter")
@@ -291,15 +289,11 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 if wanted == "failed":
                     matched_status = result is not None and (
                         result.status.value == "failed"
-                        or (
-                            result.lldp is not None
-                            and result.lldp.status.value == "failed"
-                        )
+                        or (result.lldp is not None and result.lldp.status.value == "failed")
                     )
                 elif wanted == "unknown":
                     matched_status = result is not None and (
-                        result.assessment is None
-                        or result.assessment.label == "확인 필요"
+                        result.assessment is None or result.assessment.label == "확인 필요"
                     )
                 elif wanted == "off":
                     matched_status = (
@@ -654,7 +648,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         note = QLabel(
             "result_unknown은 변경 명령의 전송 여부를 확인하지 못한 상태입니다. "
             "자동 재시도하지 말고 장비를 직접 재조회하세요.",
-            dialog
+            dialog,
         )
         note.setWordWrap(True)
         layout.addWidget(note)
