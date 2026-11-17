@@ -26,6 +26,7 @@ from .port_control import (
     PortControlService,
     PortOperationResult,
     PortSnapshot,
+    PreMutationRejected,
     validate_interface,
 )
 from .storage import default_output_directory
@@ -155,6 +156,13 @@ def validate_batch_target(
         raise BatchControlError("완료된 포트 상태가 없는 행은 일괄 제어할 수 없습니다.")
     if action.is_poe and snapshot.poe_enabled is None:
         raise BatchControlError("PoE 미지원·확인 불가 포트에는 전원 제어를 실행할 수 없습니다.")
+    # An LLDP neighbor can remain cached after physical disconnection.
+    # The link check is necessary but does not prove LLDP advertisement freshness.
+    if (
+        action in (PortAction.POE_OFF, PortAction.DISABLE)
+        and snapshot.link_status.casefold() != "up"
+    ):
+        raise BatchControlError("일괄 PoE OFF/포트 Down은 물리 링크가 Link Up인 포트만 허용합니다.")
     neighbors = (
         row.lldp.neighbors if row.lldp is not None and row.lldp.status is LLDPStatus.OK else ()
     )
@@ -430,6 +438,12 @@ class BatchPortController:
             # A failed durable append is a hard stop: later targets must not be
             # changed if a mutation cannot be audited reliably.
             raise
+        except PreMutationRejected as exc:
+            # The single-port adapter explicitly proved no port command was sent.
+            # Its already-written intent becomes a safe preflight result only
+            # after the durable result record is appended by execute(). A crash
+            # before that result remains result_unknown in journal_states().
+            return BatchResult(item, BatchStatus.PREFLIGHT_FAILED, exc.safe_message)
         except (CollectionFailure, ValueError) as exc:
             # After an intent has been persisted, a transport exception may mean
             # the command reached the device. Never retry or mislabel it as a
