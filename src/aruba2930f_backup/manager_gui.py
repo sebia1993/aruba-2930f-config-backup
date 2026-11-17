@@ -807,16 +807,8 @@ class NetworkManagerWindow(QMainWindow):
                 )
                 if ips:
                     port._replace_targets_rows(tuple((ip, "22", "", "") for ip in ips))
-            # Reuse in-memory session credentials only when the port fields are
-            # empty. Never persist or silently overwrite separately set credentials.
-            backup = self.backup_page
-            for source, destination in (
-                (backup.username_input, port.username_input),
-                (backup.password_input, port.password_input),
-                (backup.enable_password_input, port.enable_password_input),
-            ):
-                if not destination.text() and source.text():
-                    destination.setText(source.text())
+            # Port actions read one common session; never copy passwords
+            # between the hidden legacy backup/port input widgets.
             if not port.isVisible():
                 port.show()
         if index == 3:
