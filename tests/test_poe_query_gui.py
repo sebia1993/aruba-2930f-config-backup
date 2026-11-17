@@ -927,3 +927,32 @@ def test_port_and_poe_administrative_status_are_visible_without_opening_details(
     assert item.text(5) == "PoE OFF(설정)"
     assert "Power Enable=No" in item.toolTip(5)
     dialog.close()
+
+
+def test_large_query_flush_updates_each_switch_header_once_per_batch(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch, qtbot: object
+) -> None:
+    from aruba2930f_backup.models import DeviceTarget
+
+    dialog = PoEQueryDialog(username="operator", password="test-password")
+    qtbot.addWidget(dialog)
+    group = PoETarget(DeviceTarget("192.0.2.78"), ("1", "2"))
+    dialog._build_results((group,))
+    dialog._run_total = 1000
+    calls: list[str] = []
+    original = dialog._update_group
+
+    def count(group_value: PoETarget) -> None:
+        calls.append(group_value.target.endpoint)
+        original(group_value)
+
+    monkeypatch.setattr(dialog, "_update_group", count)
+    dialog._on_result(PoEQueryResult(group, "1", QueryStatus.FAILED, complete=True))
+    dialog._on_result(PoEQueryResult(group, "2", QueryStatus.FAILED, complete=True))
+    assert len(dialog._render_queue) == 2
+    assert calls == []
+    dialog._flush_result_queue()
+    assert calls == [group.target.endpoint]
+    assert dialog._items[(group.target.endpoint, "1")].text(5) == "조회 실패"
+    assert dialog._items[(group.target.endpoint, "2")].text(5) == "조회 실패"
+    dialog.close()
