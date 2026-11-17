@@ -332,9 +332,27 @@ def _save_network_manager(output: Path) -> None:
         manager.port_page.result_tree.topLevelItem(0).child(0)
     )
     manager.port_page.status_label.setText("문서용 가상 AP · 실제 장비 접속 없음")
+    checked = (group.target.endpoint, "12")
+    manager.port_page._set_checked_keys({checked})
+    manager.port_page._update_selection_summary()
     app.processEvents()
     if not manager.grab().save(str(output / "manager-ports.png"), "PNG"):
         raise RuntimeError("통합 포트 관리 화면 PNG 저장에 실패했습니다.")
+    # Two different checked states let the operator inspect tri-state switch
+    # checkboxes and the always-visible fixed PoE control bar in actual Qt.
+    manager.port_page._set_checked_keys(
+        {(group.target.endpoint, "12"), (group.target.endpoint, "24")}
+    )
+    manager.port_page._update_selection_summary()
+    app.processEvents()
+    if not manager.grab().save(str(output / "manager-ports-all-checked.png"), "PNG"):
+        raise RuntimeError("전체 체크 포트 관리 화면 PNG 저장에 실패했습니다.")
+    manager.port_page.search_input.setText("AP-24")
+    manager.port_page._apply_search_filter()
+    manager.port_page._update_selection_summary()
+    app.processEvents()
+    if not manager.grab().save(str(output / "manager-ports-filter-hidden.png"), "PNG"):
+        raise RuntimeError("검색 중 숨긴 체크 포트 화면 PNG 저장에 실패했습니다.")
     manager.close()
     app.processEvents()
 
