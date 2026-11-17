@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [0.8.0] - Unreleased
+
+### 추가
+
+- 포트 조회 표에서 관리상 포트 Enable/Disable·물리 Link Up/Down과 PoE 공급 상태를 개별 열로 표시
+- 검색·필터에서 포트 Disable과 스위치 PoE 설정 OFF를 구분하고, CSV 출력에 원인 설명 추가
+- 0W·Power Enable No·PoE 공급 대기·공급 오류·포트 Disable을 구별하는 회귀 테스트
+
+### 변경
+
+- 사용성이 낮았던 ‘PoE 판정’, ‘조회 상태’ 표 열을 제거하고 ‘포트 상태’ 및 ‘PoE 상태’로 교체
+- PoE 협상 판정/조회 실패 정보는 상세 내용·CSV·기존 안전 검증에 계속 보존
+- 실측 0W만으로 관리자 전원 OFF 또는 포트 Disable을 추정하지 않음
+- 이번 변경은 별도 개발 브랜치이며 사용자 검토 전 main 병합·릴리스 발행 없음
+
+
 ## [0.7.0] - Unreleased
 
 ### 추가
