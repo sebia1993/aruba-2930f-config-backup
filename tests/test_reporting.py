@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime, timedelta
-
-import pytest
 from pathlib import Path
 
+import pytest
 from openpyxl import load_workbook
 
 from aruba2930f_backup.reporting import (
