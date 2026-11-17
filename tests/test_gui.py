@@ -1097,6 +1097,9 @@ def _mixed_backup_request(tmp_path: Path) -> BackupRequest:
 def test_log_permission_error_preserves_completed_batch_and_warns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        "aruba2930f_backup.gui.backup_storage_permission_warnings", lambda _path: ()
+    )
     original = SanitizedJsonlLogger.log
     failed_calls = 0
 
@@ -1456,6 +1459,9 @@ def test_trust_remove_button_refreshes_actual_store_after_failure(
 def test_log_failure_does_not_hide_primary_storage_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, primary_storage: str
 ) -> None:
+    monkeypatch.setattr(
+        "aruba2930f_backup.gui.backup_storage_permission_warnings", lambda _path: ()
+    )
     def fail_write(*args: object, **kwargs: object) -> None:
         raise PermissionError("secret-password /private/output")
 
