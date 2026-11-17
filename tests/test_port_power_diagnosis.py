@@ -107,7 +107,6 @@ def test_disabled_interface_can_still_deliver_power() -> None:
     assert "PoE OFF라고 단정" in result.reason
 
 
-
 def test_short_operator_labels_preserve_independent_port_and_poe_states() -> None:
     admin_disabled = replace(
         BASE, enabled=False, link_status="Down", poe_status="Delivering", watts=13.2
