@@ -62,7 +62,9 @@ def validate_release_request(
     if event_sha != checkout_sha or parent_sha == checkout_sha:
         raise ReleasePreparationError("Event and checkout main commits do not match")
     if not isinstance(request, dict) or set(request) != {
-        "schema", "tag", "expected_source_main_sha"
+        "schema",
+        "tag",
+        "expected_source_main_sha",
     }:
         raise ReleasePreparationError("Invalid release request document")
     if type(request["schema"]) is not int or request["schema"] != 1:
@@ -90,19 +92,20 @@ def main() -> None:
             raise ReleasePreparationError("Ambiguous release-request file changes")
         changes[path] = status
     request_files = [
-        path
-        for path in changes
-        if path.startswith(REQUEST_DIRECTORY) and path.endswith(".json")
+        path for path in changes if path.startswith(REQUEST_DIRECTORY) and path.endswith(".json")
     ]
     if len(request_files) != 1:
         raise ReleasePreparationError("Expected exactly one release request file")
-    installed = subprocess.run(
-        ["git", "cat-file", "-e", f"{parent}:.github/workflows/chat-release-request.yml"],
-        cwd=ROOT,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    ).returncode == 0
+    installed = (
+        subprocess.run(
+            ["git", "cat-file", "-e", f"{parent}:.github/workflows/chat-release-request.yml"],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode
+        == 0
+    )
     request = json.loads((ROOT / request_files[0]).read_text(encoding="utf-8"))
     tag = validate_release_request(
         request=request,
