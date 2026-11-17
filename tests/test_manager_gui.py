@@ -338,9 +338,7 @@ def test_ssh_account_is_shared_without_copying_passwords_to_feature_views(
 def test_ssh_session_change_revokes_stale_port_rows(app: QApplication) -> None:
     window = make_window(app)
     window._ssh_credentials.configure("first", "first-pass")
-    window.port_page._build_results(
-        (PoETarget(DeviceTarget("192.0.2.10"), ("12",)),)
-    )
+    window.port_page._build_results((PoETarget(DeviceTarget("192.0.2.10"), ("12",)),))
     assert window.port_page.result_tree.topLevelItemCount() == 1
     # Changing account must invalidate old query state, but preserve target input.
     window._ssh_credentials.configure("second", "second-pass")
@@ -377,9 +375,9 @@ def test_ssh_session_controls_reject_changes_during_active_backup(
     window._refresh_ssh_session_status()
     notices: list[str] = []
     monkeypatch.setattr(
-        QMessageBox, "information",
-        lambda _parent, _title, message: notices.append(message)
-        or QMessageBox.StandardButton.Ok,
+        QMessageBox,
+        "information",
+        lambda _parent, _title, message: notices.append(message) or QMessageBox.StandardButton.Ok,
     )
     fake_thread = QThread(window)
     window.backup_page._thread = fake_thread
@@ -428,9 +426,7 @@ def test_common_ssh_account_dialog_is_shared_and_reprompts_after_clear(
     assert window.ssh_session_status.text().startswith("SSH 계정: network-operator")
     assert "shared-secret" not in window.ssh_session_status.text()
 
-    window.port_page._build_results(
-        (PoETarget(DeviceTarget("192.0.2.10"), ("12",)),)
-    )
+    window.port_page._build_results((PoETarget(DeviceTarget("192.0.2.10"), ("12",)),))
     assert window.port_page.result_tree.topLevelItemCount() == 1
     assert window._configure_ssh_session()
     assert calls == ["", "network-operator"]
