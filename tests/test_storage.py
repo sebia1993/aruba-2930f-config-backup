@@ -243,7 +243,7 @@ def test_windows_acl_audit_warns_on_broad_read_access_without_changing_acls(
         assert kwargs["timeout"] == 5
         return SimpleNamespace(
             returncode=0,
-            stdout=str(tmp_path) + " BUILTIN\\\\Users:(I)(OI)(CI)(RX)\n",
+            stdout=str(tmp_path) + " BUILTIN\\Users:(I)(OI)(CI)(RX)\n",
         )
 
     monkeypatch.setattr(storage.subprocess, "run", fake_icacls)
