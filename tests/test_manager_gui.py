@@ -41,7 +41,11 @@ def test_navigation_has_five_pages_and_keeps_existing_engines(app: QApplication)
     assert window.pages.count() == 5
     assert window.windowTitle() == "Aruba 2930F · 네트워크 통합 관리"
     assert [button.text() for button in window._navigation_buttons] == [
-        "홈", "컨피그 백업", "포트 통합 관리", "작업 이력", "설정"
+        "홈",
+        "컨피그 백업",
+        "포트 통합 관리",
+        "작업 이력",
+        "설정",
     ]
     for index in range(5):
         assert window.navigate(index)
@@ -116,8 +120,15 @@ def test_hostname_and_ip_are_shown_together_after_query(app: QApplication) -> No
     first = window.port_page.result_tree.topLevelItem(0)
     assert "192.0.2.10" in first.text(0)
     snapshot = PortSnapshot(
-        target, "12", "SEOUL-F1-SW-01", "Aruba 2930F",
-        True, "Up", True, "Delivering", 15.0,
+        target,
+        "12",
+        "SEOUL-F1-SW-01",
+        "Aruba 2930F",
+        True,
+        "Up",
+        True,
+        "Delivering",
+        15.0,
     )
     window.port_page._apply_result(
         PoEQueryResult(group, "12", QueryStatus.OK, snapshot=snapshot, complete=True)
@@ -137,7 +148,8 @@ def test_busy_navigation_is_blocked_without_interrupting_current_job(
     window.backup_page._thread = fake_thread
     messages: list[str] = []
     monkeypatch.setattr(
-        QMessageBox, "information",
+        QMessageBox,
+        "information",
         lambda _parent, _title, message: messages.append(message) or QMessageBox.StandardButton.Ok,
     )
     try:
@@ -225,22 +237,21 @@ def test_port_journals_use_recorded_state_and_latest_file_mtime(
         "event": "plan",
         "schema": 1,
         "action": "poe_off",
-        "items": [
-            {"endpoint": "192.0.2.10:22", "hostname": "SEOUL-SW-01", "interface": "12"}
-        ],
+        "items": [{"endpoint": "192.0.2.10:22", "hostname": "SEOUL-SW-01", "interface": "12"}],
     }
     for number in range(31):
         path = journal_dir / f"z{number:02d}.jsonl"
         path.write_text(
-            json.dumps(header) + "\n"
-            + json.dumps({"event": "result", "index": 0, "status": "verified"}) + "\n",
+            json.dumps(header)
+            + "\n"
+            + json.dumps({"event": "result", "index": 0, "status": "verified"})
+            + "\n",
             encoding="utf-8",
         )
         os.utime(path, (100 + number, 100 + number))
     latest = journal_dir / "a-latest.jsonl"
     latest.write_text(
-        json.dumps(header) + "\n"
-        + json.dumps({"event": "intent", "index": 0}) + "\n",
+        json.dumps(header) + "\n" + json.dumps({"event": "intent", "index": 0}) + "\n",
         encoding="utf-8",
     )
     os.utime(latest, (500, 500))

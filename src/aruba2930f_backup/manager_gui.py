@@ -18,6 +18,7 @@ from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -188,7 +189,9 @@ class NetworkManagerWindow(QMainWindow):
         for index, (title, _) in enumerate(_PAGE_TITLES):
             button = QPushButton(title, sidebar)
             button.setCheckable(True)
-            button.setObjectName(("navHome", "navBackup", "navPorts", "navHistory", "navSettings")[index])
+            button.setObjectName(
+                ("navHome", "navBackup", "navPorts", "navHistory", "navSettings")[index]
+            )
             button.setMinimumHeight(42)
             button.clicked.connect(lambda checked=False, target=index: self.navigate(target))
             sidebar_layout.addWidget(button)
@@ -226,6 +229,7 @@ class NetworkManagerWindow(QMainWindow):
             developer_inspector=developer_inspector,
             parent=self.pages,
         )
+        self.backup_page.setWindowFlags(Qt.WindowType.Widget)
         self.backup_page.setMinimumSize(0, 0)
         self._layout_backup()
         self.pages.addWidget(self.backup_page)
@@ -260,17 +264,20 @@ class NetworkManagerWindow(QMainWindow):
         title = QLabel("작업 바로가기", page)
         layout.addWidget(title)
         shortcuts = (
-            ("컨피그 백업 시작하기", 1),
-            ("포트 상태 조회 및 제어", 2),
-            ("저장된 작업 이력", 3),
-            ("SSH 지문 및 설정", 4),
+            ("컨피그 백업", "running-config 수집 / 결과", 1),
+            ("포트 통합 관리", "LLDP·PoE 조회 / 포트 제어", 2),
+            ("작업 이력", "백업·포트 변경 기록", 3),
+            ("설정", "SSH 지문·저장 위치", 4),
         )
-        for text, index in shortcuts:
-            button = QPushButton(text, page)
+        cards = QGridLayout()
+        cards.setSpacing(10)
+        for position, (title, description, index) in enumerate(shortcuts):
+            button = QPushButton(f"{title}\n{description}", page)
             button.setObjectName(f"homeShortcut{index}")
-            button.setMinimumHeight(52)
+            button.setMinimumHeight(92)
             button.clicked.connect(lambda checked=False, target=index: self.navigate(target))
-            layout.addWidget(button)
+            cards.addWidget(button, position // 2, position % 2)
+        layout.addLayout(cards)
         layout.addSpacing(12)
         self.home_backup_status = QLabel("백업 작업 · 실행 전", page)
         self.home_port_status = QLabel("포트 작업 · 실행 전", page)
@@ -421,6 +428,7 @@ class NetworkManagerWindow(QMainWindow):
         detail_layout.setContentsMargins(5, 0, 0, 0)
         detail_layout.addWidget(QLabel("선택 포트 상세 · 제어", detail))
         detail_layout.addWidget(details_scroll)
+        self._layout_port_control_buttons(control_group)
         detail_layout.addWidget(control_group)
         detail_layout.addStretch(1)
         right = QScrollArea(port)
@@ -435,6 +443,55 @@ class NetworkManagerWindow(QMainWindow):
         root.addWidget(body, 1)
         root.addWidget(port.progress_bar)
         root.addWidget(port.status_label)
+
+    def _layout_port_control_buttons(self, group: QWidget) -> None:
+        """Reflow wide legacy button rows into a readable narrow control rail."""
+        panel = group.layout()
+        assert isinstance(panel, QVBoxLayout)
+        port = self.port_page
+        first = _take_layout_with(panel, port.action_combo)
+        second = _take_layout_with(panel, port.run_button)
+        # Preserve all signal connections and control policies while moving
+        # the actual widgets, not rebuilding new control actions.
+        from PySide6.QtWidgets import QLayout
+
+        assert isinstance(first, QLayout) and isinstance(second, QLayout)
+        for widget in (port.action_combo, port.plan_button, port.single_button):
+            first.removeWidget(widget)
+        for widget in (port.run_button, port.cancel_batch_button, port.history_button):
+            second.removeWidget(widget)
+        rows = QGridLayout()
+        rows.setSpacing(5)
+        rows.addWidget(port.action_combo, 0, 0, 1, 2)
+        rows.addWidget(port.plan_button, 1, 0)
+        rows.addWidget(port.single_button, 1, 1)
+        port.plan_button.setToolTip(port.plan_button.text())
+        port.single_button.setToolTip(port.single_button.text())
+        port.plan_button.setText("일괄 계획")
+        port.single_button.setText("단일 제어…")
+        panel.insertLayout(1, rows)
+        actions = QGridLayout()
+        actions.setSpacing(5)
+        actions.addWidget(port.run_button, 0, 0, 1, 2)
+        actions.addWidget(port.cancel_batch_button, 1, 0)
+        actions.addWidget(port.history_button, 1, 1)
+        for widget, label in (
+            (port.run_button, "승인 후 실행…"),
+            (port.cancel_batch_button, "작업 중지"),
+            (port.history_button, "이력 확인…"),
+        ):
+            widget.setToolTip(widget.text())
+            widget.setText(label)
+        panel.insertLayout(3, actions)
+        explanation = panel.itemAt(0)
+        if explanation is not None:
+            label = explanation.widget()
+            if isinstance(label, QLabel):
+                label.setToolTip(label.text())
+                label.setText(
+                    "포트 선택 후 제어. 일괄 PoE OFF/포트 Down은 "
+                    "LLDP로 확인된 AP-535 포트만 허용합니다."
+                )
 
     @Slot(bool)
     def _toggle_port_targets(self, expanded: bool) -> None:
@@ -463,7 +520,10 @@ class NetworkManagerWindow(QMainWindow):
         open_button.setObjectName("openHistoryLocation")
         open_button.clicked.connect(self._open_history_location)
         layout.addWidget(open_button)
-        note = QLabel("기존 result.xlsx·일괄 제어 JSONL만 읽습니다. 설정 파일과 암호는 표시하지 않습니다.", page)
+        note = QLabel(
+            "기존 result.xlsx·일괄 제어 JSONL만 읽습니다. 설정 파일과 암호는 표시하지 않습니다.",
+            page,
+        )
         note.setWordWrap(True)
         layout.addWidget(note)
         return page
@@ -477,10 +537,12 @@ class NetworkManagerWindow(QMainWindow):
         for report in files:
             try:
                 records = report_device_rows(report, limit=100)
-            except (OSError, ValueError, KeyError):
+            except OSError, ValueError, KeyError:
                 continue
             for hostname, ip, status in records:
-                QTreeWidgetItem(self.history_table, ["컨피그 백업", hostname, ip, status, str(report)])
+                QTreeWidgetItem(
+                    self.history_table, ["컨피그 백업", hostname, ip, status, str(report)]
+                )
                 self._history_paths[row_count] = report
                 row_count += 1
         journal_root = default_output_directory() / "port-control" / "batch"
@@ -493,9 +555,7 @@ class NetworkManagerWindow(QMainWindow):
                     continue
         except OSError:
             pass
-        journals = [
-            path for _, path in sorted(dated_journals, reverse=True)[:30]
-        ]
+        journals = [path for _, path in sorted(dated_journals, reverse=True)[:30]]
         for journal in journals:
             try:
                 if journal.stat().st_size > 2_000_000:
@@ -512,21 +572,33 @@ class NetworkManagerWindow(QMainWindow):
                     ip = endpoint.rsplit(":", 1)[0]
                     hostname = str(entry.get("hostname", "") or "확인 불가")
                     state = states.get(index, "queued")
-                    item = QTreeWidgetItem(self.history_table, [
-                        "포트 제어 이력", hostname, ip,
-                        f"{record.get('action', '')} · {state}",
-                        str(journal),
-                    ])
+                    item = QTreeWidgetItem(
+                        self.history_table,
+                        [
+                            "포트 제어 이력",
+                            hostname,
+                            ip,
+                            f"{record.get('action', '')} · {state}",
+                            str(journal),
+                        ],
+                    )
                     item.setToolTip(3, "confirmed/unknown/queued states come from saved journal")
                     item.setToolTip(4, str(journal))
                     self._history_paths[row_count] = journal
                     row_count += 1
-            except (OSError, ValueError, UnicodeError, BatchControlError):
+            except OSError, ValueError, UnicodeError, BatchControlError:
                 continue
         if row_count == 0:
-            QTreeWidgetItem(self.history_table, [
-                "기록 없음", "—", "—", "저장된 작업 파일이 없습니다.", "",
-            ])
+            QTreeWidgetItem(
+                self.history_table,
+                [
+                    "기록 없음",
+                    "—",
+                    "—",
+                    "저장된 작업 파일이 없습니다.",
+                    "",
+                ],
+            )
         self.history_table.resizeColumnToContents(0)
         self.history_table.resizeColumnToContents(1)
         self.history_table.resizeColumnToContents(2)
@@ -593,10 +665,12 @@ class NetworkManagerWindow(QMainWindow):
             return False
         if self._is_busy() and index != self._page_index:
             QMessageBox.information(
-                self, "작업 진행 중",
+                self,
+                "작업 진행 중",
                 "현재 작업이 실행 중입니다. 작업 상태와 안전한 종료를 확인한 후 이동하세요.",
             )
-            self._navigation_buttons[self._page_index].setChecked(True)
+            for number, button in enumerate(self._navigation_buttons):
+                button.setChecked(number == self._page_index)
             return False
         if index == 2 and self._page_index != 2:
             # Carry only target IPs and keep separately confirmed SSH defaults.
@@ -636,7 +710,8 @@ class NetworkManagerWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._is_busy():
             QMessageBox.warning(
-                self, "작업 진행 중",
+                self,
+                "작업 진행 중",
                 "실행 중인 작업을 먼저 중지하고 종료를 확인하세요. "
                 "명령 결과가 불확실하면 자동 재실행하지 않습니다.",
             )
