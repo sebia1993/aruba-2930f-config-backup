@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -217,16 +218,19 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self._close_after_batch = False
         self._cycle: PowerCycleSession | None = None
         self._cycle_query_stage = ""
+        # Only explicitly checked ports can enter a mutation plan.
+        self._checked_port_keys: set[tuple[str, str]] = set()
         self._selection_summary_timer = QTimer(self)
         self._selection_summary_timer.setSingleShot(True)
         self._selection_summary_timer.setInterval(120)
         self._selection_summary_timer.timeout.connect(self._update_selection_summary)
         self.setWindowTitle("Aruba 2930F · 포트 통합 관리")
         self.resize(1200, 920)
-        self.result_tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.result_tree.itemSelectionChanged.connect(self._selection_changed_for_batch)
+        self.result_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.result_tree.itemChanged.connect(self._checkbox_changed)
         self._build_search_panel()
         self._build_control_panel()
+        self._build_quick_bar()
         self._set_busy(False)
 
     @property
@@ -261,7 +265,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.selection_scope.addItem("현재 스위치", "switch")
         self.selection_scope.addItem("검색 결과", "filtered")
         self.selection_scope.setToolTip(
-            "전체는 현재 검색 조건을 해제하고 조회 대상의 포트 행을 선택합니다."
+            "전체/현재 스위치는 숨겨진 포트도 체크합니다. 검색 결과는 표시된 포트만 선택합니다."
         )
         selection_row.addWidget(self.selection_scope, 1)
         self.select_all_button = QPushButton("범위 전체 선택", container)
@@ -287,7 +291,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.clear_selection_button.clicked.connect(self._clear_selection)
         selection_row.addWidget(self.clear_selection_button)
         layout.addLayout(selection_row)
-        self.selection_summary = QLabel("선택 0개 · 제어 대상은 조회 후 선택", container)
+        self.selection_summary = QLabel("체크 0개 · 조회 후 포트를 체크하세요.", container)
         self.selection_summary.setObjectName("unifiedSelectionSummary")
         self.selection_summary.setWordWrap(True)
         layout.addWidget(self.selection_summary)
@@ -301,16 +305,115 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         parent = cast(QVBoxLayout, self.layout())
         parent.insertWidget(parent.indexOf(self.result_tree), container)
 
+    def _build_results(self, groups: tuple[PoETarget, ...]) -> None:
+        """An updated device inventory must never inherit stale checked ports."""
+        if not hasattr(self, "_checked_port_keys"):
+            super()._build_results(groups)
+            return
+        self._checked_port_keys.clear()
+        with QSignalBlocker(self.result_tree):
+            super()._build_results(groups)
+            for group in groups:
+                self._parents[group.target.endpoint].setCheckState(0, Qt.CheckState.Unchecked)
+                for interface in group.interfaces:
+                    self._items[(group.target.endpoint, interface)].setCheckState(
+                        0, Qt.CheckState.Unchecked
+                    )
+        self._clear_batch_plan("조회 대상 변경으로 포트 체크를 초기화했습니다.")
+        self._selection_summary_timer.start()
+
+    def _selection_locked(self) -> bool:
+        session = self._cycle
+        return self.is_busy or (
+            session is not None
+            and session.phase not in (PowerCyclePhase.COMPLETE, PowerCyclePhase.INTERRUPTED)
+        )
+
+    def _parent_check_state(self, endpoint: str) -> Qt.CheckState:
+        group = next((g for g in self._groups if g.target.endpoint == endpoint), None)
+        if group is None:
+            return Qt.CheckState.Unchecked
+        chosen = sum((endpoint, port) in self._checked_port_keys for port in group.interfaces)
+        if chosen == 0:
+            return Qt.CheckState.Unchecked
+        if chosen == len(group.interfaces):
+            return Qt.CheckState.Checked
+        return Qt.CheckState.PartiallyChecked
+
+    def _sync_parent_check(self, endpoint: str) -> None:
+        parent = self._parents.get(endpoint)
+        if parent is not None:
+            parent.setCheckState(0, self._parent_check_state(endpoint))
+
+    @Slot(QTreeWidgetItem, int)
+    def _checkbox_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        if column != 0:
+            return
+        key = cast(tuple[str, str] | None, item.data(0, Qt.ItemDataRole.UserRole))
+        if key is None or key[0] not in self._parents:
+            return
+        state = item.checkState(0)
+        if not key[1]:
+            current_state = self._parent_check_state(key[0])
+            if state == current_state:
+                return
+            if self._selection_locked():
+                with QSignalBlocker(self.result_tree):
+                    item.setCheckState(0, current_state)
+                return
+            group = next((g for g in self._groups if g.target.endpoint == key[0]), None)
+            if group is None:
+                return
+            checked = state == Qt.CheckState.Checked
+            with QSignalBlocker(self.result_tree):
+                for port in group.interfaces:
+                    port_key = (key[0], port)
+                    if checked:
+                        self._checked_port_keys.add(port_key)
+                    else:
+                        self._checked_port_keys.discard(port_key)
+                    self._items[port_key].setCheckState(
+                        0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                    )
+                self._sync_parent_check(key[0])
+        else:
+            current_state = (
+                Qt.CheckState.Checked if key in self._checked_port_keys else Qt.CheckState.Unchecked
+            )
+            # setText() also emits itemChanged: no selection change without a state delta.
+            if state == current_state:
+                return
+            if self._selection_locked():
+                with QSignalBlocker(self.result_tree):
+                    item.setCheckState(0, current_state)
+                return
+            if state == Qt.CheckState.Checked:
+                self._checked_port_keys.add(key)
+            else:
+                self._checked_port_keys.discard(key)
+            with QSignalBlocker(self.result_tree):
+                self._sync_parent_check(key[0])
+        self._selection_changed_for_batch()
+
+    def _set_checked_keys(self, keys: set[tuple[str, str]]) -> None:
+        """Update the checkboxes atomically with one UI notification."""
+        if self._selection_locked():
+            return
+        keys.intersection_update(self._items)
+        delta = self._checked_port_keys ^ keys
+        affected = {key[0] for key in delta}
+        self._checked_port_keys = keys
+        with QSignalBlocker(self.result_tree):
+            for key in delta:
+                self._items[key].setCheckState(
+                    0, Qt.CheckState.Checked if key in keys else Qt.CheckState.Unchecked
+                )
+            for endpoint in affected:
+                self._sync_parent_check(endpoint)
+        self._selection_changed_for_batch()
+
     def _scope_items(self) -> list[QTreeWidgetItem] | None:
         scope = str(self.selection_scope.currentData())
-        if scope == "all":
-            # An all-rows selection must not silently omit hidden filtered ports.
-            if self.search_input.text():
-                self.search_input.clear()
-            if self.filter_combo.currentData() != "all":
-                self.filter_combo.setCurrentIndex(self.filter_combo.findData("all"))
-            self._filter_timer.stop()
-            self._apply_search_filter()
         parent: QTreeWidgetItem | None = None
         if scope == "switch":
             current = self.result_tree.currentItem()
@@ -331,9 +434,10 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         return [
             row
             for root in roots
-            if root is not None and not root.isHidden()
-            for i in range(root.childCount())
-            if not (row := root.child(i)).isHidden()
+            if root is not None
+            for index in range(root.childCount())
+            if (row := root.child(index)) is not None
+            if scope != "filtered" or (not root.isHidden() and not row.isHidden())
         ]
 
     @Slot()
