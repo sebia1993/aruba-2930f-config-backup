@@ -158,9 +158,7 @@ def create_batch_plan(
         if action.is_poe and snapshot.poe_enabled is None:
             raise BatchControlError("PoE 미지원·확인 불가 포트에는 전원 제어를 실행할 수 없습니다.")
         neighbors = (
-            row.lldp.neighbors
-            if row.lldp is not None and row.lldp.status is LLDPStatus.OK
-            else ()
+            row.lldp.neighbors if row.lldp is not None and row.lldp.status is LLDPStatus.OK else ()
         )
         confirmed = len(neighbors) == 1 and neighbors[0].model == "AP-535"
         if action in (PortAction.POE_OFF, PortAction.DISABLE) and not (
@@ -306,7 +304,9 @@ class BatchPortController:
             if cancel.is_set():
                 result = BatchResult(item, BatchStatus.CANCELLED, "실행 전 사용자가 중지했습니다.")
             elif halt:
-                result = BatchResult(item, BatchStatus.PAUSED, "이전 작업의 결과가 불확실하여 중단했습니다.")
+                result = BatchResult(
+                    item, BatchStatus.PAUSED, "이전 작업의 결과가 불확실하여 중단했습니다."
+                )
             elif index and index % self._chunk_size == 0:
                 can_continue = (
                     continue_after_chunk(index, len(plan.targets))
@@ -315,9 +315,13 @@ class BatchPortController:
                 )
                 if not can_continue or cancel.is_set():
                     halt = True
-                    result = BatchResult(item, BatchStatus.PAUSED, "다음 작업 묶음이 승인되지 않았습니다.")
+                    result = BatchResult(
+                        item, BatchStatus.PAUSED, "다음 작업 묶음이 승인되지 않았습니다."
+                    )
                 else:
-                    result = self._execute_one(index, item, plan.action, credentials, journal, cancel)
+                    result = self._execute_one(
+                        index, item, plan.action, credentials, journal, cancel
+                    )
             else:
                 result = self._execute_one(index, item, plan.action, credentials, journal, cancel)
             if result.status is BatchStatus.UNVERIFIED:
@@ -363,7 +367,8 @@ class BatchPortController:
             )
             if actual != expected:
                 return BatchResult(
-                    item, BatchStatus.PREFLIGHT_FAILED,
+                    item,
+                    BatchStatus.PREFLIGHT_FAILED,
                     "조회 이후 스위치 식별 정보 또는 포트 설정이 달라져 변경을 건너뛰었습니다.",
                 )
             if cancel.is_set():
@@ -392,7 +397,8 @@ class BatchPortController:
             # harmless preflight failure.
             if journal_states(journal.path).get(index) == "result_unknown":
                 return BatchResult(
-                    item, BatchStatus.UNVERIFIED,
+                    item,
+                    BatchStatus.UNVERIFIED,
                     "변경 요청의 결과를 확인할 수 없습니다. 수동 재조회 전 다음 명령을 중단합니다.",
                 )
             if isinstance(exc, CollectionFailure):
