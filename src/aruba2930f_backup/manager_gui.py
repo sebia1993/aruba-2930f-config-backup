@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from .batch_port_control import BatchControlError, journal_states
 from .gui import MainWindow
+from .home_shortcuts import HomeShortcutButton
 from .storage import default_output_directory
 from .unified_port_gui import UnifiedPortManagementDialog
 
@@ -267,20 +268,20 @@ class NetworkManagerWindow(QMainWindow):
         heading = QLabel("작업 바로가기", page)
         layout.addWidget(heading)
         shortcuts = (
-            ("컨피그 백업", "running-config 수집 / 결과", 1),
-            ("포트 통합 관리", "LLDP·PoE 조회 / 포트 제어", 2),
-            ("작업 이력", "백업·포트 변경 기록", 3),
+            ("컨피그 백업", "running-config 수집 / 결과", "backup", 1),
+            ("포트 통합 관리", "LLDP·PoE 조회 / 포트 제어", "ports", 2),
+            ("작업 이력", "백업·포트 변경 기록", "history", 3),
         )
         # Advanced SSH trust management and backup folder settings remain
         # accessible through the sidebar, not the daily-task shortcuts.
         cards = QGridLayout()
-        cards.setSpacing(10)
-        for position, (title, description, index) in enumerate(shortcuts):
-            button = QPushButton(f"{title}\n{description}", page)
+        cards.setSpacing(8)
+        for position, (title, description, icon_name, index) in enumerate(shortcuts):
+            button = HomeShortcutButton(title, description, icon_name, page)
             button.setObjectName(f"homeShortcut{index}")
-            button.setMinimumHeight(92)
             button.clicked.connect(lambda checked=False, target=index: self.navigate(target))
             cards.addWidget(button, 0, position)
+            cards.setColumnStretch(position, 1)
         layout.addLayout(cards)
         layout.addSpacing(12)
         self.home_backup_status = QLabel("백업 작업 · 실행 전", page)
