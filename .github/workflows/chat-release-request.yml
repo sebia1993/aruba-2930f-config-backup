@@ -39,4 +39,4 @@ jobs:
       - name: Validate release-request commit and dispatch guarded release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python tools/prepare_release_request.py
+        run: python -m tools.prepare_release_request
