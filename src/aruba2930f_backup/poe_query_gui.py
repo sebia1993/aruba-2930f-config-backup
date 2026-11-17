@@ -11,7 +11,7 @@ from html import escape
 from pathlib import Path
 from typing import Protocol, cast
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QSignalBlocker, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -195,6 +195,9 @@ class PoEQueryDialog(QDialog):
         self._results: dict[tuple[str, str], PoEQueryResult] = {}
         self._items: dict[tuple[str, str], QTreeWidgetItem] = {}
         self._parents: dict[str, QTreeWidgetItem] = {}
+        self._group_index: dict[str, PoETarget] = {}
+        self._dirty_groups: set[str] = set()
+        self._coalescing_groups = False
         self._pending: set[tuple[str, str]] = set()
         self._run_total = 0
         self._render_queue: list[PoEQueryResult] = []
@@ -379,6 +382,8 @@ class PoEQueryDialog(QDialog):
     @Slot()
     def _invalidate(self) -> None:
         self._groups = ()
+        self._group_index.clear()
+        self._dirty_groups.clear()
         self._pending.clear()
         self._run_total = 0
         self._results.clear()
@@ -516,6 +521,8 @@ class PoEQueryDialog(QDialog):
         self._parents.clear()
         self._results.clear()
         self._groups = groups
+        self._group_index = {g.target.endpoint: g for g in groups}
+        self._dirty_groups.clear()
         for group in groups:
             parent = QTreeWidgetItem(self.result_tree)
             parent.setData(0, Qt.ItemDataRole.UserRole, (group.target.endpoint, ""))
@@ -661,8 +668,19 @@ class PoEQueryDialog(QDialog):
     def _flush_result_queue(self) -> None:
         batch = self._render_queue[:120]
         del self._render_queue[:120]
-        for result in batch:
-            self._apply_result(result)
+        # Large queries may deliver two results per port. Refresh each switch
+        # header once per GUI batch instead of once per individual observation.
+        self._coalescing_groups = True
+        try:
+            for result in batch:
+                self._apply_result(result)
+        finally:
+            self._coalescing_groups = False
+            for endpoint in self._dirty_groups:
+                group = self._group_index.get(endpoint)
+                if group is not None:
+                    self._update_group(group)
+            self._dirty_groups.clear()
         if not self._render_queue:
             self._render_timer.stop()
 
@@ -735,10 +753,12 @@ class PoEQueryDialog(QDialog):
             )
         )
         item.setToolTip(5, _tooltip(notes))
-        for group in self._groups:
-            if group.target.endpoint == key[0]:
+        if self._coalescing_groups:
+            self._dirty_groups.add(key[0])
+        else:
+            group = self._group_index.get(key[0])
+            if group is not None:
                 self._update_group(group)
-                break
         completed = self._run_total - len(self._pending)
         if self._run_total:
             self.progress_bar.setValue(round(completed * 100 / self._run_total))
@@ -862,7 +882,7 @@ class PoEQueryDialog(QDialog):
         cancelled = self._worker is not None and self._worker.cancel_event.is_set()
         # A broken service must never leave pending rows looking measured.
         for endpoint, interface in tuple(self._pending):
-            group = next(g for g in self._groups if g.target.endpoint == endpoint)
+            group = self._group_index[endpoint]
             now = datetime.now().astimezone().isoformat()
             message = "조회가 중지되었습니다." if cancelled else "조회 결과를 받지 못했습니다."
             previous = self._results.get((endpoint, interface))
