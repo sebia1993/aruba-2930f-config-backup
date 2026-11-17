@@ -184,6 +184,8 @@ class PoEQueryDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._service = service
+        # Injected only by the integrated manager; standalone dialog uses local fields.
+        self.session_credential_provider: Callable[[], Credentials] | None = None
         self._thread: QThread | None = None
         self._worker: _QueryWorker | None = None
         self._approval_dialog: QDialog | None = None
@@ -541,6 +543,9 @@ class PoEQueryDialog(QDialog):
         self._start(groups, credentials)
 
     def _credentials(self) -> Credentials:
+        provider = self.session_credential_provider
+        if provider is not None:
+            return provider()
         return Credentials(
             self.username_input.text().strip(),
             self.password_input.text(),
