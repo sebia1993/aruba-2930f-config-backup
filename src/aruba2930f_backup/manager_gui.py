@@ -70,6 +70,8 @@ def _take_layout_with(layout: QVBoxLayout, button: QWidget) -> object:
 
     for index in range(layout.count()):
         item = layout.itemAt(index)
+        if item is None:
+            continue
         child = item.layout()
         if isinstance(child, QLayout):
             for number in range(child.count()):
@@ -261,8 +263,8 @@ class NetworkManagerWindow(QMainWindow):
         page = QWidget(self.pages)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(12, 12, 12, 12)
-        title = QLabel("작업 바로가기", page)
-        layout.addWidget(title)
+        heading = QLabel("작업 바로가기", page)
+        layout.addWidget(heading)
         shortcuts = (
             ("컨피그 백업", "running-config 수집 / 결과", 1),
             ("포트 통합 관리", "LLDP·PoE 조회 / 포트 제어", 2),
@@ -352,6 +354,8 @@ class NetworkManagerWindow(QMainWindow):
 
         for index in range(root.count()):
             item = root.itemAt(index)
+            if item is None:
+                continue
             if isinstance(item.layout(), QFormLayout):
                 credential_form = item.layout()
                 root.takeAt(index)
@@ -381,9 +385,11 @@ class NetworkManagerWindow(QMainWindow):
         # owned by the shell, with active operations protected by navigate().
         while root.count():
             item = root.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.hide()
+            if item is None:
+                continue
+            leftover_widget = item.widget()
+            if leftover_widget is not None:
+                leftover_widget.hide()
 
         root.setContentsMargins(4, 4, 4, 4)
         root.setSpacing(7)
@@ -485,10 +491,10 @@ class NetworkManagerWindow(QMainWindow):
         panel.insertLayout(3, actions)
         explanation = panel.itemAt(0)
         if explanation is not None:
-            label = explanation.widget()
-            if isinstance(label, QLabel):
-                label.setToolTip(label.text())
-                label.setText(
+            explanation_label = explanation.widget()
+            if isinstance(explanation_label, QLabel):
+                explanation_label.setToolTip(explanation_label.text())
+                explanation_label.setText(
                     "포트 선택 후 제어. 일괄 PoE OFF/포트 Down은 "
                     "LLDP로 확인된 AP-535 포트만 허용합니다."
                 )
