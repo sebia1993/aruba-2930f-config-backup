@@ -442,7 +442,8 @@ class NetworkManagerWindow(QMainWindow):
         port.result_tree.setColumnWidth(0, 225)  # hostname and IP together
         port.result_tree.setColumnWidth(1, 155)  # LLDP AP
         port.result_tree.setColumnWidth(2, 92)  # watts
-        port.result_tree.setColumnWidth(6, 185)  # port/PoE administrative state
+        port.result_tree.setColumnWidth(3, 175)  # port administration and link
+        port.result_tree.setColumnWidth(5, 160)  # PoE setting and delivery
         center_layout.addWidget(port.result_tree, 1)
         detail = QWidget(body)
         detail_layout = QVBoxLayout(detail)
