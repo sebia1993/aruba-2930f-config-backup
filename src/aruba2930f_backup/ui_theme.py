@@ -38,9 +38,9 @@ _THEMES = {
 
 def selected_theme() -> str:
     """Load only one of the two explicit choices; never use an auto mode."""
-    value = str(QSettings("sebia1993", "Aruba2930FNetworkManager").value(
-        "appearance/theme", "dark"
-    ))
+    value = str(
+        QSettings("sebia1993", "Aruba2930FNetworkManager").value("appearance/theme", "dark")
+    )
     return value if value in _THEMES else "dark"
 
 
@@ -137,6 +137,4 @@ def set_theme(mode: str, *, persist: bool = True) -> None:
         """
     )
     if persist:
-        QSettings("sebia1993", "Aruba2930FNetworkManager").setValue(
-            "appearance/theme", mode
-        )
+        QSettings("sebia1993", "Aruba2930FNetworkManager").setValue("appearance/theme", mode)
