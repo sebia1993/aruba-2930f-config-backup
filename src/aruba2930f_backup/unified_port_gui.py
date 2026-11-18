@@ -499,9 +499,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             QMessageBox.warning(self, "레거시 SSH 대상", str(exc))
             return
         if not groups:
-            QMessageBox.information(
-                self, "레거시 SSH 대상", "먼저 조회 대상 스위치를 입력하세요."
-            )
+            QMessageBox.information(self, "레거시 SSH 대상", "먼저 조회 대상 스위치를 입력하세요.")
             return
         dialog = LegacySSHConsentDialog(tuple(group.target for group in groups), self)
         selected = self._selected_key()

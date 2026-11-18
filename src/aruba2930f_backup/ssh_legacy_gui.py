@@ -21,9 +21,7 @@ from .ssh_legacy import session_legacy_ssh
 class LegacySSHConsentDialog(QDialog):
     """Never approve a legacy SSH endpoint without exact operator input."""
 
-    def __init__(
-        self, targets: Sequence[DeviceTarget], parent: QWidget | None = None
-    ) -> None:
+    def __init__(self, targets: Sequence[DeviceTarget], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         if not targets:
             raise ValueError("Legacy SSH approval requires a known target.")
@@ -94,9 +92,7 @@ class LegacySSHConsentDialog(QDialog):
     def _update_confirmation(self, _value: object = None) -> None:
         target = self.selected_target
         active = session_legacy_ssh.allowed(target)
-        self.confirm_button.setText(
-            "선택 장비의 예외 해제" if active else "선택 장비만 예외 허용"
-        )
+        self.confirm_button.setText("선택 장비의 예외 해제" if active else "선택 장비만 예외 허용")
         self.confirm_input.setPlaceholderText(target.endpoint)
         self.confirm_button.setEnabled(self.confirm_input.text() == target.endpoint)
 

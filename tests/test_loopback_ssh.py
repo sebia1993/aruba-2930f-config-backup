@@ -89,7 +89,6 @@ def test_production_ssh_stack_blocks_sha1_rsa_before_authentication(tmp_path) ->
         assert server.errors == []
 
 
-
 def test_explicit_legacy_rsa_sha1_negotiates_before_password_and_still_requires_pinned_key(
     tmp_path,
 ) -> None:
