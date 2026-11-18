@@ -701,9 +701,7 @@ class PoEQueryDialog(QDialog):
         item = self._items[key]
         snapshot = result.snapshot
         lldp = result.lldp
-        automatic_legacy = snapshot is not None and session_legacy_ssh.allowed(
-            result.group.target
-        )
+        automatic_legacy = snapshot is not None and session_legacy_ssh.allowed(result.group.target)
         if lldp is None:
             ap_name = "확인 안 됨" if result.complete else "조회 중"
         elif lldp.status == LLDPStatus.OK:
@@ -749,9 +747,7 @@ class PoEQueryDialog(QDialog):
             item.setText(3, port_state)
             item.setToolTip(3, _tooltip(port_detail))
             item.setText(4, _local_time(snapshot.observed_at if snapshot else result.finished_at))
-            item.setText(
-                5, f"{poe_state} · 레거시 SSH" if automatic_legacy else poe_state
-            )
+            item.setText(5, f"{poe_state} · 레거시 SSH" if automatic_legacy else poe_state)
             notes = " · ".join(
                 filter(
                     None,

@@ -20,7 +20,7 @@ from aruba2930f_backup.models import (
 from aruba2930f_backup.ssh_legacy import session_legacy_ssh
 
 
-def test_wc1601_requires_explicit_endpoint_consent_and_leaves_other_devices_strict() -> None:
+def test_wc1601_auto_detection_stays_scoped_to_exact_endpoint() -> None:
     old = DeviceTarget("192.0.2.10", 22)
     another = DeviceTarget("192.0.2.11", 22)
     alternate_port = DeviceTarget("192.0.2.10", 2222)
@@ -63,7 +63,7 @@ def test_legacy_server_host_key_is_still_pinned_and_changed_keys_rejected(tmp_pa
         session_legacy_ssh.clear()
 
 
-def test_explicit_approval_does_not_persist_without_user_store() -> None:
+def test_detected_legacy_endpoint_does_not_persist_between_sessions() -> None:
     target = DeviceTarget("192.0.2.10", 22)
     session_legacy_ssh.clear()
     session_legacy_ssh.allow(target)
