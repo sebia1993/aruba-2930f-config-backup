@@ -10,7 +10,15 @@ from collections import Counter
 from math import ceil
 from typing import cast
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QPersistentModelIndex,
+    QRectF,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -70,15 +78,15 @@ class PortMatrixModel(QAbstractTableModel):
         self._row_by_key: dict[PortKey, int] = {}
         self._ports: dict[PortKey, MatrixPort] = {}
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: B008
+    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: B008
         if parent.isValid():
             return 0
         return ceil(len(self._visible) / self._columns)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: B008
+    def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: B008
         return 0 if parent.isValid() else self._columns
 
-    def key_at(self, index: QModelIndex) -> PortKey | None:
+    def key_at(self, index: QModelIndex | QPersistentModelIndex) -> PortKey | None:
         if not index.isValid() or index.row() < 0 or index.column() < 0:
             return None
         offset = index.row() * self._columns + index.column()
@@ -90,7 +98,9 @@ class PortMatrixModel(QAbstractTableModel):
             return QModelIndex()
         return self.index(offset // self._columns, offset % self._columns)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
+    def data(
+        self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> object:
         key = self.key_at(index)
         if key is None:
             return None
@@ -180,7 +190,9 @@ class PortMatrixDelegate(QStyledItemDelegate):
     def set_dark(self, enabled: bool) -> None:
         self._dark = enabled
 
-    def paint(self, painter: QPainter, option: object, index: QModelIndex) -> None:
+    def paint(
+        self, painter: QPainter, option: object, index: QModelIndex | QPersistentModelIndex
+    ) -> None:
         # QStyleOptionViewItem arrives through the PySide6 virtual interface.
         from PySide6.QtWidgets import QStyleOptionViewItem
 
