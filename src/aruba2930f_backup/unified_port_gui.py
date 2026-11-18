@@ -1678,8 +1678,12 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         failed = sum(
             1
             for key in self._progress_query_keys
-            if key not in self._results
-            or self._results[key].status in (QueryStatus.FAILED, QueryStatus.CANCELLED)
+            if (row := self._results.get(key)) is None
+            or row.status in (QueryStatus.FAILED, QueryStatus.CANCELLED)
+            or (
+                row.lldp is not None
+                and row.lldp.status in (LLDPStatus.FAILED, LLDPStatus.CANCELLED)
+            )
         )
         self.progress_panel.finish_query(
             self._run_total,
