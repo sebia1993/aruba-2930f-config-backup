@@ -128,6 +128,41 @@ def set_theme(mode: str, *, persist: bool = True) -> None:
             border: 1px solid {c["border"]};
             border-radius: 8px;
         }}
+        QFrame#themeSegmentedControl {{
+            background: {c["alternate"]};
+            border: 1px solid {c["border"]};
+            border-radius: 10px;
+        }}
+        QFrame#themeSegmentedControl QPushButton#themeLight,
+        QFrame#themeSegmentedControl QPushButton#themeDark {{
+            margin: 0px;
+            padding: 5px 10px;
+            background: transparent;
+            color: {c["muted"]};
+            border: 1px solid transparent;
+            border-radius: 0px;
+            font-weight: 500;
+        }}
+        QFrame#themeSegmentedControl QPushButton#themeLight {{
+            border-top-left-radius: 8px;
+            border-bottom-left-radius: 8px;
+        }}
+        QFrame#themeSegmentedControl QPushButton#themeDark {{
+            border-top-right-radius: 8px;
+            border-bottom-right-radius: 8px;
+        }}
+        QFrame#themeSegmentedControl QPushButton#themeLight:hover:!checked,
+        QFrame#themeSegmentedControl QPushButton#themeDark:hover:!checked {{
+            background: {c["button"]};
+            color: {c["text"]};
+        }}
+        QFrame#themeSegmentedControl QPushButton#themeLight:checked,
+        QFrame#themeSegmentedControl QPushButton#themeDark:checked {{
+            background: {c["accent"]};
+            color: {c["accent_text"]};
+            border-color: {c["accent"]};
+            font-weight: 700;
+        }}
         QGroupBox {{
             color: {c["text"]};
         }}
