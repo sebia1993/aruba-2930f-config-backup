@@ -239,6 +239,37 @@ def _settings(snapshot: PortSnapshot) -> tuple[object, ...]:
     )
 
 
+def _hostname_matches_for_action(
+    before: PortSnapshot, after: PortSnapshot, action: PortAction
+) -> bool:
+    """Do not treat a missing CLI prompt hostname as a new device.
+
+    The trusted SHA-256 host key, model, endpoint, port and settings must
+    still match. If both names are known they must agree. Limit the
+    missing-hostname fallback to PoE ON; never weaken disruptive OFF/Down.
+    """
+    if before.hostname == after.hostname:
+        return True
+    return action is PortAction.POE_ON and (
+        before.hostname in ("", "확인 불가") or after.hostname in ("", "확인 불가")
+    )
+
+
+def _same_settings_for_action(
+    before: PortSnapshot, expected: PortSnapshot, action: PortAction
+) -> bool:
+    """Authoritative settings must match even if the CLI hostname is unavailable."""
+    return (
+        before.target == expected.target
+        and before.interface == expected.interface
+        and before.model == expected.model
+        and before.fingerprint == expected.fingerprint
+        and before.enabled == expected.enabled
+        and before.poe_enabled == expected.poe_enabled
+        and _hostname_matches_for_action(before, expected, action)
+    )
+
+
 def _state_record(snapshot: PortSnapshot | None) -> dict[str, object] | None:
     if snapshot is None:
         return None
@@ -376,7 +407,7 @@ class PortControlService:
                 before = self._read_snapshot(
                     session, snapshot.target, snapshot.interface, observation.fingerprint
                 )
-                if _settings(before) != _settings(snapshot):
+                if not _same_settings_for_action(before, snapshot, action):
                     raise PreMutationRejected(
                         ErrorCode.INPUT_INVALID,
                         "조회 후 대상 정보 또는 포트 설정이 변경되었습니다. 다시 조회하세요.",
@@ -548,10 +579,11 @@ class PortControlService:
             same_identity = (
                 before.target,
                 before.interface,
-                before.hostname,
                 before.model,
                 before.fingerprint,
-            ) == (after.target, after.interface, after.hostname, after.model, after.fingerprint)
+            ) == (after.target, after.interface, after.model, after.fingerprint) and (
+                _hostname_matches_for_action(before, after, action)
+            )
             untouched = (
                 after.enabled == before.enabled
                 if action.is_poe
