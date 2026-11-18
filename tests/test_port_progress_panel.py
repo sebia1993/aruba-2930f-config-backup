@@ -7,9 +7,8 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtWidgets import QApplication
-
 from aruba2930f_backup.port_progress_panel import PortProgressPanel
+from PySide6.QtWidgets import QApplication
 
 
 @pytest.fixture(scope="module")
