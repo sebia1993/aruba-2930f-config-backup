@@ -11,7 +11,7 @@
 
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
-> **브랜치 전용 사전 릴리스: [v0.9.5](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.9.5)** (`Aruba2930FConfigBackup_v0.9.5_windows_x64.zip`)입니다. 구형 WC.16.01.0008 장비의 SSH 서버키 협상 호환성을 자동으로 처리하며, 레거시 예외 승인 버튼을 제거했습니다. 기존 `main`(v0.9.2)은 병합하지 않습니다. 현장 장비 테스트는 별도로 진행합니다.
+> **현재 main 코드 버전: [v0.9.5](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.9.5)** (`Aruba2930FConfigBackup_v0.9.5_windows_x64.zip`)입니다. WC.16.01.0008 장비의 SSH 서버키 협상 호환성을 자동으로 처리하며, 레거시 예외 승인 버튼 없이 조회할 수 있습니다. GitHub에는 Windows 11용 사전 릴리스를 유지합니다. 현장에서 구형 장비 SSH 로그인은 확인됐으며, 실제 PoE 동작은 장비별로 별도 검증이 필요합니다.
 
 > **WC.16.01 자동 SSH 호환:** 기존처럼 `전체 조회`만 실행하세요. 프로그램이 강한 SSH 방식으로 먼저 연결하고, 서버 호스트키 불일치가 확인된 경우 **인증 전 1회** `ssh-rsa` 서버키 방식으로 재협상합니다. 별도 예외 승인 버튼이나 추가 호환 설정은 없습니다. 포트 결과의 `레거시 SSH` 표시로 구분하며, **최초 SSH 지문 신뢰 승인과 변경된 키 차단은 그대로 유지**합니다. [보안 제약과 상세 절차](docs/SSH_LEGACY_COMPAT_KO.md).
 
@@ -177,14 +177,14 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 
 ## 빠른 시작
 
-1. GitHub **Releases**에서 검증용 `Aruba2930FConfigBackup_v0.9.5_windows_x64.zip`을 받습니다. 현행 main은 v0.9.2입니다.
+1. GitHub **Releases**에서 `Aruba2930FConfigBackup_v0.9.5_windows_x64.zip`을 받습니다. `main`의 애플리케이션 버전도 v0.9.5입니다.
    아직 게시되지 않은 개발 버전은 해당 PR의 성공한 Windows CI 실행에서
    `Aruba2930FConfigBackup-windows-x64-ci` 아티팩트를 내려받습니다.
 2. 함께 제공되는 `.sha256` 파일로 ZIP 해시를 확인합니다.
 
 ```powershell
-Get-FileHash .\Aruba2930FConfigBackup_v0.4.0_windows_x64.zip -Algorithm SHA256
-Get-Content .\Aruba2930FConfigBackup_v0.4.0_windows_x64.zip.sha256
+Get-FileHash .\Aruba2930FConfigBackup_v0.9.5_windows_x64.zip -Algorithm SHA256
+Get-Content .\Aruba2930FConfigBackup_v0.9.5_windows_x64.zip.sha256
 ```
 
 3. ZIP 전체를 쓰기 가능한 로컬 폴더에 압축 해제합니다.
