@@ -145,6 +145,19 @@ def test_tile_click_is_inspection_only_and_keeps_existing_checked_keys(
     window.close()
 
 
+def test_target_edit_clears_stale_matrix_observations(app: QApplication) -> None:
+    window = NetworkManagerWindow()
+    window.navigate(2)
+    group = PoETarget(DeviceTarget("192.0.2.10", 22), ("1", "2"))
+    window.port_page._build_results((group,))
+    window.port_page._apply_result(sample(group, "1"))
+    assert window.port_matrix.model.total == 2
+    window.port_page._invalidate()
+    assert window.port_matrix.model.total == 0
+    assert window.port_matrix.model.shown == 0
+    window.close()
+
+
 def test_theme_buttons_apply_in_one_click_and_keep_settings(app: QApplication) -> None:
     settings = QSettings("sebia1993", "Aruba2930FNetworkManager")
     previous = settings.value("appearance/theme", "dark")
