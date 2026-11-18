@@ -219,6 +219,60 @@ def test_each_action_changes_only_its_setting_and_is_verified(
     assert CREDENTIALS.password not in result.audit_path.read_text()
 
 
+def test_poe_on_accepts_unknown_hostname_when_fingerprint_and_settings_match(
+    setup: Any,
+) -> None:
+    service, device, _clock = setup
+    device.poe_enabled = False
+    device.hostname = ""
+    snapshot = inspect(service, device)
+    assert snapshot.hostname == "확인 불가"
+    # A subsequent SSH session may provide a parseable prompt hostname.
+    device.hostname = "edge-lab"
+    result = service.apply(
+        snapshot, PortAction.POE_ON, CREDENTIALS,
+        confirmation=snapshot.confirmation_text,
+    )
+    assert result.status == "verified"
+    assert device.mutations == [("24", "poe_on")]
+
+
+def test_poe_on_does_not_accept_changed_known_hostname_or_settings(
+    setup: Any,
+) -> None:
+    service, device, _clock = setup
+    device.poe_enabled = False
+    snapshot = inspect(service, device)
+    device.hostname = "unexpected-host"
+    with pytest.raises((ValueError, CollectionFailure)):
+        service.apply(
+            snapshot, PortAction.POE_ON, CREDENTIALS,
+            confirmation=snapshot.confirmation_text,
+        )
+    assert device.mutations == []
+
+
+def test_poe_on_allows_missing_hostname_after_change_without_unverified(
+    setup: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, device, _clock = setup
+    device.poe_enabled = False
+    snapshot = inspect(service, device)
+    original = Session.change_port
+
+    def change_then_lose_hostname(self: Session, interface: str, action: str) -> None:
+        original(self, interface, action)
+        self.device.hostname = ""
+
+    monkeypatch.setattr(Session, "change_port", change_then_lose_hostname)
+    result = service.apply(
+        snapshot, PortAction.POE_ON, CREDENTIALS,
+        confirmation=snapshot.confirmation_text,
+    )
+    assert result.status == "verified"
+    assert device.mutations == [("24", "poe_on")]
+
+
 def test_already_desired_state_sends_no_change(setup: Any) -> None:
     service, d, _ = setup
     snapshot = inspect(service, d)
