@@ -1220,3 +1220,39 @@ def test_auto_legacy_ssh_is_labeled_in_poe_query_results(app: QApplication) -> N
     finally:
         session_legacy_ssh.clear()
         dialog.close()
+
+
+@pytest.mark.parametrize("lldp_status", [LLDPStatus.FAILED, LLDPStatus.CANCELLED])
+def test_query_summary_counts_lldp_failures_even_when_poe_succeeds(
+    app: QApplication, lldp_status: LLDPStatus
+) -> None:
+    """Count missing LLDP and failed PoE only once per selected port."""
+    from dataclasses import replace
+
+    dialog = setup_dialog()
+    first = queried("1")
+    second = queried("2")
+    dialog._apply_result(
+        replace(
+            first,
+            lldp=LLDPObservation(lldp_status, message="LLDP unavailable"),
+            complete=True,
+        )
+    )
+    dialog._apply_result(
+        replace(
+            second,
+            status=QueryStatus.FAILED,
+            lldp=LLDPObservation(LLDPStatus.FAILED, message="SSH failed"),
+            complete=True,
+        )
+    )
+    dialog._run_total = 2
+    dialog._progress_query_keys = frozenset(
+        {(TARGET.endpoint, "1"), (TARGET.endpoint, "2")}
+    )
+    dialog.progress_panel.start_query(2)
+    dialog._thread_finished()
+
+    assert "실패/취소 2" in dialog.progress_panel.counts.text()
+    dialog.close()
