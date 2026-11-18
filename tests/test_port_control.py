@@ -121,6 +121,8 @@ class Session:
                 "Status and Counters - General System Information\n"
                 f"System Name : {self.device.hostname}\n"
             )
+        if command == "show running-config":
+            return "Running configuration:\n"
         assert command == "show modules"
         return f"Chassis: Aruba 2930F {self.device.sku}"
 
