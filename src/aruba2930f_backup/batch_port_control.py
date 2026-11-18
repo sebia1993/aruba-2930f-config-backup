@@ -12,6 +12,7 @@ import os
 import threading
 import uuid
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -383,11 +384,9 @@ class BatchPortController:
 
         def emit_stage(phase: str) -> None:
             if on_stage is not None:
-                try:
+                # Diagnostic UI notifications never change network safety.
+                with suppress(Exception):
                     on_stage(index, item, phase)
-                except Exception:
-                    # Diagnostic UI notifications never change network safety.
-                    pass
 
         try:
             emit_stage("preflight")
