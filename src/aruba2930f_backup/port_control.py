@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .hostkeys import HostKeyProbe, HostKeyStore, ParamikoHostKeyProbe
+from .hostname_discovery import discover_hostname
 from .models import (
     CollectionFailure,
     CollectionOptions,
@@ -30,7 +31,6 @@ from .models import (
     HostKeyTrustState,
 )
 from .storage import default_output_directory
-from .hostname_discovery import discover_hostname
 from .validation import ARUBA_2930F_MODELS, validate_device_identity
 
 _PORT_RE = re.compile(r"[1-9][0-9]*(?:/[1-9][0-9]*)?")
