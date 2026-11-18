@@ -204,6 +204,28 @@ def test_output_bounds_check_bytes_and_lines() -> None:
         validate_output_limits("a\nb\nc", max_bytes=100, max_lines=2)
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    (
+        ("System Name : SW-2930F-01\\r\\nSystem Contact : admin", "SW-2930F-01"),
+        ("SYSTEM NAME  :  서울 RND SW 01", "서울 RND SW 01"),
+        ("  System Name\\t:\\tSW_01  ", "SW_01"),
+        ("\\x1b[32mSystem Name : building-sw\\x1b[0m", "building-sw"),
+        ("System Name : VSF-2930F\\nSystem Name : VSF-2930F", "VSF-2930F"),
+        ("System Name : \\"branch with spaces\\"", "branch with spaces"),
+        ("System Name : ", None),
+        ("System Contact : SW-01", None),
+        ("System Name : SW-1\\nSystem Name : SW-2", None),
+        ("System Name : SW-1\\x00bad", None),
+        ("System Name : " + "a" * 256, None),
+    ),
+)
+def test_system_info_hostname_parser(text: str, expected: str | None) -> None:
+    from aruba2930f_backup.validation import hostname_from_system_information
+
+    assert hostname_from_system_information(text) == expected
+
+
 def test_prompt_hostname_requires_single_exec_prompt() -> None:
     assert hostname_from_prompt("edge-lab#") == "edge-lab"
     assert hostname_from_prompt("edge-lab>") == "edge-lab"
