@@ -926,8 +926,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         if excluded:
             self._batch_plan = None
             reasons = [
-                f"{endpoint} / {interface}: {reason}"
-                for endpoint, interface, reason in excluded
+                f"{endpoint} / {interface}: {reason}" for endpoint, interface, reason in excluded
             ]
             self.quick_summary.setText(
                 f"PoE {action.value} 보류 · 확인 필요 {len(excluded)}/{len(keys)}포트"

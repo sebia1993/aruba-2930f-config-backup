@@ -196,9 +196,7 @@ class NetworkManagerWindow(QMainWindow):
         for index, (title, _) in enumerate(_PAGE_TITLES):
             button = QPushButton(title, sidebar)
             button.setCheckable(True)
-            button.setObjectName(
-                ("navHome", "navBackup", "navPorts", "navHistory")[index]
-            )
+            button.setObjectName(("navHome", "navBackup", "navPorts", "navHistory")[index])
             button.setMinimumHeight(42)
             button.clicked.connect(lambda checked=False, target=index: self.navigate(target))
             sidebar_layout.addWidget(button)
