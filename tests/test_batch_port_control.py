@@ -347,3 +347,25 @@ def test_known_prewrite_failure_is_recorded_without_stopping_other_ports(tmp_pat
         0: "preflight_failed",
         1: "verified",
     }
+
+
+
+def test_batch_emits_current_port_stages_without_credentials(tmp_path: Path) -> None:
+    fake = FakeControl()
+    plan = create_batch_plan([row("12")], PortAction.POE_ON)
+    stages: list[tuple[int, str, str, str]] = []
+    result = BatchPortController(
+        controller_factory=lambda: fake, journal_directory=tmp_path
+    ).execute(
+        plan,
+        CREDS,
+        on_stage=lambda index, target, phase: stages.append(
+            (index, target.target.endpoint, target.interface, phase)
+        ),
+    )
+    assert result.results[0].status is BatchStatus.VERIFIED
+    assert stages == [
+        (0, SWITCH.endpoint, "12", "preflight"),
+        (0, SWITCH.endpoint, "12", "apply"),
+    ]
+    assert CREDS.password not in repr(stages)
