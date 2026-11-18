@@ -423,7 +423,7 @@ def _build_pinned_connection(
         auth_timeout=options.connect_timeout_seconds,
         banner_timeout=options.connect_timeout_seconds,
         blocking_timeout=options.command_timeout_seconds,
-        disabled_algorithms=disabled_sha1_rsa_algorithms(),
+        disabled_algorithms=disabled_sha1_rsa_algorithms(target),
         fast_cli=False,
         auto_connect=False,
     )

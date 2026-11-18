@@ -42,6 +42,7 @@ from .gui import MainWindow
 from .home_shortcuts import HomeShortcutButton
 from .models import Credentials
 from .session_credentials import SessionCredentialDialog, SessionCredentialStore
+from .ssh_legacy import session_legacy_ssh
 from .storage import default_output_directory
 from .unified_port_gui import UnifiedPortManagementDialog
 
@@ -405,6 +406,7 @@ class NetworkManagerWindow(QMainWindow):
             search_group,
             control_group,
             quick_bar,
+            port.progress_panel,
         )
         for widget in header_items:
             if widget is not None:
@@ -483,6 +485,8 @@ class NetworkManagerWindow(QMainWindow):
         self.port_target_toggle.toggled.connect(self._toggle_port_targets)
 
         _attach(root, query_action)
+        # Pinned feedback stays above the scrollable input/result splitter.
+        root.addWidget(port.progress_panel)
         for button in (
             port.collect_button,
             port.refresh_group_button,
@@ -762,6 +766,7 @@ class NetworkManagerWindow(QMainWindow):
             self._ssh_credentials.configure(
                 credentials.username, credentials.password, credentials.enable_secret
             )
+            session_legacy_ssh.clear()
             if was_configured:
                 # Account changes must invalidate any previously inspected
                 # switch/port state before further destructive operations.
@@ -781,6 +786,7 @@ class NetworkManagerWindow(QMainWindow):
         if self._ssh_credentials.configured:
             self._ssh_credentials.clear()
             self.port_page._invalidate()
+        session_legacy_ssh.clear()
         self._refresh_ssh_session_status()
 
     def _require_ssh_credentials(self) -> Credentials:
@@ -873,5 +879,6 @@ class NetworkManagerWindow(QMainWindow):
         self.port_page._shell_allows_close = True
         self.port_page.close()
         self._ssh_credentials.clear()
+        session_legacy_ssh.clear()
         self._refresh_ssh_session_status()
         super().closeEvent(event)

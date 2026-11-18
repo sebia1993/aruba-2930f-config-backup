@@ -58,6 +58,7 @@ from .port_power_diagnosis import (
     poe_supply_label,
     port_admin_link_label,
 )
+from .ssh_legacy import session_legacy_ssh
 
 
 class PoEQueryServiceProtocol(Protocol):
@@ -700,6 +701,7 @@ class PoEQueryDialog(QDialog):
         item = self._items[key]
         snapshot = result.snapshot
         lldp = result.lldp
+        automatic_legacy = snapshot is not None and session_legacy_ssh.allowed(result.group.target)
         if lldp is None:
             ap_name = "확인 안 됨" if result.complete else "조회 중"
         elif lldp.status == LLDPStatus.OK:
@@ -745,7 +747,7 @@ class PoEQueryDialog(QDialog):
             item.setText(3, port_state)
             item.setToolTip(3, _tooltip(port_detail))
             item.setText(4, _local_time(snapshot.observed_at if snapshot else result.finished_at))
-            item.setText(5, poe_state)
+            item.setText(5, f"{poe_state} · 레거시 SSH" if automatic_legacy else poe_state)
             notes = " · ".join(
                 filter(
                     None,
@@ -759,6 +761,10 @@ class PoEQueryDialog(QDialog):
                         else "",
                         "LLDP 취소"
                         if lldp is not None and lldp.status is LLDPStatus.CANCELLED
+                        else "",
+                        "SSH 자동 호환: ssh-rsa 서버 서명(RSA/SHA-1)을 사용했습니다. "
+                        "서버 키 지문 검증은 유지합니다."
+                        if automatic_legacy
                         else "",
                     ),
                 )

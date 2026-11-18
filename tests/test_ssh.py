@@ -19,6 +19,7 @@ from aruba2930f_backup.models import (
     HostKeyObservation,
 )
 from aruba2930f_backup.ssh import NetmikoSSHSession, _build_pinned_connection
+from aruba2930f_backup.ssh_legacy import session_legacy_ssh
 
 
 class FakeConnection:
@@ -537,6 +538,20 @@ def test_actual_authenticated_driver_uses_pinned_policy(tmp_path, monkeypatch) -
     with pytest.raises(CollectionFailure) as changed:
         client.policy.missing_host_key(client, target.ip, FakeKey(b"changed-key"))
     assert changed.value.code is ErrorCode.HOST_KEY_CHANGED
+
+    try:
+        session_legacy_ssh.allow(target)
+        legacy = _build_pinned_connection(
+            target, Credentials("operator", "password"), CollectionOptions(), store
+        )
+        assert legacy.kwargs["disabled_algorithms"] == {"pubkeys": ["ssh-rsa"]}
+        assert legacy.kwargs["auto_connect"] is False
+    finally:
+        session_legacy_ssh.clear()
+    strict = _build_pinned_connection(
+        target, Credentials("operator", "password"), CollectionOptions(), store
+    )
+    assert strict.kwargs["disabled_algorithms"]["keys"] == ["ssh-rsa"]
 
 
 def test_credentials_repr_never_contains_secrets() -> None:

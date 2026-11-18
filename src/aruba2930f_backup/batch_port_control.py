@@ -12,6 +12,7 @@ import os
 import threading
 import uuid
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -330,6 +331,7 @@ class BatchPortController:
         *,
         cancel_event: threading.Event | None = None,
         on_result: Callable[[int, BatchResult], None] | None = None,
+        on_stage: Callable[[int, BatchTarget, str], None] | None = None,
         continue_after_chunk: Callable[[int, int], bool] | None = None,
     ) -> BatchOutcome:
         cancel = cancel_event if cancel_event is not None else threading.Event()
@@ -356,10 +358,12 @@ class BatchPortController:
                     )
                 else:
                     result = self._execute_one(
-                        index, item, plan.action, credentials, journal, cancel
+                        index, item, plan.action, credentials, journal, cancel, on_stage
                     )
             else:
-                result = self._execute_one(index, item, plan.action, credentials, journal, cancel)
+                result = self._execute_one(
+                    index, item, plan.action, credentials, journal, cancel, on_stage
+                )
             if result.status is BatchStatus.UNVERIFIED:
                 halt = True
             journal.append(index, "result", status=result.status.value, message=result.message)
@@ -376,9 +380,18 @@ class BatchPortController:
         credentials: Credentials,
         journal: _BatchJournal,
         cancel: threading.Event,
+        on_stage: Callable[[int, BatchTarget, str], None] | None,
     ) -> BatchResult:
         controller = self._controller_factory()
+
+        def emit_stage(phase: str) -> None:
+            if on_stage is not None:
+                # Diagnostic UI notifications never change network safety.
+                with suppress(Exception):
+                    on_stage(index, item, phase)
+
         try:
+            emit_stage("preflight")
             snapshot = controller.inspect(
                 item.target,
                 item.interface,
@@ -415,6 +428,7 @@ class BatchPortController:
             journal.append(index, "intent", action=action.value)
             # A fresh, same-session LLDP identity check happens inside apply,
             # immediately before OFF/Down. A stale AP model alone is not enough.
+            emit_stage("apply")
             if action in (PortAction.POE_OFF, PortAction.DISABLE) and item.confirmed_ap535:
                 result = controller.apply(
                     snapshot,
