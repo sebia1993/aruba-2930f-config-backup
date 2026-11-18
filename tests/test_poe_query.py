@@ -200,9 +200,7 @@ def test_system_name_has_priority_over_prompt_for_every_port(tmp_path: Path) -> 
     rows = network.service(tmp_path).collect(
         [target(endpoint.ip, "1,2")], CREDENTIALS, approve_host_key=lambda _: True
     )
-    assert [item.snapshot.hostname for item in rows] == [
-        "DIRECT-SW-2930F", "DIRECT-SW-2930F"
-    ]
+    assert [item.snapshot.hostname for item in rows] == ["DIRECT-SW-2930F", "DIRECT-SW-2930F"]
     assert network.connections[0].writes.count("show system information") == 1
 
 
