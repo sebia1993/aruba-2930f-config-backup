@@ -3,6 +3,12 @@
 [![CI](https://github.com/sebia1993/aruba-2930f-config-backup/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sebia1993/aruba-2930f-config-backup/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+## 브라우저에서 사용하는 로컬 웹
+
+Windows x64용 로컬 웹 ZIP을 풀고 **Start-Local-Web.cmd**를 열면 기본 브라우저에서 AP 로그와 포트를 관제하고, 저장된 조회 결과를 비교할 수 있습니다. [로컬 웹 사용 안내](local-web/README.md) · [웹 v1.3.0 다운로드](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/web-v1.3.0)
+
+## Windows 데스크톱 프로그램
+
 **ArubaOS-Switch 기반 Aruba 2930F의 컨피그 백업과 포트별 LLDP·PoE 상태 조회 및 안전한 포트 제어를 하나의 Windows 프로그램에서 처리합니다.** 메인 메뉴는 홈 / 컨피그 백업 / 포트 통합 관리 / 작업 이력의 4개만 제공합니다. 별도 설정 페이지 없이 백업 화면에서 저장 경로를 정하며, SSH 지문 검증·최초 승인 및 변경 차단은 유지합니다.
 
 > **v0.3.0에서는 스위치 IP·포트 목록을 입력해 포트별 전력, LLDP AP 이름, AP-535 공급 판정을 함께 조회합니다.** 결과는 IP·실제 호스트네임으로 묶고 대상 목록을 저장·불러오기 할 수 있습니다. [전력·LLDP 조회 안내](docs/POE_QUERY_KO.md)에서 판정 근거와 사용법을 확인하십시오. v0.2.0의 [단일 포트 제어](docs/PORT_CONTROL_KO.md)도 계속 제공합니다.

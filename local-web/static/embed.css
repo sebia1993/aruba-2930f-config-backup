@@ -1,0 +1,8 @@
+.embedded .app{display:block;min-height:0}
+.embedded .app>.sidebar{position:static;width:auto;height:auto;min-height:0;display:block;padding:6px 12px;border:0;border-bottom:1px solid var(--line);background:var(--panel)}
+.embedded .sidebar .brand,.embedded .sidebar .navhead,.embedded .sidebar .sidebar-bottom,.embedded .sidebar .nav-label,.embedded .sidebar .nav-title,.embedded .topbar{display:none}
+.embedded .sidebar .nav{display:flex;flex-direction:row;gap:6px;flex-wrap:wrap;padding:0;margin:0}
+.embedded .sidebar .nav button{width:auto;height:auto;min-height:32px;margin:0;padding:4px 12px}
+.embedded .sidebar .nav .navtxt{display:inline}
+.embedded .page{min-width:0}
+.embedded .ui-inspected{outline:3px solid #df8a2e;outline-offset:-3px}

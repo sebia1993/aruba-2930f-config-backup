@@ -101,3 +101,40 @@ jobs:
           path: artifacts/release/*
           if-no-files-found: error
           retention-days: 7
+
+      - name: Test local web
+        working-directory: local-web
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = (Resolve-Path ./core).Path
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'Local web tests failed.' }
+
+      - name: Build and verify local web ZIP
+        working-directory: local-web
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'local-web-release'
+          python tools/build_release.py --output $output
+          if ($LASTEXITCODE -ne 0) { throw 'Local web package build failed.' }
+
+          $packages = @(Get-ChildItem -LiteralPath $output -Filter 'Aruba2930F_Local_Web_v*_Windows_x64.zip' -File)
+          if ($packages.Count -ne 1) { throw 'Expected one local web release ZIP.' }
+          $zip = $packages[0]
+          $checksumFile = [IO.Path]::ChangeExtension($zip.FullName, '.sha256')
+          $expected = ((Get-Content -LiteralPath $checksumFile -Raw).Trim() -split '\s+', 2)
+          $actual = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash
+          if ($expected.Count -ne 2 -or $expected[1] -cne $zip.Name -or $expected[0] -ne $actual) {
+            throw 'Local web ZIP name or SHA-256 mismatch.'
+          }
+
+          $extracted = Join-Path $env:RUNNER_TEMP 'local-web-extracted'
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $extracted
+          $runtime = Join-Path $extracted 'runtime/python.exe'
+          $server = Join-Path $extracted 'server.py'
+          $result = & $runtime -B -X utf8 $server --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged local web smoke test failed.' }
+          $smoke = $result | ConvertFrom-Json
+          if ($smoke.ok -ne $true -or $zip.BaseName -cne "Aruba2930F_Local_Web_v$($smoke.version)_Windows_x64") {
+            throw 'Packaged local web identity or health check failed.'
+          }
