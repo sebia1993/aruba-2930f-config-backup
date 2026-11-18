@@ -25,16 +25,16 @@ def test_wc1601_requires_explicit_endpoint_consent_and_leaves_other_devices_stri
     alternate_port = DeviceTarget("192.0.2.10", 2222)
     session_legacy_ssh.clear()
     try:
-        assert disabled_sha1_rsa_algorithms(old) == {
-            "keys": ["ssh-rsa"], "pubkeys": ["ssh-rsa"]
-        }
+        assert disabled_sha1_rsa_algorithms(old) == {"keys": ["ssh-rsa"], "pubkeys": ["ssh-rsa"]}
         session_legacy_ssh.allow(old)
         assert disabled_sha1_rsa_algorithms(old) == {"pubkeys": ["ssh-rsa"]}
         assert disabled_sha1_rsa_algorithms(another) == {
-            "keys": ["ssh-rsa"], "pubkeys": ["ssh-rsa"]
+            "keys": ["ssh-rsa"],
+            "pubkeys": ["ssh-rsa"],
         }
         assert disabled_sha1_rsa_algorithms(alternate_port) == {
-            "keys": ["ssh-rsa"], "pubkeys": ["ssh-rsa"]
+            "keys": ["ssh-rsa"],
+            "pubkeys": ["ssh-rsa"],
         }
         session_legacy_ssh.revoke(old)
         assert "keys" in disabled_sha1_rsa_algorithms(old)

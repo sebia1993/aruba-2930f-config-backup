@@ -44,9 +44,7 @@ def test_unified_gui_allows_only_confirmed_switch_without_mutation(
     refreshed: list[tuple[PoETarget, ...]] = []
     monkeypatch.setattr(dialog, "_refresh", lambda groups: refreshed.append(groups))
     monkeypatch.setattr(LegacySSHConsentDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
-    monkeypatch.setattr(
-        LegacySSHConsentDialog, "selected_target", property(lambda _self: TARGET)
-    )
+    monkeypatch.setattr(LegacySSHConsentDialog, "selected_target", property(lambda _self: TARGET))
     try:
         dialog.legacy_ssh_button.click()
         assert session_legacy_ssh.allowed(TARGET)
