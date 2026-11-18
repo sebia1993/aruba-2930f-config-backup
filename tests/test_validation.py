@@ -343,7 +343,10 @@ def test_running_config_hostname_ignores_unindented_banner_content() -> None:
 @pytest.mark.parametrize(
     ("output", "expected"),
     [
-        ("Status and Counters - General System Information\nSystem Name : SEOUL-SW-01\nSystem Contact :\n", "SEOUL-SW-01"),
+        (
+            "Status and Counters - General System Information\nSystem Name : SEOUL-SW-01\nSystem Contact :\n",
+            "SEOUL-SW-01",
+        ),
         ("System Name   : Aruba-VSF-2930F\nVSF-Member :1\nSystem Location :\n", "Aruba-VSF-2930F"),
         ("System Name : LAB SWITCH 1\n", "LAB SWITCH 1"),
         ("System Name : \nSystem Location : Area A\n", None),
