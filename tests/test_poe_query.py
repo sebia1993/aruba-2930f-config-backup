@@ -44,6 +44,10 @@ class QueryConnection(FakeConnection):
         responses = {
             "show version": ["show version\nAruba JL255A 2930F Switch\nedge-lab#"],
             "show modules": ["show modules\nChassis: Aruba 2930F JL255A\nedge-lab#"],
+            "show system information": [
+                "show system information\nStatus and Counters - General System Information\n"
+                "System Name : DIRECT-SW-2930F\nSystem Contact :\nedge-lab#"
+            ],
             "show interfaces brief": [
                 "show interfaces brief\nPort Type | Alert Enabled Status Mode\n"
                 + "\n".join(f"{p} 100/1000T | No Yes Up Auto" for p in network.ports[endpoint])
@@ -163,7 +167,7 @@ def test_requested_pairs_use_one_session_and_fresh_status_per_port(tmp_path: Pat
     assert len(network.connections) == 2
     for connection in network.connections:
         assert connection.disconnected
-        expected = ["show version", "show modules"]
+        expected = ["show version", "show modules", "show system information"]
         expected.append("show interfaces brief")
         for port in network.ports[connection.endpoint]:
             expected.append(f"show power-over-ethernet {port}")
@@ -188,6 +192,18 @@ def test_requested_pairs_use_one_session_and_fresh_status_per_port(tmp_path: Pat
             options.max_output_lines,
             options.retry_delays_seconds,
         ) == (1, 15, 20, 1024 * 1024, 10_000, ())
+
+
+def test_system_name_has_priority_over_prompt_for_every_port(tmp_path: Path) -> None:
+    endpoint = DeviceTarget("192.0.2.1")
+    network = Network({endpoint: {"1": 3.0, "2": 8.0}})
+    rows = network.service(tmp_path).collect(
+        [target(endpoint.ip, "1,2")], CREDENTIALS, approve_host_key=lambda _: True
+    )
+    assert [item.snapshot.hostname for item in rows] == [
+        "DIRECT-SW-2930F", "DIRECT-SW-2930F"
+    ]
+    assert network.connections[0].writes.count("show system information") == 1
 
 
 def test_duplicate_endpoint_merges_ports_and_preserves_other_ssh_endpoint(tmp_path: Path) -> None:
