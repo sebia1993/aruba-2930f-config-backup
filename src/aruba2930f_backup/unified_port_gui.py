@@ -869,7 +869,9 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         if self._selection_locked():
             return
         if not self._checked_port_keys:
-            self.status_label.setText("변경 명령을 보내지 않았습니다. 먼저 작업할 포트를 체크하세요.")
+            self.status_label.setText(
+                "변경 명령을 보내지 않았습니다. 먼저 작업할 포트를 체크하세요."
+            )
             return
         if len(self._checked_port_keys) > 300:
             QMessageBox.warning(
@@ -972,11 +974,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             ]
             self._quick_feedback = (
                 f"PoE {action.value} 보류 · 확인 필요 {len(excluded)}/{len(keys)}포트"
-                + (
-                    f" · 이미 ON {len(already_enabled)}포트"
-                    if action is PortAction.POE_ON
-                    else ""
-                ),
+                + (f" · 이미 ON {len(already_enabled)}포트" if action is PortAction.POE_ON else ""),
                 "\n".join(reasons),
             )
             self._update_selection_summary()
