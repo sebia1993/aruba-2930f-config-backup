@@ -67,8 +67,8 @@ def test_production_ssh_stack_against_loopback_aruba_fixture(tmp_path) -> None:
         assert server.errors == []
 
 
-def test_production_ssh_stack_blocks_sha1_rsa_before_authentication(tmp_path) -> None:
-    """A SHA-1-only endpoint must fail before any credential is transmitted."""
+def test_production_ssh_stack_auto_detects_legacy_key_before_authentication(tmp_path) -> None:
+    """Automatic fallback is only a pre-auth host-key probe, never a login."""
 
     with LoopbackArubaSSHServer(legacy_algorithms_only=True) as server:
         target = DeviceTarget("127.0.0.1", server.port)
@@ -81,18 +81,22 @@ def test_production_ssh_stack_blocks_sha1_rsa_before_authentication(tmp_path) ->
             command_timeout_seconds=5,
         )
 
-        checks = collector.probe_host_keys([target], options=options)
-        assert checks[0].state is HostKeyTrustState.REJECTED
-        assert checks[0].error_code is ErrorCode.SSH_ALGORITHM_INCOMPATIBLE
-        assert server.auth_attempts == []
-        assert server.commands == []
-        assert server.errors == []
+        session_legacy_ssh.clear()
+        try:
+            checks = collector.probe_host_keys([target], options=options)
+            assert checks[0].state is HostKeyTrustState.UNKNOWN
+            assert session_legacy_ssh.allowed(target)
+            assert server.auth_attempts == []
+            assert server.commands == []
+            assert server.errors == []
+        finally:
+            session_legacy_ssh.clear()
 
 
-def test_explicit_legacy_rsa_sha1_negotiates_before_password_and_still_requires_pinned_key(
+def test_automatic_legacy_rsa_sha1_negotiates_before_password_and_still_requires_pinned_key(
     tmp_path,
 ) -> None:
-    """A simulated WC.16.01 host key and KEX work only after operator consent."""
+    """A simulated WC.16.01 host key and KEX work without legacy UI approval."""
     session_legacy_ssh.clear()
     with LoopbackArubaSSHServer(legacy_algorithms_only=True) as server:
         target = DeviceTarget("127.0.0.1", server.port)
@@ -105,8 +109,8 @@ def test_explicit_legacy_rsa_sha1_negotiates_before_password_and_still_requires_
             command_timeout_seconds=5,
         )
         try:
-            session_legacy_ssh.allow(target)
             checks = collector.probe_host_keys([target], options=options)
+            assert session_legacy_ssh.allowed(target)
             assert checks[0].state is HostKeyTrustState.UNKNOWN
             assert server.auth_attempts == []
             collector.approve_host_keys(checks)
