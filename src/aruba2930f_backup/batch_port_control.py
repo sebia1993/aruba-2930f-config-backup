@@ -61,11 +61,18 @@ class BatchTarget:
     confirmed_ap535: bool = False
     expected_chassis_id: str = ""
     expected_remote_port_id: str = ""
+    expected_model: str = ""
+    allow_unknown_hostname: bool = False
 
     def __post_init__(self) -> None:
         validate_interface(self.interface)
-        if not self.expected_hostname or self.expected_hostname == "확인 불가":
+        hostname_unknown = not self.expected_hostname.strip() or self.expected_hostname == "확인 불가"
+        if hostname_unknown and not self.allow_unknown_hostname:
             raise BatchControlError("장비 호스트네임을 확인한 포트만 일괄 제어할 수 있습니다.")
+        if self.allow_unknown_hostname and (
+            not hostname_unknown or "2930F" not in self.expected_model.upper()
+        ):
+            raise BatchControlError("호스트네임 미확인 시 검증된 Aruba 2930F 모델이 필요합니다.")
         if not self.fingerprint.startswith("SHA256:"):
             raise BatchControlError("승인된 SSH 지문이 없는 대상은 일괄 제어할 수 없습니다.")
 
@@ -89,6 +96,10 @@ class BatchPlan:
         keys = [(t.target.endpoint, t.interface) for t in self.targets]
         if len(set(keys)) != len(keys):
             raise BatchControlError("같은 스위치·포트를 한 작업에 중복 등록할 수 없습니다.")
+        if self.action is not PortAction.POE_ON and any(
+            item.allow_unknown_hostname for item in self.targets
+        ):
+            raise BatchControlError("호스트네임 미확인 대상의 자동 검증은 PoE ON에서만 허용합니다.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +205,11 @@ def validate_batch_target(
         confirmed_ap535=confirmed,
         expected_chassis_id=neighbors[0].chassis_id if confirmed else "",
         expected_remote_port_id=neighbors[0].port_id if confirmed else "",
+        expected_model=snapshot.model,
+        allow_unknown_hostname=(
+            action is PortAction.POE_ON
+            and (not snapshot.hostname.strip() or snapshot.hostname == "확인 불가")
+        ),
     )
 
 
@@ -398,23 +414,26 @@ class BatchPortController:
                 credentials,
                 approve_host_key=lambda _check: False,
             )
-            actual = (
-                snapshot.target,
-                snapshot.interface,
-                snapshot.hostname,
-                snapshot.fingerprint,
-                snapshot.enabled,
-                snapshot.poe_enabled,
+            # AOS-S may return an EXEC prompt without a parseable hostname.
+            # Only PoE ON can use this fallback, and only when the approved
+            # SSH key, 2930F model, exact endpoint, interface and current
+            # configuration still match. A known hostname must match strictly.
+            identity_matches = (
+                snapshot.target == item.target
+                and snapshot.interface == item.interface
+                and snapshot.fingerprint == item.fingerprint
+                and snapshot.enabled == item.expected_enabled
+                and snapshot.poe_enabled == item.expected_poe_enabled
+                and (
+                    item.allow_unknown_hostname
+                    or snapshot.hostname == item.expected_hostname
+                )
+                and (
+                    not item.expected_model
+                    or snapshot.model == item.expected_model
+                )
             )
-            expected = (
-                item.target,
-                item.interface,
-                item.expected_hostname,
-                item.fingerprint,
-                item.expected_enabled,
-                item.expected_poe_enabled,
-            )
-            if actual != expected:
+            if not identity_matches:
                 return BatchResult(
                     item,
                     BatchStatus.PREFLIGHT_FAILED,
