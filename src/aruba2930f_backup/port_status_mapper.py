@@ -11,8 +11,8 @@ from enum import StrEnum
 from ipaddress import IPv4Address
 
 from .poe_power import LLDPStatus
-from .port_power_diagnosis import diagnose_port_power
 from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
+from .port_power_diagnosis import diagnose_port_power
 
 PortKey = tuple[str, str]
 
