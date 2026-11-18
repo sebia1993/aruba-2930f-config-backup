@@ -1,8 +1,8 @@
-"""Explicit and temporary per-endpoint compatibility with old SSH server keys.
+"""Session-only tracking of automatically negotiated legacy SSH server keys.
 
-There is no disk persistence, automatic downgrade or wildcard approval.
-The `ssh-rsa` *server host-key signature* is allowed only for endpoints
-explicitly approved by the operator during this application process.
+The pre-auth host-key probe marks an exact IP:SSH port only after a strict
+host-key mismatch and a successful bounded legacy probe. No disk persistence,
+network wildcard, or automatic PoE/configuration retry is permitted.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from .models import DeviceTarget
 
 
 class SessionLegacySSHAllowlist:
-    """Keep legacy RSA/SHA-1 server-key exceptions bounded to one process."""
+    """Track verified pre-auth compatibility by exact endpoint in memory."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()

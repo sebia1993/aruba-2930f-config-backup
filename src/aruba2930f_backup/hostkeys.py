@@ -38,9 +38,9 @@ def disabled_sha1_rsa_algorithms(
     """Share a per-endpoint host-key policy across pre-auth and auth.
 
     Default: forbid ssh-rsa server host keys and user public-key signatures.
-    Explicit temporary legacy approval: allow only the server host-key
-    ssh-rsa signature for this exact IP:port. User pubkey SHA-1 stays blocked.
-    No KEX, cipher, TLS or host-key identity validation is weakened.
+    An automatic, host-key-only pre-auth retry can mark one exact IP:port for
+    a legacy server-key signature. User pubkey SHA-1 stays blocked.
+    No KEX, cipher, or host-key identity validation is weakened.
     """
     if target is not None and session_legacy_ssh.allowed(target):
         return {"pubkeys": ["ssh-rsa"]}
@@ -264,9 +264,47 @@ class HostKeyStore:
 
 
 class ParamikoHostKeyProbe:
-    """Retrieve a server key before any username or password is transmitted."""
+    """Check a server key before auth; make one bounded legacy probe if required."""
 
     def probe(self, target: DeviceTarget, *, timeout: float = 15.0) -> HostKeyObservation:
+        # Prefer stronger algorithms on every new host-key probe, including a
+        # switch that previously required legacy compatibility in this session.
+        session_legacy_ssh.revoke(target)
+        try:
+            return self._probe_once(
+                target,
+                timeout=timeout,
+                disabled_algorithms=disabled_sha1_rsa_algorithms(),
+            )
+        except CollectionFailure as exc:
+            # Never retry KEX/cipher/auth/TCP failures or an unknown exception.
+            # This is a *pre-authentication* probe, not a config/PoE retry.
+            reason = exc.__cause__
+            if (
+                exc.code is not ErrorCode.SSH_ALGORITHM_INCOMPATIBLE
+                or reason is None
+                or not _is_legacy_host_key_mismatch(reason)
+            ):
+                raise
+
+        observation = self._probe_once(
+            target,
+            timeout=timeout,
+            disabled_algorithms={"pubkeys": ["ssh-rsa"]},
+        )
+        # Mark only the endpoint whose server key was actually observed. The
+        # calling service still requires the known SHA-256 host-key fingerprint
+        # or explicit FIRST-TIME host-key approval before any authentication.
+        session_legacy_ssh.allow(target)
+        return observation
+
+    @staticmethod
+    def _probe_once(
+        target: DeviceTarget,
+        *,
+        timeout: float,
+        disabled_algorithms: dict[str, list[str]],
+    ) -> HostKeyObservation:
         try:
             import paramiko  # type: ignore[import-untyped]
         except ImportError as exc:  # pragma: no cover - packaging dependency guard
@@ -279,7 +317,7 @@ class ParamikoHostKeyProbe:
             connection.settimeout(timeout)
             transport = paramiko.Transport(
                 connection,
-                disabled_algorithms=disabled_sha1_rsa_algorithms(target),
+                disabled_algorithms=disabled_algorithms,
             )
             transport.start_client(timeout=timeout)
             key = transport.get_remote_server_key()
@@ -296,16 +334,18 @@ class ParamikoHostKeyProbe:
             ) from exc
         except (EOFError, OSError, paramiko.SSHException) as exc:
             code, message, transient = _classify_probe_failure(exc)
-            raise CollectionFailure(
-                code,
-                message,
-                transient=transient,
-            ) from exc
+            raise CollectionFailure(code, message, transient=transient) from exc
         finally:
             if transport is not None:
                 transport.close()
             if connection is not None:
                 connection.close()
+
+
+def _is_legacy_host_key_mismatch(exc: BaseException) -> bool:
+    """Use exception text only to select a narrower host-key-only pre-auth retry."""
+    message = f"{type(exc).__name__} {exc}".casefold()
+    return "no acceptable host key" in message or "no matching host key" in message
 
 
 def _classify_probe_failure(exc: BaseException) -> tuple[ErrorCode, str, bool]:
