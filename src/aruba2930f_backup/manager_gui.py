@@ -46,8 +46,8 @@ from .port_status_mapper import PortKey
 from .session_credentials import SessionCredentialDialog, SessionCredentialStore
 from .ssh_legacy import session_legacy_ssh
 from .storage import default_output_directory
-from .unified_port_gui import UnifiedPortManagementDialog
 from .ui_theme import selected_theme, set_theme
+from .unified_port_gui import UnifiedPortManagementDialog
 
 if TYPE_CHECKING:
     from .developer_inspector import DeveloperInspectorController
