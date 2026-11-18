@@ -33,6 +33,7 @@ def sample(
     poe: bool | None = True,
     enabled: bool = True,
     watts: float | None = 0.0,
+    power_status: str | None = None,
     complete: bool = True,
     lldp: LLDPObservation | None = None,
 ) -> PoEQueryResult:
@@ -44,7 +45,7 @@ def sample(
         enabled,
         link,
         poe,
-        "Delivering" if poe else "Disabled",
+        power_status or ("Delivering" if poe else "Disabled"),
         watts,
     )
     return PoEQueryResult(
@@ -61,6 +62,14 @@ def test_status_does_not_invent_down_from_missing_data_or_zero_watts() -> None:
         make_matrix_port(group, "1", sample(group, "1", link="Down")).state is MatrixState.ATTENTION
     )
     assert make_matrix_port(group, "1", sample(group, "1", poe=False)).state is MatrixState.OFF
+    assert (
+        make_matrix_port(group, "1", sample(group, "1", power_status="Fault")).state
+        is MatrixState.WARNING
+    )
+    assert (
+        make_matrix_port(group, "1", sample(group, "1", poe=None)).state
+        is MatrixState.WARNING
+    )
     assert make_matrix_port(group, "1", sample(group, "1", enabled=False)).state is MatrixState.OFF
     assert (
         make_matrix_port(group, "1", sample(group, "1", complete=False)).state
