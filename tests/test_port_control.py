@@ -64,6 +64,7 @@ class Device:
         self.poe_format = "legacy"
         self.sku = "JL255A"
         self.hostname = "edge-lab"
+        self.system_name: str | None = None
         self.fingerprint = sha256_fingerprint(b"synthetic-port-control-key")
         self.mutations: list[tuple[str, str]] = []
         self.sessions: list[Session] = []
@@ -116,8 +117,16 @@ class Session:
     def send_show(self, command: str) -> str:
         if command == "show version":
             return f"Aruba {self.device.sku} 2930F Switch\nSoftware revision WC.16.11.0025"
-        assert command == "show modules"
-        return f"Chassis: Aruba 2930F {self.device.sku}"
+        if command == "show modules":
+            return f"Chassis: Aruba 2930F {self.device.sku}"
+        system_name = (
+            self.device.system_name if self.device.system_name is not None else self.device.hostname
+        )
+        if command == "show system information":
+            return f"Status and Counters - General System Information\nSystem Name : {system_name}\n"
+        if command == "show running-config":
+            return f'hostname "{system_name}"\n' if system_name else "vlan 1\n"
+        raise AssertionError(f"Unexpected show command: {command}")
 
     def read_interfaces(self) -> str:
         d = self.device

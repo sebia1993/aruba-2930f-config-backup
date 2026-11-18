@@ -44,6 +44,10 @@ class QueryConnection(FakeConnection):
         responses = {
             "show version": ["show version\nAruba JL255A 2930F Switch\nedge-lab#"],
             "show modules": ["show modules\nChassis: Aruba 2930F JL255A\nedge-lab#"],
+            "show system information": [
+                "show system information\nStatus and Counters - General System Information\n"
+                "System Name : edge-lab\nedge-lab#"
+            ],
             "show interfaces brief": [
                 "show interfaces brief\nPort Type | Alert Enabled Status Mode\n"
                 + "\n".join(f"{p} 100/1000T | No Yes Up Auto" for p in network.ports[endpoint])
@@ -188,7 +192,7 @@ def test_requested_pairs_use_one_session_and_fresh_status_per_port(tmp_path: Pat
     assert len(network.connections) == 2
     for connection in network.connections:
         assert connection.disconnected
-        expected = ["show version", "show modules"]
+        expected = ["show version", "show modules", "show system information"]
         expected.append("show interfaces brief")
         for port in network.ports[connection.endpoint]:
             expected.append(f"show power-over-ethernet {port}")
@@ -388,6 +392,7 @@ def test_cancel_before_work_emits_every_row_without_probe_or_connect(tmp_path: P
         "terminal width 511",
         "show version",
         "show modules",
+        "show system information",
         "show interfaces brief",
         "show power-over-ethernet 1",
     ],

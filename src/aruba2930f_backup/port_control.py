@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .hostkeys import HostKeyProbe, HostKeyStore, ParamikoHostKeyProbe
+from .hostname_discovery import resolve_switch_hostname
 from .models import (
     CollectionFailure,
     CollectionOptions,
@@ -30,7 +31,7 @@ from .models import (
     HostKeyTrustState,
 )
 from .storage import default_output_directory
-from .validation import ARUBA_2930F_MODELS, hostname_from_prompt, validate_device_identity
+from .validation import ARUBA_2930F_MODELS, validate_device_identity
 
 _PORT_RE = re.compile(r"[1-9][0-9]*(?:/[1-9][0-9]*)?")
 
@@ -484,11 +485,10 @@ class PortControlService:
         interface: str,
         fingerprint: str,
     ) -> PortSnapshot:
-        identity = validate_device_identity(
-            session.send_show("show version"),
-            session.send_show("show modules"),
-            hostname=hostname_from_prompt(session.get_prompt()),
-        )
+        version = session.send_show("show version")
+        modules = session.send_show("show modules")
+        resolved = resolve_switch_hostname(session)
+        identity = validate_device_identity(version, modules, hostname=resolved.hostname)
         port = parse_interface_status(session.read_interfaces(), interface)
         poe = PortControlService._read_poe(session, interface, identity, port)
         return PortSnapshot(

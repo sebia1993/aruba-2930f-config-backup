@@ -832,6 +832,13 @@ class PoEQueryDialog(QDialog):
             identity = result.identity
             if identity:
                 details += f"\n장비명: {identity.hostname or '확인 안 됨'} · 스위치 모델: {identity.model} · SKU: {identity.sku or '확인 안 됨'} · 소프트웨어: {identity.software_version or '확인 안 됨'}"
+                source_labels = {
+                    "system-information": "System Name (장비 직접 조회)",
+                    "prompt": "SSH 프롬프트",
+                    "running-config": "설정 백업 Hostname",
+                    "unavailable": "확인 불가",
+                }
+                details += f"\nHostname 수집 출처: {source_labels.get(identity.hostname_source, '확인 불가')}"
             if snapshot:
                 poe_setting = (
                     "확인 안 됨"
