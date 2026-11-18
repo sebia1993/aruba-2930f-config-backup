@@ -147,9 +147,7 @@ def test_missing_hostname_poe_on_uses_pinned_identity_and_fresh_preflight(
     assert observed.snapshot is not None
     unknown = replace(
         observed,
-        snapshot=replace(
-            observed.snapshot, hostname="확인 불가", poe_enabled=False
-        ),
+        snapshot=replace(observed.snapshot, hostname="확인 불가", poe_enabled=False),
     )
     plan = create_batch_plan([unknown], PortAction.POE_ON)
     target = plan.targets[0]
@@ -174,14 +172,10 @@ def test_missing_hostname_poe_on_uses_pinned_identity_and_fresh_preflight(
     with pytest.raises(BatchControlError, match="PoE ON"):
         BatchPlan(plan.plan_id, plan.created_at, PortAction.POE_OFF, plan.targets)
 
-    invalid_model = replace(
-        unknown, snapshot=replace(unknown.snapshot, model="모델 확인 불가")
-    )
+    invalid_model = replace(unknown, snapshot=replace(unknown.snapshot, model="모델 확인 불가"))
     with pytest.raises(BatchControlError, match="2930F"):
         create_batch_plan([invalid_model], PortAction.POE_ON)
-    invalid_key = replace(
-        unknown, snapshot=replace(unknown.snapshot, fingerprint="")
-    )
+    invalid_key = replace(unknown, snapshot=replace(unknown.snapshot, fingerprint=""))
     with pytest.raises(BatchControlError, match="SSH 지문"):
         create_batch_plan([invalid_key], PortAction.POE_ON)
 
