@@ -602,6 +602,13 @@ def test_quick_bar_exposes_only_independent_poe_off_and_on(
     monkeypatch.setattr(dialog, "_run_batch", capture)
     monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
     dialog.quick_off_button.click()
+    # The OFF worker is mocked above. Simulate its subsequent fresh port
+    # observation: ON is needed only when Power Enable is now No.
+    from dataclasses import replace
+
+    previous = dialog._results[(TARGET.endpoint, "1")]
+    assert previous.snapshot is not None
+    dialog._on_result(replace(previous, snapshot=replace(previous.snapshot, poe_enabled=False)))
     dialog.quick_on_button.click()
     assert executed == [PortAction.POE_OFF, PortAction.POE_ON]
     dialog.close()
@@ -832,8 +839,14 @@ def test_failed_lldp_requeries_only_for_off_not_on(
     dialog = setup_dialog()
     from dataclasses import replace
 
+    previous = queried("2")
+    assert previous.snapshot is not None
     dialog._on_result(
-        replace(queried("2"), lldp=LLDPObservation(LLDPStatus.FAILED, message="LLDP 오류"))
+        replace(
+            previous,
+            snapshot=replace(previous.snapshot, poe_enabled=False),
+            lldp=LLDPObservation(LLDPStatus.FAILED, message="LLDP 오류"),
+        )
     )
     dialog._set_checked_keys({(TARGET.endpoint, "2")})
     requested: list[tuple[PoETarget, ...]] = []
@@ -1053,4 +1066,142 @@ def test_quick_invalid_checked_port_does_not_silently_drop_or_open_review(
     assert dialog._batch_plan is None
     assert len(dialog._checked_port_keys) == 2
     dialog.stop()
+    dialog.close()
+
+
+def test_poe_on_refreshes_only_previously_enabled_checked_ports(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    dialog = setup_dialog()
+    first = queried("1")
+    assert first.snapshot is not None
+    dialog._on_result(replace(first, snapshot=replace(first.snapshot, poe_enabled=False)))
+    keys = {(TARGET.endpoint, "1"), (TARGET.endpoint, "2")}
+    dialog._set_checked_keys(set(keys))
+    reads: list[tuple[PoETarget, ...]] = []
+    mutation_requests: list[str] = []
+    monkeypatch.setattr(dialog, "_start", lambda groups, _auth: reads.append(groups))
+    monkeypatch.setattr(
+        dialog, "_run_batch", lambda *, quick=False: mutation_requests.append("unexpected")
+    )
+    dialog.quick_on_button.click()
+
+    # A previously observed ON state can be stale; refresh just that row
+    # before classifying it as already ON or needing an ON command.
+    assert len(reads) == 1
+    assert reads[0][0].interfaces == ("2",)
+    assert dialog._quick_requery_pending == (PortAction.POE_ON, frozenset(keys))
+    assert dialog._batch_plan is None
+    assert mutation_requests == []
+    dialog.stop()
+    dialog.close()
+
+
+def test_poe_on_uses_only_off_ports_in_plan_and_explains_already_enabled(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    dialog = setup_dialog()
+    first = queried("1")
+    assert first.snapshot is not None
+    dialog._on_result(replace(first, snapshot=replace(first.snapshot, poe_enabled=False)))
+    keys = {(TARGET.endpoint, "1"), (TARGET.endpoint, "2")}
+    dialog._set_checked_keys(set(keys))
+    dispatched: list[tuple[str, ...]] = []
+
+    def capture(*, quick: bool = False) -> None:
+        assert quick
+        assert dialog._batch_plan is not None
+        dispatched.append(tuple(row.interface for row in dialog._batch_plan.targets))
+
+    monkeypatch.setattr(dialog, "_run_batch", capture)
+    # The read-only refresh has finished; no need to re-read the full plan.
+    dialog._review_quick_action(PortAction.POE_ON, frozenset(keys))
+
+    assert dispatched == [("1",)]
+    assert "이미 ON 1" in dialog.quick_summary.text()
+    assert "ON 필요 1" in dialog.quick_summary.text()
+    # A delayed selection-summary timer must not erase the useful result.
+    dialog._update_selection_summary()
+    assert "이미 ON 1" in dialog.quick_summary.text()
+    dialog.close()
+
+
+def test_poe_on_all_enabled_does_not_transmit_redundant_change(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    keys = {(TARGET.endpoint, "1"), (TARGET.endpoint, "2")}
+    dialog._set_checked_keys(set(keys))
+    calls: list[str] = []
+    monkeypatch.setattr(dialog, "_run_batch", lambda *, quick=False: calls.append("called"))
+    dialog._review_quick_action(PortAction.POE_ON, frozenset(keys))
+
+    assert calls == []
+    assert dialog._batch_plan is None
+    assert "이미 ON 2" in dialog.quick_summary.text()
+    assert "명령을 보내지" in dialog.status_label.text()
+    dialog.close()
+
+
+def test_poe_on_unknown_checked_port_halts_all_and_preserves_failure_details(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    dialog = setup_dialog()
+    first = queried("1")
+    assert first.snapshot is not None
+    dialog._on_result(replace(first, snapshot=replace(first.snapshot, poe_enabled=False)))
+    unknown = queried("2")
+    dialog._on_result(
+        replace(unknown, status=QueryStatus.FAILED, snapshot=None, message="SSH timeout")
+    )
+    keys = {(TARGET.endpoint, "1"), (TARGET.endpoint, "2")}
+    dialog._set_checked_keys(set(keys))
+    called: list[str] = []
+    monkeypatch.setattr(dialog, "_run_batch", lambda *, quick=False: called.append("called"))
+    dialog._review_quick_action(PortAction.POE_ON, frozenset(keys))
+
+    assert called == []
+    assert dialog._batch_plan is None
+    assert dialog._checked_port_keys == keys
+    assert "192.0.2.10:22 / 2" in dialog.status_label.text()
+    assert "SSH timeout" in dialog.quick_summary.toolTip()
+    dialog._update_selection_summary()
+    assert "SSH timeout" in dialog.quick_summary.toolTip()
+    assert "확인 필요" in dialog.quick_summary.text()
+    dialog.close()
+
+
+def test_poe_on_plan_can_include_link_down_without_ap_lldp(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    dialog = setup_dialog()
+    first = queried("1")
+    assert first.snapshot is not None
+    dialog._on_result(
+        replace(
+            first,
+            snapshot=replace(first.snapshot, poe_enabled=False, link_status="Down"),
+            lldp=LLDPObservation(LLDPStatus.FAILED, message="AP powered off"),
+        )
+    )
+    keys = {(TARGET.endpoint, "1")}
+    dialog._set_checked_keys(set(keys))
+    sent: list[str] = []
+
+    def capture(*, quick: bool = False) -> None:
+        assert quick
+        assert dialog._batch_plan is not None
+        sent.extend(item.interface for item in dialog._batch_plan.targets)
+
+    monkeypatch.setattr(dialog, "_run_batch", capture)
+    dialog._review_quick_action(PortAction.POE_ON, frozenset(keys))
+    assert sent == ["1"]
     dialog.close()
