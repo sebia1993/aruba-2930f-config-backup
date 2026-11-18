@@ -608,9 +608,7 @@ def test_quick_bar_exposes_only_independent_poe_off_and_on(
 
     previous = dialog._results[(TARGET.endpoint, "1")]
     assert previous.snapshot is not None
-    dialog._on_result(
-        replace(previous, snapshot=replace(previous.snapshot, poe_enabled=False))
-    )
+    dialog._on_result(replace(previous, snapshot=replace(previous.snapshot, poe_enabled=False)))
     dialog.quick_on_button.click()
     assert executed == [PortAction.POE_OFF, PortAction.POE_ON]
     dialog.close()
