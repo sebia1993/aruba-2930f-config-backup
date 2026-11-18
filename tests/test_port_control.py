@@ -219,6 +219,27 @@ def test_each_action_changes_only_its_setting_and_is_verified(
     assert CREDENTIALS.password not in result.audit_path.read_text()
 
 
+def test_port_preflight_uses_system_name_instead_of_prompt_alias(
+    setup: Any,
+) -> None:
+    service, device, _clock = setup
+    device.hostname = "alias-2930"
+    device.system_name = "ACTUAL-SW-2930"
+    device.poe_enabled = False
+    snapshot = inspect(service, device)
+    assert snapshot.hostname == "ACTUAL-SW-2930"
+    device.hostname = "different-alias"
+    result = service.apply(
+        snapshot,
+        PortAction.POE_ON,
+        CREDENTIALS,
+        confirmation=snapshot.confirmation_text,
+    )
+    assert result.status == "verified"
+    assert result.after.hostname == "ACTUAL-SW-2930"
+    assert device.mutations == [("24", "poe_on")]
+
+
 def test_poe_on_accepts_unknown_hostname_when_fingerprint_and_settings_match(
     setup: Any,
 ) -> None:
