@@ -702,7 +702,9 @@ def test_quick_bulk_off_requires_one_cancellable_confirmation_without_target_rev
     dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
     seen: list[str] = []
 
-    def decline(_parent: object, _title: str, message: str, *_args: object) -> QMessageBox.StandardButton:
+    def decline(
+        _parent: object, _title: str, message: str, *_args: object
+    ) -> QMessageBox.StandardButton:
         seen.append(message)
         return QMessageBox.StandardButton.No
 
@@ -956,7 +958,9 @@ def test_bulk_off_uses_only_one_safety_confirmation_without_review(
     dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
     approvals: list[str] = []
 
-    def accept(_parent: object, _title: str, message: str, *_args: object) -> QMessageBox.StandardButton:
+    def accept(
+        _parent: object, _title: str, message: str, *_args: object
+    ) -> QMessageBox.StandardButton:
         approvals.append(message)
         return QMessageBox.StandardButton.Yes
 
