@@ -720,6 +720,7 @@ def test_quick_bulk_off_requires_one_cancellable_confirmation_without_target_rev
     assert dialog._batch_outcome is None
     dialog.close()
 
+
 def test_quick_chunk_continues_without_extra_operator_dialog(
     app: QApplication,
 ) -> None:
@@ -760,6 +761,7 @@ def test_quick_off_shows_unsafe_ap_inline_and_does_not_change_it(
     assert "AP-535" in dialog.quick_summary.toolTip()
     assert (TARGET.endpoint, "2") in dialog._checked_port_keys
     dialog.close()
+
 
 def test_admin_disabled_filter_is_distinct_from_poe_off(
     app: QApplication,
@@ -852,6 +854,7 @@ def test_failed_lldp_requeries_only_for_off_not_on(
     assert requested == []  # ON requires port state, but not AP LLDP identity
     assert ready == [PortAction.POE_ON]
     dialog.close()
+
 
 def test_partial_review_cannot_execute_until_exclusion_is_acknowledged(
     app: QApplication,
@@ -980,6 +983,7 @@ def test_bulk_off_uses_only_one_safety_confirmation_without_review(
     assert len(dialog._batch_outcome.results) == 2
     assert len(approvals) == 1
     dialog.close()
+
 
 def test_large_quick_review_requires_explicit_bulk_ack_without_repeated_prompts(
     app: QApplication,
