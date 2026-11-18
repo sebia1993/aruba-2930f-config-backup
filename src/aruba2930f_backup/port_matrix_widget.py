@@ -119,10 +119,7 @@ class PortMatrixModel(QAbstractTableModel):
             for g in sorted(groups, key=group_sort_key)
             for interface in sorted(g.interfaces, key=port_sort_key)
         ]
-        self._ports = {
-            key: make_matrix_port(self._groups[key[0]], key[1])
-            for key in self._ordered
-        }
+        self._ports = {key: make_matrix_port(self._groups[key[0]], key[1]) for key in self._ordered}
         self._visible = list(self._ordered)
         self._row_by_key = {key: i for i, key in enumerate(self._visible)}
         self.endResetModel()
@@ -159,10 +156,7 @@ class PortMatrixModel(QAbstractTableModel):
 
     def attention_keys(self, *, limit: int = 12) -> list[PortKey]:
         priorities = (MatrixState.ATTENTION, MatrixState.WARNING)
-        found = [
-            key for key in self._ordered
-            if self._ports[key].state in priorities
-        ]
+        found = [key for key in self._ordered if self._ports[key].state in priorities]
         return sorted(
             found, key=lambda key: 0 if self._ports[key].state is MatrixState.ATTENTION else 1
         )[:limit]
@@ -445,8 +439,7 @@ class PortMatrixPanel(QWidget):
                 if entry is None:
                     continue
                 item = QListWidgetItem(
-                    f"{entry.switch} · {entry.ip} / {entry.interface} · "
-                    f"{STATE_LABELS[entry.state]}"
+                    f"{entry.switch} · {entry.ip} / {entry.interface} · {STATE_LABELS[entry.state]}"
                 )
                 item.setData(Qt.ItemDataRole.UserRole, key)
                 self.priorities.addItem(item)
