@@ -66,7 +66,9 @@ class BatchTarget:
 
     def __post_init__(self) -> None:
         validate_interface(self.interface)
-        hostname_unknown = not self.expected_hostname.strip() or self.expected_hostname == "확인 불가"
+        hostname_unknown = (
+            not self.expected_hostname.strip() or self.expected_hostname == "확인 불가"
+        )
         if hostname_unknown and not self.allow_unknown_hostname:
             raise BatchControlError("장비 호스트네임을 확인한 포트만 일괄 제어할 수 있습니다.")
         if self.allow_unknown_hostname and (
@@ -424,14 +426,8 @@ class BatchPortController:
                 and snapshot.fingerprint == item.fingerprint
                 and snapshot.enabled == item.expected_enabled
                 and snapshot.poe_enabled == item.expected_poe_enabled
-                and (
-                    item.allow_unknown_hostname
-                    or snapshot.hostname == item.expected_hostname
-                )
-                and (
-                    not item.expected_model
-                    or snapshot.model == item.expected_model
-                )
+                and (item.allow_unknown_hostname or snapshot.hostname == item.expected_hostname)
+                and (not item.expected_model or snapshot.model == item.expected_model)
             )
             if not identity_matches:
                 return BatchResult(
