@@ -496,3 +496,16 @@ def test_port_input_focus_preserves_checked_port_state(
     assert port.result_tree.topLevelItemCount() == 1
     assert (group.target.endpoint, "24") in port._checked_port_keys
     window.close()
+
+
+def test_poe_progress_is_pinned_above_resizable_results(app: QApplication) -> None:
+    window = make_window(app)
+    assert window.navigate(2)
+    root = window.port_page.layout()
+    assert root is not None
+    assert root.indexOf(window.port_page.progress_panel) >= 0
+    assert root.indexOf(window.port_page.progress_panel) < root.indexOf(
+        window.port_input_result_splitter
+    )
+    assert window.port_page.progress_panel.isVisible()
+    window.close()

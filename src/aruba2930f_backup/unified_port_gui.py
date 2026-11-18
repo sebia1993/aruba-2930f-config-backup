@@ -35,6 +35,7 @@ from .batch_port_control import (
     BatchOutcome,
     BatchPlan,
     BatchPortController,
+    BatchTarget,
     BatchResult,
     BatchStatus,
     create_batch_plan,
@@ -53,6 +54,7 @@ from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from .poe_targets import merge_targets, parse_pasted_targets
 from .port_control import PortAction
 from .port_paste_dialog import PortTargetPasteDialog
+from .port_progress_panel import PortProgressPanel
 from .storage import default_output_directory
 
 ACTION_TITLES: dict[PortAction, str] = {
@@ -65,6 +67,7 @@ ACTION_TITLES: dict[PortAction, str] = {
 
 class _BatchWorker(QObject):
     progress = Signal(object)
+    stage = Signal(object)
     completed = Signal(object)
     failed = Signal(str)
     checkpoint = Signal(int, int)
@@ -112,19 +115,34 @@ class _BatchWorker(QObject):
     def _on_result(self, index: int, result: BatchResult) -> None:
         self.progress.emit((index, result))
 
+    def _on_stage(self, index: int, target: BatchTarget, phase: str) -> None:
+        self.stage.emit((target.target.endpoint, target.interface, phase))
+
     @Slot()
     def run(self) -> None:
         try:
             credentials = self._credentials
             if credentials is None:
                 raise BatchControlError("접속 정보가 존재하지 않습니다.")
-            outcome = self._controller.execute(
-                self._plan,
-                credentials,
-                cancel_event=self.cancel_event,
-                on_result=self._on_result,
-                continue_after_chunk=self._wait_for_checkpoint,
-            )
+            # Preserve existing injected offline/test controllers with the
+            # original execute() interface; only production supports stage events.
+            if type(self._controller) is BatchPortController:
+                outcome = self._controller.execute(
+                    self._plan,
+                    credentials,
+                    cancel_event=self.cancel_event,
+                    on_result=self._on_result,
+                    on_stage=self._on_stage,
+                    continue_after_chunk=self._wait_for_checkpoint,
+                )
+            else:
+                outcome = self._controller.execute(
+                    self._plan,
+                    credentials,
+                    cancel_event=self.cancel_event,
+                    on_result=self._on_result,
+                    continue_after_chunk=self._wait_for_checkpoint,
+                )
             self.completed.emit(outcome)
         except BatchControlError as exc:
             self.failed.emit(str(exc))
@@ -230,6 +248,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self._quick_requery_pending: tuple[PortAction, frozenset[tuple[str, str]]] | None = None
         # Stable final feedback is not overwritten by a delayed selection timer.
         self._quick_feedback: tuple[str, str] | None = None
+        self._quick_progress_skipped: tuple[tuple[str, str], ...] = ()
+        self._progress_query_keys: frozenset[tuple[str, str]] = frozenset()
         # Only explicitly checked ports can enter a mutation plan.
         self._checked_port_keys: set[tuple[str, str]] = set()
         self._selection_summary_timer = QTimer(self)
@@ -681,6 +701,14 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
 
     def _apply_result(self, value: object) -> None:
         super()._apply_result(value)
+        result = cast(PoEQueryResult, value)
+        if self._thread is not None and result.complete:
+            self.progress_panel.update_query(
+                self._run_total - len(self._pending),
+                self._run_total,
+                result.group.target.endpoint,
+                result.interface,
+            )
         self._selection_summary_timer.start()
         if hasattr(self, "search_input") and (
             self.search_input.text() or self.filter_combo.currentData() != "all"
@@ -830,6 +858,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.quick_job_widget.setVisible(False)
         root = cast(QVBoxLayout, self.layout())
         root.insertWidget(root.count() - 2, self.quick_action_bar)
+        self.progress_panel = PortProgressPanel(self)
+        root.insertWidget(root.indexOf(self.quick_action_bar), self.progress_panel)
 
     def _sync_quick_job(self) -> None:
         """Mirror the existing job status with a visible stop control."""
@@ -884,6 +914,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         if index < 0:
             return
         self._quick_feedback = None
+        self._quick_progress_skipped = ()
         self.action_combo.setCurrentIndex(index)
         keys = frozenset(self._checked_port_keys)
         groups: list[PoETarget] = []
@@ -964,6 +995,9 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 already_enabled.append(row)
             else:
                 needs_change.append(row)
+        self._quick_progress_skipped = tuple(
+            (row.group.target.endpoint, row.interface) for row in already_enabled
+        )
         # Fast actions no longer open a second target-review dialog. Never
         # silently drop checked ports, however: a partial result is a blocked
         # *entire* action until the operator explicitly changes the selection.
@@ -989,6 +1023,12 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 "'제어 가능만 선택' 후 빠른 제어를 누르세요. "
                 "체크된 포트는 임의로 제외하지 않았습니다."
             )
+            self.progress_panel.notice(
+                f"확인 불가 {len(excluded)}포트 · 전체 선택 작업을 보류했습니다. "
+                f"첫 대상: {reasons[0]}",
+                blocked=True,
+                details=excluded,
+            )
             self._update_control_buttons()
             return
         if not needs_change:
@@ -1005,6 +1045,9 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                     f"PoE ON · 선택한 {len(already_enabled)}포트는 모두 이미 ON 상태입니다. "
                     "명령을 보내지 않았습니다. AP가 다운이면 포트 Disable·"
                     "PoE 소비 전력·링크 상태를 확인하세요."
+                )
+                self.progress_panel.notice(
+                    f"선택 {len(already_enabled)}포트는 이미 ON · 실제 변경 명령 미전송"
                 )
             else:
                 self.status_label.setText("선택한 포트가 없습니다. 변경 명령을 보내지 않았습니다.")
@@ -1102,6 +1145,17 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             self.plan_preview.setText("재조회 중 · 완료 후 포트 제어 계획을 다시 작성하세요.")
         if hasattr(self, "cycle_button"):
             self._update_cycle_controls()
+        self._progress_query_keys = frozenset(
+            (group.target.endpoint, interface)
+            for group in groups
+            for interface in group.interfaces
+        )
+        pending = self._quick_requery_pending
+        self.progress_panel.start_query(
+            len(self._progress_query_keys),
+            preflight=pending is not None,
+            action=ACTION_TITLES[pending[0]] if pending is not None else "",
+        )
         super()._start(groups, credentials)
 
     def _selected_rows(self) -> tuple[PoEQueryResult, ...]:
@@ -1245,6 +1299,18 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             except BatchControlError as exc:
                 QMessageBox.warning(self, "PoE 재가동 승인", str(exc))
                 return
+        skipped = (
+            self._quick_progress_skipped
+            if quick and plan.action is PortAction.POE_ON
+            else ()
+        )
+        self.progress_panel.start_batch(
+            ACTION_TITLES[plan.action],
+            len(plan.targets),
+            selected=len(plan.targets) + len(skipped),
+            already_on=len(skipped),
+            skipped=skipped,
+        )
         thread = QThread(self)
         worker = _BatchWorker(
             plan,
@@ -1255,6 +1321,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._batch_progress)
+        worker.stage.connect(self._batch_stage)
         worker.completed.connect(self._batch_completed)
         worker.failed.connect(self._batch_failed)
         worker.checkpoint.connect(self._approve_next_chunk)
@@ -1270,6 +1337,11 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         self.quick_job_widget.setVisible(True)
         self._set_busy(True)
         thread.start()
+
+    @Slot(object)
+    def _batch_stage(self, value: object) -> None:
+        endpoint, interface, phase = cast(tuple[str, str, str], value)
+        self.progress_panel.mark_stage(endpoint, interface, phase)
 
     @Slot(object)
     def _batch_progress(self, value: object) -> None:
@@ -1303,6 +1375,12 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             f"일괄 작업: {self._batch_count}/{len(self._batch_plan.targets) if self._batch_plan else '?'}개 처리 · "
             f"현재 결과 {result.status.value} · {result.message}"
         )
+        self.progress_panel.record_result(
+            result.target.target.endpoint,
+            result.target.interface,
+            result.status.value,
+            result.message,
+        )
         self._sync_quick_job()
 
     @Slot(object)
@@ -1324,6 +1402,15 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             f"검증 실패 {counts['preflight_failed']} · 확인 불가 {counts['unverified']} · "
             f"미실행 {counts['paused'] + counts['cancelled']}\n"
             f"작업 이력: {result.journal_path}"
+        )
+        self.progress_panel.finish_batch(
+            self.batch_status.text(),
+            failed=bool(
+                counts["preflight_failed"]
+                or counts["unverified"]
+                or counts["paused"]
+                or counts["cancelled"]
+            ),
         )
         self._sync_quick_job()
         self._batch_plan = None
@@ -1357,6 +1444,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             "실제 스위치 상태를 수동 재조회하세요. 자동 재실행하지 않습니다."
         )
         self._batch_plan = None
+        self.progress_panel.finish_batch(message, failed=True)
         self._sync_quick_job()
         self.plan_preview.setText("일괄 제어 실패 · 대상 포트를 다시 조회한 뒤 계획을 작성하세요.")
         self._update_control_buttons()
@@ -1593,12 +1681,27 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         super()._thread_finished()
         if self._thread is not None:
             return
+        failed = sum(
+            1
+            for key in self._progress_query_keys
+            if key not in self._results
+            or self._results[key].status in (QueryStatus.FAILED, QueryStatus.CANCELLED)
+        )
+        self.progress_panel.finish_query(
+            self._run_total,
+            self._run_total,
+            failed=failed,
+        )
+        self._progress_query_keys = frozenset()
         pending = self._quick_requery_pending
         self._quick_requery_pending = None
         if pending is not None:
             if cancelled or self._close_when_done:
                 self.status_label.setText(
                     "읽기 전용 재조회가 취소되어 PoE 변경 명령을 실행하지 않았습니다."
+                )
+                self.progress_panel.notice(
+                    "사전 재조회가 취소됐습니다. 변경 명령 미전송", blocked=True
                 )
             else:
                 self._review_quick_action(*pending)

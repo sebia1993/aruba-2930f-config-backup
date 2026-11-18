@@ -405,6 +405,7 @@ class NetworkManagerWindow(QMainWindow):
             search_group,
             control_group,
             quick_bar,
+            port.progress_panel,
         )
         for widget in header_items:
             if widget is not None:
@@ -483,6 +484,8 @@ class NetworkManagerWindow(QMainWindow):
         self.port_target_toggle.toggled.connect(self._toggle_port_targets)
 
         _attach(root, query_action)
+        # Pinned feedback stays above the scrollable input/result splitter.
+        root.addWidget(port.progress_panel)
         for button in (
             port.collect_button,
             port.refresh_group_button,
