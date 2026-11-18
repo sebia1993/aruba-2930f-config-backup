@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
 from aruba2930f_backup.unified_port_gui import UnifiedPortManagementDialog
 
@@ -18,9 +18,9 @@ def app() -> QApplication:
 
 
 def test_auto_ssh_has_no_operator_compatibility_approval_button(app: QApplication) -> None:
-    dialog = UnifiedPortManagementDialog(username="operator", password="fixture-pass")
+    dialog = UnifiedPortManagementDialog()
     try:
         assert not hasattr(dialog, "legacy_ssh_button")
-        assert dialog.findChild(QApplication.instance().__class__, "unifiedLegacySsh") is None
+        assert dialog.findChild(QPushButton, "unifiedLegacySsh") is None
     finally:
         dialog.close()
