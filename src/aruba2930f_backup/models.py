@@ -221,6 +221,7 @@ class DeviceIdentity:
     model: str
     sku: str | None
     software_version: str | None = None
+    hostname_source: str = "unavailable"
 
 
 @dataclass(frozen=True, slots=True)
