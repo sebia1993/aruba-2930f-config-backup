@@ -346,11 +346,7 @@ def test_known_prewrite_failure_is_recorded_without_stopping_other_ports(tmp_pat
     assert journal_states(outcome.journal_path) == {
         0: "preflight_failed",
         1: "verified",
-    }
-
-
-
-def test_batch_emits_current_port_stages_without_credentials(tmp_path: Path) -> None:
+    }\n\ndef test_batch_emits_current_port_stages_without_credentials(tmp_path: Path) -> None:
     fake = FakeControl()
     plan = create_batch_plan([row("12")], PortAction.POE_ON)
     stages: list[tuple[int, str, str, str]] = []
