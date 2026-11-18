@@ -11,6 +11,7 @@ from enum import StrEnum
 from ipaddress import IPv4Address
 
 from .poe_power import LLDPStatus
+from .port_power_diagnosis import diagnose_port_power
 from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 
 PortKey = tuple[str, str]
@@ -120,6 +121,13 @@ def make_matrix_port(
     elif "down" in link.casefold():
         state = MatrixState.ATTENTION
         note = "링크 Down 관측. 서비스 장애 여부는 별도 확인이 필요합니다."
+    elif snapshot.poe_enabled is None or snapshot.poe_status.strip().casefold() in (
+        "fault",
+        "other fault",
+        "disabled",
+    ):
+        state = MatrixState.WARNING
+        note = diagnose_port_power(snapshot).reason
     elif lldp and lldp.status in (LLDPStatus.FAILED, LLDPStatus.CANCELLED):
         state = MatrixState.WARNING
         note = "LLDP 확인 실패. 이미 수집한 링크/PoE 정보는 유효합니다."
