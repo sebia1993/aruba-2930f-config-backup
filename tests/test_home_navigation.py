@@ -82,7 +82,9 @@ def test_four_page_navigation_does_not_expose_a_fifth_settings_page() -> None:
     try:
         assert window.pages.count() == 4
         assert window._navigation_buttons[-1].objectName() == "navHistory"
-        assert all(button.objectName() != "navSettings" for button in window.findChildren(QPushButton))
+        assert all(
+            button.objectName() != "navSettings" for button in window.findChildren(QPushButton)
+        )
         assert not window.navigate(4)
         assert not hasattr(window, "settings_page")
         assert window.backup_page.output_input.text()

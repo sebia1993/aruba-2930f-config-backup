@@ -992,3 +992,53 @@ def test_small_quick_review_keeps_existing_single_approval(app: QApplication) ->
         assert dialog.approve_button.isEnabled() is True
     finally:
         dialog.close()
+
+
+def test_quick_poe_off_does_not_open_target_review_dialog(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
+    dispatched: list[tuple[PortAction, int]] = []
+
+    def forbid_review(_self: QuickPoEReviewDialog) -> None:
+        raise AssertionError("Quick PoE controls must not open a target review window")
+
+    def capture_execution(*, quick: bool = False) -> None:
+        assert quick
+        assert dialog._batch_plan is not None
+        dispatched.append((dialog._batch_plan.action, len(dialog._batch_plan.targets)))
+
+    monkeypatch.setattr(QuickPoEReviewDialog, "exec", forbid_review)
+    monkeypatch.setattr(dialog, "_run_batch", capture_execution)
+    dialog.quick_off_button.click()
+    assert dispatched == [(PortAction.POE_OFF, 2)]
+    dialog.close()
+
+
+def test_quick_invalid_checked_port_does_not_silently_drop_or_open_review(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = setup_dialog()
+    dialog._set_checked_keys({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
+    from dataclasses import replace
+
+    dialog._on_result(
+        replace(queried("2"), snapshot=None, status=QueryStatus.FAILED, message="SSH timeout")
+    )
+    triggered: list[tuple[PoETarget, ...]] = []
+    monkeypatch.setattr(
+        dialog, "_start", lambda groups, _auth: triggered.append(groups)
+    )
+    monkeypatch.setattr(
+        QuickPoEReviewDialog,
+        "exec",
+        lambda _self: (_ for _ in ()).throw(AssertionError("no target review dialog")),
+    )
+    dialog.quick_off_button.click()
+    assert triggered and triggered[0][0].interfaces == ("2",)
+    # The single read-only retry was started. It must never mutate by itself.
+    assert dialog._batch_plan is None
+    assert len(dialog._checked_port_keys) == 2
+    dialog.stop()
+    dialog.close()
