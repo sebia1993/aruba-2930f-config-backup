@@ -11,6 +11,7 @@ import pytest
 
 from aruba2930f_backup.batch_port_control import (
     BatchControlError,
+    BatchPlan,
     BatchPortController,
     BatchStatus,
     _BatchJournal,
@@ -137,6 +138,79 @@ def test_ap535_without_lldp_chassis_or_remote_port_is_not_safe_for_bulk_off() ->
         with pytest.raises(BatchControlError, match="Chassis ID"):
             create_batch_plan([unsafe], PortAction.POE_OFF)
         assert create_batch_plan([unsafe], PortAction.POE_ON).targets
+
+
+def test_missing_hostname_poe_on_uses_pinned_identity_and_fresh_preflight(
+    tmp_path: Path,
+) -> None:
+    observed = row("8")
+    assert observed.snapshot is not None
+    unknown = replace(
+        observed,
+        snapshot=replace(
+            observed.snapshot, hostname="확인 불가", poe_enabled=False
+        ),
+    )
+    plan = create_batch_plan([unknown], PortAction.POE_ON)
+    target = plan.targets[0]
+    assert target.allow_unknown_hostname
+    assert target.expected_model == "Aruba 2930F"
+    assert target.fingerprint.startswith("SHA256:")
+
+    # The fresh read may recover a usable hostname. The pinned SSH identity,
+    # target, model and PoE setting still have to match before any write.
+    fresh = replace(unknown.snapshot, hostname="SW-LAB-08")
+    controller = FakeControl(actual=fresh)
+    outcome = BatchPortController(
+        controller_factory=lambda: controller,
+        journal_directory=tmp_path,
+    ).execute(plan, CREDS)
+    assert outcome.results[0].status is BatchStatus.VERIFIED
+    assert controller.applied == [("8", PortAction.POE_ON)]
+
+    for action in (PortAction.POE_OFF, PortAction.DISABLE, PortAction.ENABLE):
+        with pytest.raises(BatchControlError):
+            create_batch_plan([unknown], action)
+    with pytest.raises(BatchControlError, match="PoE ON"):
+        BatchPlan(plan.plan_id, plan.created_at, PortAction.POE_OFF, plan.targets)
+
+    invalid_model = replace(
+        unknown, snapshot=replace(unknown.snapshot, model="모델 확인 불가")
+    )
+    with pytest.raises(BatchControlError, match="2930F"):
+        create_batch_plan([invalid_model], PortAction.POE_ON)
+    invalid_key = replace(
+        unknown, snapshot=replace(unknown.snapshot, fingerprint="")
+    )
+    with pytest.raises(BatchControlError, match="SSH 지문"):
+        create_batch_plan([invalid_key], PortAction.POE_ON)
+
+
+def test_missing_hostname_poe_on_does_not_skip_identity_and_port_safety(
+    tmp_path: Path,
+) -> None:
+    observed = row("9")
+    assert observed.snapshot is not None
+    unknown = replace(
+        observed,
+        snapshot=replace(observed.snapshot, hostname="확인 불가", poe_enabled=False),
+    )
+    variants = (
+        replace(unknown.snapshot, fingerprint="SHA256:unexpected"),
+        replace(unknown.snapshot, model="Aruba 2930F VSF"),
+        replace(unknown.snapshot, enabled=False),
+        replace(unknown.snapshot, poe_enabled=True),
+        replace(unknown.snapshot, target=DeviceTarget("192.0.2.11", 22)),
+        replace(unknown.snapshot, interface="10"),
+    )
+    for index, fresh in enumerate(variants):
+        fake = FakeControl(actual=fresh)
+        outcome = BatchPortController(
+            controller_factory=lambda: fake,
+            journal_directory=tmp_path / str(index),
+        ).execute(create_batch_plan([unknown], PortAction.POE_ON), CREDS)
+        assert outcome.results[0].status is BatchStatus.PREFLIGHT_FAILED
+        assert fake.applied == []
 
 
 def test_unconfirmed_ap_cannot_be_mass_powered_off_or_disabled() -> None:
