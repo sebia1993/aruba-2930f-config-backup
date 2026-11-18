@@ -59,6 +59,5 @@ def inline_keys(page, url, first, second, shots, output):
 
 
 if __name__ == "__main__":
-    browser_qa.exercise = inline_keys
-    browser_qa.main()
+    browser_qa.run_browser_case(inline_keys)
     print("PASS in-job key approval, skip before auth, resume, home, and workspace restore")
