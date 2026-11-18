@@ -57,12 +57,11 @@ def test_status_does_not_invent_down_from_missing_data_or_zero_watts() -> None:
     assert make_matrix_port(group, "1").state is MatrixState.UNKNOWN
     assert make_matrix_port(group, "1", sample(group, "1")).state is MatrixState.NORMAL
     assert make_matrix_port(group, "1", sample(group, "1")).watts == "0 W"
-    assert make_matrix_port(group, "1", sample(group, "1", link="Down")).state is MatrixState.ATTENTION
-    assert make_matrix_port(group, "1", sample(group, "1", poe=False)).state is MatrixState.OFF
     assert (
-        make_matrix_port(group, "1", sample(group, "1", enabled=False)).state
-        is MatrixState.OFF
+        make_matrix_port(group, "1", sample(group, "1", link="Down")).state is MatrixState.ATTENTION
     )
+    assert make_matrix_port(group, "1", sample(group, "1", poe=False)).state is MatrixState.OFF
+    assert make_matrix_port(group, "1", sample(group, "1", enabled=False)).state is MatrixState.OFF
     assert (
         make_matrix_port(group, "1", sample(group, "1", complete=False)).state
         is MatrixState.LOADING
@@ -82,9 +81,7 @@ def test_status_does_not_invent_down_from_missing_data_or_zero_watts() -> None:
 
 
 def test_numeric_ports_and_ip_order_are_stable() -> None:
-    assert sorted(("10", "2", "1/12", "1/2"), key=port_sort_key) == [
-        "1/2", "1/12", "2", "10"
-    ]
+    assert sorted(("10", "2", "1/12", "1/2"), key=port_sort_key) == ["1/2", "1/12", "2", "10"]
     m = PortMatrixModel()
     groups = (
         PoETarget(DeviceTarget("192.0.2.10", 22), ("24", "2")),
