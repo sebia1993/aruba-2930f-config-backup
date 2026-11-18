@@ -224,17 +224,24 @@ class NetworkManagerWindow(QMainWindow):
         heading_row = QHBoxLayout()
         heading_row.setSpacing(7)
         heading_row.addWidget(self.page_title, 1)
-        self.theme_light_button = QPushButton("라이트", content)
+        # One joined two-segment control, not two visually separated buttons.
+        self.theme_segmented_control = QFrame(content)
+        self.theme_segmented_control.setObjectName("themeSegmentedControl")
+        theme_segments = QHBoxLayout(self.theme_segmented_control)
+        theme_segments.setContentsMargins(2, 2, 2, 2)
+        theme_segments.setSpacing(0)
+        self.theme_light_button = QPushButton("라이트", self.theme_segmented_control)
         self.theme_light_button.setObjectName("themeLight")
-        self.theme_dark_button = QPushButton("다크", content)
+        self.theme_dark_button = QPushButton("다크", self.theme_segmented_control)
         self.theme_dark_button.setObjectName("themeDark")
         for button in (self.theme_light_button, self.theme_dark_button):
             button.setCheckable(True)
-            button.setMinimumWidth(70)
+            button.setMinimumSize(72, 34)
             button.setToolTip("한 번 클릭하면 프로그램 전체 테마가 바뀝니다.")
-            heading_row.addWidget(button)
+            theme_segments.addWidget(button)
         self.theme_light_button.clicked.connect(lambda: self._apply_appearance("light"))
         self.theme_dark_button.clicked.connect(lambda: self._apply_appearance("dark"))
+        heading_row.addWidget(self.theme_segmented_control)
         content_layout.addLayout(heading_row)
         self.page_description = QLabel(content)
         self.page_description.setWordWrap(True)
@@ -294,8 +301,6 @@ class NetworkManagerWindow(QMainWindow):
         self._status_timer.start()
         self.setStyleSheet(
             "QFrame#networkManagerSidebar { border: 1px solid palette(mid); border-radius: 8px; }"
-            " QPushButton:checked { background: palette(highlight);"
-            " color: palette(highlighted-text); font-weight: 600; }"
             " QLabel#managerPageTitle { padding: 2px 0; }"
         )
 
