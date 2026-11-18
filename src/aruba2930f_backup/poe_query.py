@@ -13,6 +13,7 @@ from functools import partial
 from typing import Protocol
 
 from .hostkeys import HostKeyProbe, HostKeyStore, ParamikoHostKeyProbe
+from .hostname_discovery import discover_hostname
 from .models import (
     CollectionFailure,
     CollectionOptions,
@@ -43,7 +44,6 @@ from .port_control import (
     parse_poe_status,
 )
 from .port_control_ssh import PortControlSSHSession
-from .hostname_discovery import discover_hostname
 from .validation import ARUBA_2930F_MODELS, validate_device_identity
 
 
