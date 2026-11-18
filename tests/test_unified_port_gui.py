@@ -953,6 +953,7 @@ def test_requery_failure_blocks_entire_quick_action_with_inline_port_reason(
     assert "연결 오류" in dialog.quick_summary.toolTip()
     dialog.close()
 
+
 def test_bulk_off_uses_only_one_safety_confirmation_without_review(
     app: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
