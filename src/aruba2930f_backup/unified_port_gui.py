@@ -1137,6 +1137,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                     parent.setCheckState(0, Qt.CheckState.Unchecked)
             self._checked_port_keys.clear()
         super()._invalidate()
+        # Never display a stale healthy tile after the operator edits IP/port targets.
+        self.matrixTargetsChanged.emit(())
         if hasattr(self, "plan_preview"):
             self.plan_preview.setText("입력 대상이 변경되어 작업 계획을 초기화했습니다.")
         if hasattr(self, "cycle_button"):
