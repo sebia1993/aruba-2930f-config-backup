@@ -206,7 +206,7 @@ def test_missing_hostname_poe_on_does_not_skip_identity_and_port_safety(
     for index, fresh in enumerate(variants):
         fake = FakeControl(actual=fresh)
         outcome = BatchPortController(
-            controller_factory=lambda: fake,
+            controller_factory=lambda fake=fake: fake,
             journal_directory=tmp_path / str(index),
         ).execute(create_batch_plan([unknown], PortAction.POE_ON), CREDS)
         assert outcome.results[0].status is BatchStatus.PREFLIGHT_FAILED
