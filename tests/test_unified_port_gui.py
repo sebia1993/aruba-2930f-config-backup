@@ -1248,9 +1248,7 @@ def test_query_summary_counts_lldp_failures_even_when_poe_succeeds(
         )
     )
     dialog._run_total = 2
-    dialog._progress_query_keys = frozenset(
-        {(TARGET.endpoint, "1"), (TARGET.endpoint, "2")}
-    )
+    dialog._progress_query_keys = frozenset({(TARGET.endpoint, "1"), (TARGET.endpoint, "2")})
     dialog.progress_panel.start_query(2)
     dialog._thread_finished()
 
