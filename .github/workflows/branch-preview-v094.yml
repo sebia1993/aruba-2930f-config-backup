@@ -79,14 +79,14 @@ jobs:
       - name: Build audited portable Windows package, checksum and SBOM
         shell: pwsh
         run: |
-          ./build_windows.ps1 -PythonPath python -Version 0.9.3 -SkipValidation -UseCurrentEnvironment
+          ./build_windows.ps1 -PythonPath python -Version 0.9.4 -SkipValidation -UseCurrentEnvironment
           if ($LASTEXITCODE -ne 0) { throw "Windows packaging gate failed." }
 
       - name: Revalidate files and branch provenance, then publish GitHub prerelease
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $version = "0.9.3"
+          $version = "0.9.4"
           $tag = "v0.9.4"
           $branch = "fix/wc1601-legacy-ssh-v094-20261118"
           $root = Join-Path $PWD "artifacts/release"
