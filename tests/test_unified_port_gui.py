@@ -19,6 +19,7 @@ from aruba2930f_backup.poe_power import LLDPNeighbor, LLDPObservation, LLDPStatu
 from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from aruba2930f_backup.poe_quick_review_dialog import QuickPoEReviewDialog
 from aruba2930f_backup.port_control import PortAction, PortSnapshot
+from aruba2930f_backup.ssh_legacy import session_legacy_ssh
 from aruba2930f_backup.unified_port_gui import (
     BatchConfirmationDialog,
     UnifiedPortManagementDialog,
@@ -1205,3 +1206,17 @@ def test_poe_on_plan_can_include_link_down_without_ap_lldp(
     dialog._review_quick_action(PortAction.POE_ON, frozenset(keys))
     assert sent == ["1"]
     dialog.close()
+
+
+def test_auto_legacy_ssh_is_labeled_in_poe_query_results(app: QApplication) -> None:
+    dialog = setup_dialog()
+    session_legacy_ssh.clear()
+    try:
+        session_legacy_ssh.allow(TARGET)
+        dialog._on_result(queried("1"))
+        item = dialog._items[(TARGET.endpoint, "1")]
+        assert "레거시 SSH" in item.text(5)
+        assert "SHA-1" in item.toolTip(5)
+    finally:
+        session_legacy_ssh.clear()
+        dialog.close()
