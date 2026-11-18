@@ -185,6 +185,8 @@ def test_missing_hostname_only_in_fresh_inspection_does_not_block_poe_on(
 ) -> None:
     initial = row("11")
     assert initial.snapshot is not None
+    initial = replace(initial, snapshot=replace(initial.snapshot, poe_enabled=False))
+    assert initial.snapshot is not None
     fresh = replace(initial.snapshot, hostname="확인 불가", poe_enabled=True)
     # Keep the originally observed PoE configuration: a changed PoE setting
     # must be rejected even if the hostname is temporarily unavailable.

@@ -230,7 +230,9 @@ def test_poe_on_accepts_unknown_hostname_when_fingerprint_and_settings_match(
     # A subsequent SSH session may provide a parseable prompt hostname.
     device.hostname = "edge-lab"
     result = service.apply(
-        snapshot, PortAction.POE_ON, CREDENTIALS,
+        snapshot,
+        PortAction.POE_ON,
+        CREDENTIALS,
         confirmation=snapshot.confirmation_text,
     )
     assert result.status == "verified"
@@ -246,7 +248,9 @@ def test_poe_on_does_not_accept_changed_known_hostname_or_settings(
     device.hostname = "unexpected-host"
     with pytest.raises((ValueError, CollectionFailure)):
         service.apply(
-            snapshot, PortAction.POE_ON, CREDENTIALS,
+            snapshot,
+            PortAction.POE_ON,
+            CREDENTIALS,
             confirmation=snapshot.confirmation_text,
         )
     assert device.mutations == []
@@ -266,7 +270,9 @@ def test_poe_on_allows_missing_hostname_after_change_without_unverified(
 
     monkeypatch.setattr(Session, "change_port", change_then_lose_hostname)
     result = service.apply(
-        snapshot, PortAction.POE_ON, CREDENTIALS,
+        snapshot,
+        PortAction.POE_ON,
+        CREDENTIALS,
         confirmation=snapshot.confirmation_text,
     )
     assert result.status == "verified"
