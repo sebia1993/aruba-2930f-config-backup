@@ -265,9 +265,7 @@ class PoEQueryService:
             modules = _bounded(cancel, lambda: session.send_show("show modules"))
             resolved = _bounded(
                 cancel,
-                lambda: resolve_switch_hostname(
-                    session, before_read=lambda: _check_cancel(cancel)
-                ),
+                lambda: resolve_switch_hostname(session, before_read=lambda: _check_cancel(cancel)),
             )
             identity = replace(
                 validate_device_identity(version, modules, hostname=resolved.hostname),

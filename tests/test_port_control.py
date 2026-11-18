@@ -123,7 +123,9 @@ class Session:
             self.device.system_name if self.device.system_name is not None else self.device.hostname
         )
         if command == "show system information":
-            return f"Status and Counters - General System Information\nSystem Name : {system_name}\n"
+            return (
+                f"Status and Counters - General System Information\nSystem Name : {system_name}\n"
+            )
         if command == "show running-config":
             return f'hostname "{system_name}"\n' if system_name else "vlan 1\n"
         raise AssertionError(f"Unexpected show command: {command}")
