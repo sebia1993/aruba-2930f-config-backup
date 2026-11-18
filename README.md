@@ -3,7 +3,7 @@
 [![CI](https://github.com/sebia1993/aruba-2930f-config-backup/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sebia1993/aruba-2930f-config-backup/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**ArubaOS-Switch 기반 Aruba 2930F의 컨피그 백업과 포트별 LLDP·PoE 상태 조회 및 안전한 포트 제어를 하나의 Windows 프로그램에서 처리합니다.** 메인 메뉴는 홈 / 컨피그 백업 / 포트 통합 관리 / 작업 이력 / 설정으로 구성합니다.
+**ArubaOS-Switch 기반 Aruba 2930F의 컨피그 백업과 포트별 LLDP·PoE 상태 조회 및 안전한 포트 제어를 하나의 Windows 프로그램에서 처리합니다.** 메인 메뉴는 홈 / 컨피그 백업 / 포트 통합 관리 / 작업 이력의 4개만 제공합니다. 별도 설정 페이지 없이 백업 화면에서 저장 경로를 정하며, SSH 지문 검증·최초 승인 및 변경 차단은 유지합니다.
 
 > **v0.3.0에서는 스위치 IP·포트 목록을 입력해 포트별 전력, LLDP AP 이름, AP-535 공급 판정을 함께 조회합니다.** 결과는 IP·실제 호스트네임으로 묶고 대상 목록을 저장·불러오기 할 수 있습니다. [전력·LLDP 조회 안내](docs/POE_QUERY_KO.md)에서 판정 근거와 사용법을 확인하십시오. v0.2.0의 [단일 포트 제어](docs/PORT_CONTROL_KO.md)도 계속 제공합니다.
 
@@ -11,7 +11,7 @@
 
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
-> **최신 배포 버전은 [v0.9.0](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.9.0)** (`Aruba2930FConfigBackup_v0.9.0_windows_x64.zip`)입니다. 현장 장비 검증을 구분하기 위해 GitHub 사전릴리즈로 게시합니다.
+> **최신 배포 버전은 [v0.9.1](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.9.1)** (`Aruba2930FConfigBackup_v0.9.1_windows_x64.zip`)입니다. 현장 장비 검증을 구분하기 위해 GitHub 사전릴리즈로 게시합니다.
 
 > 새 일괄 제어 기능은 여러 AP의 무선 서비스에 영향을 줄 수 있습니다. 실제 운영 장비 검증은 사용자 직접 수행 범위입니다. 컨피그 수집/포트 제어의 SSH 인증·장비 지문·작업 이력 보호는 그대로 유지합니다.
 
@@ -175,7 +175,7 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 
 ## 빠른 시작
 
-1. GitHub **Releases**에서 게시된 `Aruba2930FConfigBackup_v0.9.0_windows_x64.zip`을 받습니다.
+1. GitHub **Releases**에서 게시된 `Aruba2930FConfigBackup_v0.9.1_windows_x64.zip`을 받습니다.
    아직 게시되지 않은 개발 버전은 해당 PR의 성공한 Windows CI 실행에서
    `Aruba2930FConfigBackup-windows-x64-ci` 아티팩트를 내려받습니다.
 2. 함께 제공되는 `.sha256` 파일로 ZIP 해시를 확인합니다.

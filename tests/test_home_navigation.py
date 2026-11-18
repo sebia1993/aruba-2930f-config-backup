@@ -48,19 +48,46 @@ def test_home_hides_settings_shortcut_but_preserves_ssh_trust_management() -> No
             assert window.pages.currentIndex() == index
             assert window.navigate(0)
 
-        settings_nav = window.findChild(QPushButton, "navSettings")
-        assert settings_nav is not None
-        settings_nav.click()
-        app.processEvents()
-        assert window.pages.currentIndex() == 4
+        # No settings menu, sidebar entry or hidden fifth page in the app.
+        assert window.pages.count() == 4
+        assert {button.text() for button in window._navigation_buttons} == {
+            "홈",
+            "컨피그 백업",
+            "포트 통합 관리",
+            "작업 이력",
+        }
+        assert window.findChild(QPushButton, "navSettings") is None
+        assert window.findChild(QPushButton, "managerTrustedKeys") is None
+        assert not hasattr(window, "settings_page")
+        assert not window.navigate(4)
+        assert window.pages.currentIndex() == 0
 
-        # A changed key is never silently re-approved; the operator still has
-        # access to existing trust records from the advanced settings page.
-        trust_button = window.findChild(QPushButton, "managerTrustedKeys")
-        assert trust_button is not None
-        assert trust_button.isVisible()
-
-        # Result output is a different path from the internal host-key store.
+        # The protected first-use/changed-key SSH flow stays in the backend.
+        assert callable(window.backup_page._manage_trusted_keys)
+        assert window.navigate(1)
+        assert window.backup_page.output_input.isVisible()
         assert window.backup_page.output_input.text()
+    finally:
+        window.close()
+
+
+@pytest.mark.gui
+def test_four_page_navigation_does_not_expose_a_fifth_settings_page() -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    assert isinstance(app, QApplication)
+    window = NetworkManagerWindow()
+    window.show()
+    app.processEvents()
+    try:
+        assert window.pages.count() == 4
+        assert window._navigation_buttons[-1].objectName() == "navHistory"
+        assert all(
+            button.objectName() != "navSettings" for button in window.findChildren(QPushButton)
+        )
+        assert not window.navigate(4)
+        assert not hasattr(window, "settings_page")
+        assert window.backup_page.output_input.text()
+        assert callable(window.backup_page._manage_trusted_keys)
     finally:
         window.close()
