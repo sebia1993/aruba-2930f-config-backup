@@ -66,10 +66,7 @@ def test_status_does_not_invent_down_from_missing_data_or_zero_watts() -> None:
         make_matrix_port(group, "1", sample(group, "1", power_status="Fault")).state
         is MatrixState.WARNING
     )
-    assert (
-        make_matrix_port(group, "1", sample(group, "1", poe=None)).state
-        is MatrixState.WARNING
-    )
+    assert make_matrix_port(group, "1", sample(group, "1", poe=None)).state is MatrixState.WARNING
     assert make_matrix_port(group, "1", sample(group, "1", enabled=False)).state is MatrixState.OFF
     assert (
         make_matrix_port(group, "1", sample(group, "1", complete=False)).state
