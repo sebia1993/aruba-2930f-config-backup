@@ -1146,9 +1146,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         if hasattr(self, "cycle_button"):
             self._update_cycle_controls()
         self._progress_query_keys = frozenset(
-            (group.target.endpoint, interface)
-            for group in groups
-            for interface in group.interfaces
+            (group.target.endpoint, interface) for group in groups for interface in group.interfaces
         )
         pending = self._quick_requery_pending
         self.progress_panel.start_query(
@@ -1299,11 +1297,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             except BatchControlError as exc:
                 QMessageBox.warning(self, "PoE 재가동 승인", str(exc))
                 return
-        skipped = (
-            self._quick_progress_skipped
-            if quick and plan.action is PortAction.POE_ON
-            else ()
-        )
+        skipped = self._quick_progress_skipped if quick and plan.action is PortAction.POE_ON else ()
         self.progress_panel.start_batch(
             ACTION_TITLES[plan.action],
             len(plan.targets),

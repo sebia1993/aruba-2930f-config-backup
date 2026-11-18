@@ -119,9 +119,7 @@ class PortProgressPanel(QFrame):
         self.progress.show()
         self.counts.setText(f"0/{total}포트 조회 완료 · 변경 명령 미전송")
 
-    def update_query(
-        self, done: int, total: int, endpoint: str = "", interface: str = ""
-    ) -> None:
+    def update_query(self, done: int, total: int, endpoint: str = "", interface: str = "") -> None:
         if self._mode != "query":
             return
         self._done = min(max(done, 0), total)
@@ -136,7 +134,9 @@ class PortProgressPanel(QFrame):
         if self._mode != "query":
             return
         self.update_query(done, total)
-        self.header.setText(f"{self._action} · 사전 재조회 완료" if self._action else "전체 조회 완료")
+        self.header.setText(
+            f"{self._action} · 사전 재조회 완료" if self._action else "전체 조회 완료"
+        )
         self.stage.setText("조회가 종료됐습니다. 포트 변경 명령은 보내지 않았습니다.")
         self.counts.setText(f"조회 {done}/{total} · 실패/취소 {failed} · 변경 명령 미전송")
 
@@ -184,9 +184,7 @@ class PortProgressPanel(QFrame):
         self.stage.setText(f"현재 처리: {endpoint} / {interface} · {label}")
         self._detail(endpoint, interface, label)
 
-    def record_result(
-        self, endpoint: str, interface: str, status: str, message: str
-    ) -> None:
+    def record_result(self, endpoint: str, interface: str, status: str, message: str) -> None:
         if self._mode != "batch":
             return
         key = (endpoint, interface)
@@ -225,6 +223,8 @@ class PortProgressPanel(QFrame):
         self._reset()
         self.header.setText("PoE 실행 보류" if blocked else "PoE 확인 완료 · 변경 없음")
         self.stage.setText(text)
-        self.counts.setText(f"확인 필요 {len(details)}포트 · 변경 명령 미전송" if blocked else "변경 명령 미전송")
+        self.counts.setText(
+            f"확인 필요 {len(details)}포트 · 변경 명령 미전송" if blocked else "변경 명령 미전송"
+        )
         for endpoint, interface, message in details[: self.MAX_DETAIL_ROWS]:
             self._detail(endpoint, interface, "실행 보류", message)

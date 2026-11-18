@@ -361,7 +361,9 @@ class BatchPortController:
                         index, item, plan.action, credentials, journal, cancel, on_stage
                     )
             else:
-                result = self._execute_one(index, item, plan.action, credentials, journal, cancel, on_stage)
+                result = self._execute_one(
+                    index, item, plan.action, credentials, journal, cancel, on_stage
+                )
             if result.status is BatchStatus.UNVERIFIED:
                 halt = True
             journal.append(index, "result", status=result.status.value, message=result.message)
