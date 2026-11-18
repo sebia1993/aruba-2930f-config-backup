@@ -213,6 +213,12 @@ class BatchConfirmationDialog(QDialog):
 class UnifiedPortManagementDialog(PoEQueryDialog):
     """Reuse the proven query UI; add an independent, fail-closed batch console."""
 
+    # Read-only view notifications. Existing checkbox/PoE controls own all writes.
+    matrixTargetsChanged = Signal(object)
+    matrixQueryStarted = Signal(object)
+    matrixPortObserved = Signal(object)
+    matrixVisibilityChanged = Signal(object)
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -342,6 +348,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         """An updated device inventory must never inherit stale checked ports."""
         if not hasattr(self, "_checked_port_keys"):
             super()._build_results(groups)
+            self.matrixTargetsChanged.emit(groups)
             return
         self._checked_port_keys.clear()
         with QSignalBlocker(self.result_tree):
@@ -353,6 +360,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                         0, Qt.CheckState.Unchecked
                     )
         self._clear_batch_plan("조회 대상 변경으로 포트 체크를 초기화했습니다.")
+        self.matrixTargetsChanged.emit(groups)
         self._selection_summary_timer.start()
 
     def _selection_locked(self) -> bool:
@@ -697,11 +705,23 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 item.setHidden(not shown)
                 visible = visible or shown
             parent.setHidden(not visible)
+        self.matrixVisibilityChanged.emit({
+            key for key, item in self._items.items() if not item.isHidden()
+        })
         self._selection_summary_timer.start()
+
+    def _start(self, groups: tuple[PoETarget, ...], credentials: Credentials) -> None:
+        self.matrixQueryStarted.emit(tuple(
+            (group.target.endpoint, interface)
+            for group in groups
+            for interface in group.interfaces
+        ))
+        super()._start(groups, credentials)
 
     def _apply_result(self, value: object) -> None:
         super()._apply_result(value)
         result = cast(PoEQueryResult, value)
+        self.matrixPortObserved.emit(result)
         if self._thread is not None and result.complete:
             self.progress_panel.update_query(
                 self._run_total - len(self._pending),
