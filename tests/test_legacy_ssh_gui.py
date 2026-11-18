@@ -5,12 +5,12 @@ from __future__ import annotations
 import os
 
 import pytest
+from aruba2930f_backup.ssh_legacy import session_legacy_ssh
+from aruba2930f_backup.ssh_legacy_gui import LegacySSHConsentDialog
 from PySide6.QtWidgets import QApplication, QDialog
 
 from aruba2930f_backup.models import DeviceTarget
 from aruba2930f_backup.poe_query_models import PoETarget
-from aruba2930f_backup.ssh_legacy import session_legacy_ssh
-from aruba2930f_backup.ssh_legacy_gui import LegacySSHConsentDialog
 from aruba2930f_backup.unified_port_gui import UnifiedPortManagementDialog
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from aruba2930f_backup.ssh_legacy import session_legacy_ssh
+
 from aruba2930f_backup.hostkeys import (
     HostKeyStore,
     disabled_sha1_rsa_algorithms,
@@ -15,7 +17,6 @@ from aruba2930f_backup.models import (
     ErrorCode,
     HostKeyObservation,
 )
-from aruba2930f_backup.ssh_legacy import session_legacy_ssh
 
 
 def test_wc1601_requires_explicit_endpoint_consent_and_leaves_other_devices_strict() -> None:
