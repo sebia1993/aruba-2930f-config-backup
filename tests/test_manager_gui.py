@@ -1,4 +1,4 @@
-"""Offline Qt coverage for the integrated five-page operator application."""
+"""Offline Qt coverage for the integrated four-page operator application."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QSplitter
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QScrollArea, QSplitter
 
 from aruba2930f_backup.manager_gui import (
     NetworkManagerWindow,
@@ -36,18 +36,17 @@ def make_window(app: QApplication) -> NetworkManagerWindow:
     return window
 
 
-def test_navigation_has_five_pages_and_keeps_existing_engines(app: QApplication) -> None:
+def test_navigation_has_four_pages_and_keeps_existing_engines(app: QApplication) -> None:
     window = make_window(app)
-    assert window.pages.count() == 5
+    assert window.pages.count() == 4
     assert window.windowTitle() == "Aruba 2930F · 네트워크 통합 관리"
     assert [button.text() for button in window._navigation_buttons] == [
         "홈",
         "컨피그 백업",
         "포트 통합 관리",
         "작업 이력",
-        "설정",
     ]
-    for index in range(5):
+    for index in range(4):
         assert window.navigate(index)
         assert window.pages.currentIndex() == index
         assert window._navigation_buttons[index].isChecked()
@@ -218,13 +217,24 @@ def test_history_missing_files_and_malformed_reports_fail_safely(tmp_path: Path)
         report_device_rows(broken)
 
 
-def test_credential_fields_are_not_persisted_in_view_settings(app: QApplication) -> None:
+def test_credential_fields_are_not_exposed_by_removed_settings_menu(
+    app: QApplication,
+) -> None:
     window = make_window(app)
     window.backup_page.password_input.setText("sensitive-test")
     window.port_page.password_input.setText("another-sensitive-test")
-    window.navigate(4)
-    assert "sensitive-test" not in window.settings_status.text()
-    assert "another-sensitive-test" not in window.settings_status.text()
+    assert window.navigate(1)
+    assert window.findChild(QPushButton, "navSettings") is None
+    assert window.findChild(QPushButton, "managerTrustedKeys") is None
+    assert not hasattr(window, "settings_page")
+    assert not hasattr(window, "settings_status")
+    assert not window.navigate(4)
+    assert "sensitive-test" not in window.page_title.text()
+    assert "another-sensitive-test" not in window.page_description.text()
+    # Backup output is configured in its existing workflow, not in settings.
+    assert window.backup_page.output_input.isVisible()
+    # Keep the backend host-key management and trust verification available.
+    assert callable(window.backup_page._manage_trusted_keys)
     window.close()
 
 
