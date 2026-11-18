@@ -12,8 +12,8 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Protocol
 
-from .hostname_discovery import resolve_switch_hostname
 from .hostkeys import HostKeyProbe, HostKeyStore, ParamikoHostKeyProbe
+from .hostname_discovery import resolve_switch_hostname
 from .models import (
     CollectionFailure,
     CollectionOptions,
