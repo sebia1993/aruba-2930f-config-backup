@@ -3,7 +3,7 @@
 [![CI](https://github.com/sebia1993/aruba-2930f-config-backup/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sebia1993/aruba-2930f-config-backup/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**ArubaOS-Switch 기반 Aruba 2930F의 컨피그 백업과 포트별 LLDP·PoE 상태 조회 및 안전한 포트 제어를 하나의 Windows 프로그램에서 처리합니다.** 메인 메뉴는 홈 / 컨피그 백업 / 포트 통합 관리 / 작업 이력 / 설정으로 구성합니다.
+**ArubaOS-Switch 기반 Aruba 2930F의 컨피그 백업과 포트별 LLDP·PoE 상태 조회 및 안전한 포트 제어를 하나의 Windows 프로그램에서 처리합니다.** 메인 메뉴는 홈 / 컨피그 백업 / 포트 통합 관리 / 작업 이력의 4개만 제공합니다. 별도 설정 페이지 없이 백업 화면에서 저장 경로를 정하며, SSH 지문 검증·최초 승인 및 변경 차단은 유지합니다.
 
 > **v0.3.0에서는 스위치 IP·포트 목록을 입력해 포트별 전력, LLDP AP 이름, AP-535 공급 판정을 함께 조회합니다.** 결과는 IP·실제 호스트네임으로 묶고 대상 목록을 저장·불러오기 할 수 있습니다. [전력·LLDP 조회 안내](docs/POE_QUERY_KO.md)에서 판정 근거와 사용법을 확인하십시오. v0.2.0의 [단일 포트 제어](docs/PORT_CONTROL_KO.md)도 계속 제공합니다.
 

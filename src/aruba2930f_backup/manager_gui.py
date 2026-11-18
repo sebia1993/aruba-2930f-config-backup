@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLayout,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -55,7 +54,6 @@ _PAGE_TITLES = (
     ("컨피그 백업", "running-config 수집과 스위치별 백업 결과 확인"),
     ("포트 통합 관리", "LLDP·PoE 전력 조회 후 해당 포트 제어 및 복구 확인"),
     ("작업 이력", "저장된 백업 및 포트 변경 이력"),
-    ("설정", "SSH 장비 지문과 기본 저장 위치"),
 )
 
 
@@ -199,7 +197,7 @@ class NetworkManagerWindow(QMainWindow):
             button = QPushButton(title, sidebar)
             button.setCheckable(True)
             button.setObjectName(
-                ("navHome", "navBackup", "navPorts", "navHistory", "navSettings")[index]
+                ("navHome", "navBackup", "navPorts", "navHistory")[index]
             )
             button.setMinimumHeight(42)
             button.clicked.connect(lambda checked=False, target=index: self.navigate(target))
@@ -271,8 +269,6 @@ class NetworkManagerWindow(QMainWindow):
 
         self.history_page = self._create_history()
         self.pages.addWidget(self.history_page)
-        self.settings_page = self._create_settings()
-        self.pages.addWidget(self.settings_page)
         self.navigate(0)
 
         self._status_timer = QTimer(self)
@@ -750,33 +746,6 @@ class NetworkManagerWindow(QMainWindow):
         if path.is_file():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
 
-    def _create_settings(self) -> QWidget:
-        page = QWidget(self.pages)
-        layout = QVBoxLayout(page)
-        layout.addWidget(QLabel("SSH 장비 신뢰 정보", page))
-        trust = QPushButton("승인된 SSH 장비 지문 관리…", page)
-        trust.setObjectName("managerTrustedKeys")
-        trust.clicked.connect(self.backup_page._manage_trusted_keys)
-        layout.addWidget(trust)
-        layout.addSpacing(16)
-        layout.addWidget(QLabel("컨피그 백업 기본 저장 위치", page))
-        self.output_path_edit = QLineEdit(page)
-        self.output_path_edit.setObjectName("managerDefaultOutputPath")
-        self.output_path_edit.setText(self.backup_page.output_input.text())
-        layout.addWidget(self.output_path_edit)
-        apply_button = QPushButton("백업 저장 위치 적용 (현재 실행에서만)", page)
-        apply_button.setObjectName("managerApplyOutput")
-        apply_button.clicked.connect(self._apply_output)
-        layout.addWidget(apply_button)
-        self.settings_status = QLabel(
-            "접속 암호·Enable 암호는 저장하지 않습니다. SSH 지문 승인 정책은 유지됩니다.",
-            page,
-        )
-        self.settings_status.setWordWrap(True)
-        layout.addWidget(self.settings_status)
-        layout.addStretch(1)
-        return page
-
     @Slot()
     def _configure_ssh_session(self) -> bool:
         if self._is_busy():
@@ -828,18 +797,6 @@ class NetworkManagerWindow(QMainWindow):
         )
         self.ssh_session_button.setText("계정 변경…" if username else "SSH 계정 설정…")
         self.ssh_session_clear_button.setEnabled(username is not None and not self._is_busy())
-
-    @Slot()
-    def _apply_output(self) -> None:
-        if self._is_busy():
-            QMessageBox.information(self, "저장 위치", "작업 중에는 저장 위치를 바꾸지 마세요.")
-            return
-        path = self.output_path_edit.text().strip()
-        if not path:
-            QMessageBox.warning(self, "저장 위치", "저장할 폴더를 지정하세요.")
-            return
-        self.backup_page.output_input.setText(path)
-        self.settings_status.setText("현재 실행의 백업 저장 위치에 적용했습니다.")
 
     def _is_busy(self) -> bool:
         backup = self.backup_page

@@ -50,7 +50,6 @@ from .poe_cycle import (
 from .poe_power import LLDPStatus
 from .poe_query_gui import PoEQueryDialog, PoEQueryServiceProtocol
 from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
-from .poe_quick_review_dialog import QuickPoEReviewDialog
 from .poe_targets import merge_targets, parse_pasted_targets
 from .port_control import PortAction
 from .port_paste_dialog import PortTargetPasteDialog
@@ -229,7 +228,6 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         # A quick action may refresh *only* missing observations. No port
         # command is ever sent as a consequence of the read-only refresh.
         self._quick_requery_pending: tuple[PortAction, frozenset[tuple[str, str]]] | None = None
-        self._quick_review_approved_plan_id: str | None = None
         # Only explicitly checked ports can enter a mutation plan.
         self._checked_port_keys: set[tuple[str, str]] = set()
         self._selection_summary_timer = QTimer(self)
@@ -886,7 +884,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         count = sum(len(group.interfaces) for group in groups)
         self.status_label.setText(
             f"PoE {action.value} 사전 확인 · 미확인 {count}포트 읽기 전용 재조회 중. "
-            "완료 후 실행 대상 확인창을 표시합니다."
+            "상태 확인이 끝나면 검증된 전체 대상만 처리합니다."
         )
 
     def _review_quick_action(self, action: PortAction, keys: frozenset[tuple[str, str]]) -> None:
@@ -922,17 +920,35 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                     ready.append(row)
         for key in sorted(keys - visited):
             excluded.append((*key, "등록된 조회 대상에서 제외되었거나 대상 정보가 변경됨"))
-        review = QuickPoEReviewDialog(action, ready, excluded, self)
-        try:
-            approved = review.exec() == QDialog.DialogCode.Accepted
-        finally:
-            review.deleteLater()
-        if not approved:
+        # Fast actions no longer open a second target-review dialog. Never
+        # silently drop checked ports, however: a partial result is a blocked
+        # *entire* action until the operator explicitly changes the selection.
+        if excluded:
             self._batch_plan = None
+            reasons = [
+                f"{endpoint} / {interface}: {reason}"
+                for endpoint, interface, reason in excluded
+            ]
+            self.quick_summary.setText(
+                f"PoE {action.value} 보류 · 확인 필요 {len(excluded)}/{len(keys)}포트"
+            )
+            self.quick_summary.setToolTip("\n".join(reasons))
+            for endpoint, interface, reason in excluded:
+                item = self._items.get((endpoint, interface))
+                if item is not None:
+                    item.setToolTip(0, reason)
             self.status_label.setText(
-                f"PoE 제어 취소 · 실행 가능 {len(ready)}포트 · 제외 {len(excluded)}포트"
+                f"PoE {action.value} 실행 안 함 · {len(excluded)}포트의 상태 확인이 필요합니다. "
+                f"첫 대상 {reasons[0]} · "
+                "SSH·포트 조회를 확인하고 다시 조회하거나 "
+                "'제어 가능만 선택' 후 빠른 제어를 누르세요. "
+                "체크된 포트는 임의로 제외하지 않았습니다."
             )
             self._update_control_buttons()
+            return
+        if not ready:
+            self.status_label.setText("선택한 포트가 없습니다. 변경 명령을 보내지 않았습니다.")
+            self._batch_plan = None
             return
         if self._selection_locked() or self._checked_port_keys != set(keys):
             self._batch_plan = None
@@ -947,7 +963,6 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             QMessageBox.warning(self, "PoE 실행 계획 확인", str(exc))
             return
         self._batch_plan = plan
-        self._quick_review_approved_plan_id = plan.plan_id
         self._run_batch(quick=True)
 
     @Slot()
@@ -977,7 +992,6 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
     def _invalidate(self) -> None:
         if hasattr(self, "_quick_requery_pending"):
             self._quick_requery_pending = None
-            self._quick_review_approved_plan_id = None
         cycle = getattr(self, "_cycle", None)
         if cycle is not None and cycle.phase not in (
             PowerCyclePhase.COMPLETE,
@@ -1110,13 +1124,10 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         if self.is_busy or self._batch_plan is None:
             return
         plan = self._batch_plan
-        reviewed = self._quick_review_approved_plan_id == plan.plan_id
-        # A confirmation is bound to one frozen plan ID and cannot be reused.
-        self._quick_review_approved_plan_id = None
         if quick:
-            # The detailed target review replaces the old second OFF prompt.
-            # Bulk OFF has one concise confirmation to prevent accidental AP outages.
-            if plan.action is PortAction.POE_OFF and len(plan.targets) > 1 and not reviewed:
+            # Exactly one concise OFF confirmation for multiple AP ports.
+            # No extra target-review dialog; ON and single OFF stay direct.
+            if plan.action is PortAction.POE_OFF and len(plan.targets) > 1:
                 summary = "\n".join(
                     f"{item.expected_hostname} ({item.target.ip}) / {item.interface}"
                     for item in plan.targets[:12]
