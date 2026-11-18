@@ -172,6 +172,14 @@ def test_theme_buttons_apply_in_one_click_and_keep_settings(app: QApplication) -
     try:
         assert window.pages.count() == 4
         assert "설정" not in (button.text() for button in window._navigation_buttons)
+        # The two choices must be touching halves of a single rounded pill.
+        segment = window.theme_segmented_control
+        assert segment.objectName() == "themeSegmentedControl"
+        assert window.theme_light_button.parentWidget() is segment
+        assert window.theme_dark_button.parentWidget() is segment
+        assert segment.layout() is not None
+        assert segment.layout().spacing() == 0
+        assert "QFrame#themeSegmentedControl" in app.styleSheet()
         window.theme_light_button.click()
         assert window.theme_light_button.isChecked()
         assert not window.theme_dark_button.isChecked()
