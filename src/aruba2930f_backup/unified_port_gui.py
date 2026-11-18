@@ -705,17 +705,19 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 item.setHidden(not shown)
                 visible = visible or shown
             parent.setHidden(not visible)
-        self.matrixVisibilityChanged.emit({
-            key for key, item in self._items.items() if not item.isHidden()
-        })
+        self.matrixVisibilityChanged.emit(
+            {key for key, item in self._items.items() if not item.isHidden()}
+        )
         self._selection_summary_timer.start()
 
     def _start(self, groups: tuple[PoETarget, ...], credentials: Credentials) -> None:
-        self.matrixQueryStarted.emit(tuple(
-            (group.target.endpoint, interface)
-            for group in groups
-            for interface in group.interfaces
-        ))
+        self.matrixQueryStarted.emit(
+            tuple(
+                (group.target.endpoint, interface)
+                for group in groups
+                for interface in group.interfaces
+            )
+        )
         super()._start(groups, credentials)
 
     def _apply_result(self, value: object) -> None:
