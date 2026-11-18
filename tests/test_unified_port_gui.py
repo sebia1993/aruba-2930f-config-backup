@@ -1131,6 +1131,44 @@ def test_poe_on_uses_only_off_ports_in_plan_and_explains_already_enabled(
     dialog.close()
 
 
+def test_poe_on_missing_hostname_runs_checked_only_with_verified_identity(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    dialog = setup_dialog()
+    observed = queried("1")
+    assert observed.snapshot is not None
+    dialog._on_result(
+        replace(
+            observed,
+            snapshot=replace(
+                observed.snapshot,
+                hostname="확인 불가",
+                model="Aruba 2930F",
+                poe_enabled=False,
+            ),
+        )
+    )
+    key = (TARGET.endpoint, "1")
+    dialog._set_checked_keys({key})
+    plans: list[tuple[str, ...]] = []
+
+    def capture(*, quick: bool = False) -> None:
+        assert quick
+        assert dialog._batch_plan is not None
+        assert dialog._batch_plan.action is PortAction.POE_ON
+        assert dialog._batch_plan.targets[0].allow_unknown_hostname
+        plans.append(tuple(t.interface for t in dialog._batch_plan.targets))
+
+    monkeypatch.setattr(dialog, "_run_batch", capture)
+    dialog.quick_on_button.click()
+
+    assert plans == [("1",)]
+    assert dialog._checked_port_keys == {key}
+    dialog.close()
+
+
 def test_poe_on_all_enabled_does_not_transmit_redundant_change(
     app: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
