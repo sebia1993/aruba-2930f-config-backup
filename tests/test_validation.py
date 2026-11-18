@@ -9,6 +9,7 @@ from aruba2930f_backup.validation import (
     contains_pager_marker,
     hostname_from_prompt,
     hostname_from_running_config,
+    hostname_from_system_information,
     normalize_config_text,
     parse_ipv4_targets,
     require_valid_prompt,
@@ -291,7 +292,7 @@ def test_unclosed_banner_cannot_be_normalized_as_a_successful_backup(banner) -> 
     "banner",
     [
         'banner motd "Welcome"',
-        'banner motd "Welcome\\" operator\\nnext line"',
+        'banner motd "Welcome\\" operator\nnext line"',
         'banner motd "Welcome\nedge-lab#\nclosing text"',
         "banner motd ^Welcome^",
         "banner motd ^\nWelcome\n^",
@@ -337,3 +338,21 @@ def test_running_config_hostname_ignores_unindented_banner_content() -> None:
         hostname_from_running_config('banner motd "hostname forged-device"\nhostname legitimate\n')
         == "legitimate"
     )
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("Status and Counters - General System Information\nSystem Name : SEOUL-SW-01\nSystem Contact :\n", "SEOUL-SW-01"),
+        ("System Name   : Aruba-VSF-2930F\nVSF-Member :1\nSystem Location :\n", "Aruba-VSF-2930F"),
+        ("System Name : LAB SWITCH 1\n", "LAB SWITCH 1"),
+        ("System Name : \nSystem Location : Area A\n", None),
+        ("System Name : One\nSystem Name : Two\n", None),
+        ("System Contact : Support\n", None),
+        ("System Name : \x1b[31mEDGE-SW\x1b[0m\n", "EDGE-SW"),
+    ],
+)
+def test_hostname_from_system_information_parses_unambiguous_field(
+    output: str, expected: str | None
+) -> None:
+    assert hostname_from_system_information(output) == expected
