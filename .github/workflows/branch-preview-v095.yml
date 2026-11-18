@@ -1,0 +1,134 @@
+name: Verified v0.9.5 branch prerelease
+
+on:
+  push:
+    branches:
+      - fix/wc1601-auto-negotiation-v095-20261118
+    paths:
+      - .github/workflows/branch-preview-v095.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aruba2930f-one-shot-v095-preview
+  cancel-in-progress: false
+
+jobs:
+  verified-preview:
+    name: Validate, package and publish a branch-only prerelease
+    if: github.repository == 'sebia1993/aruba-2930f-config-backup' && github.ref == 'refs/heads/fix/wc1601-auto-negotiation-v095-20261118'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Check out reviewed branch commit without stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.14 x64
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-lock.txt
+            requirements-dev.txt
+
+      - name: Verify source identity and release version without main merge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $branch = "fix/wc1601-auto-negotiation-v095-20261118"
+          if ($env:GITHUB_REF -ne "refs/heads/$branch") { throw "Wrong release source branch." }
+          $remote = (gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/$branch" --jq '.object.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $remote -ne $env:GITHUB_SHA) { throw "Branch SHA mismatch." }
+          $main = (gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $main -eq $env:GITHUB_SHA) { throw "main must not be published by this workflow." }
+          python tools/check_version.py --tag v0.9.5
+          if ($LASTEXITCODE -ne 0) { throw "Version verification failed." }
+
+      - name: Install pinned Windows dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --no-input pip==26.2.1 setuptools==84.0.0
+          if ($LASTEXITCODE -ne 0) { throw "Bootstrap installation failed." }
+          python -m pip install --no-input -r requirements-lock.txt -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { throw "Pinned installation failed." }
+          python -m pip install --no-input --no-deps -e .
+          if ($LASTEXITCODE -ne 0) { throw "Editable installation failed." }
+
+      - name: Execute full Windows safety, typing, test and audit gates
+        shell: pwsh
+        run: |
+          ./tools/validate.ps1 -PythonPath python
+          if ($LASTEXITCODE -ne 0) { throw "Safety and test gates failed." }
+
+      - name: Build audited portable Windows package, checksum and SBOM
+        shell: pwsh
+        run: |
+          ./build_windows.ps1 -PythonPath python -Version 0.9.5 -SkipValidation -UseCurrentEnvironment
+          if ($LASTEXITCODE -ne 0) { throw "Windows packaging gate failed." }
+
+      - name: Revalidate files and branch provenance, then publish GitHub prerelease
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "0.9.5"
+          $tag = "v0.9.5"
+          $branch = "fix/wc1601-auto-negotiation-v095-20261118"
+          $root = Join-Path $PWD "artifacts/release"
+          $zipName = "Aruba2930FConfigBackup_v" + $version + "_windows_x64.zip"
+          $sbomName = "Aruba2930FConfigBackup_v" + $version + "_sbom.cdx.json"
+          $notesName = "release-notes-v" + $version + ".md"
+          $zip = Join-Path $root $zipName
+          $sha256 = Join-Path $root ($zipName + ".sha256")
+          $sbom = Join-Path $root $sbomName
+          $notes = Join-Path $root $notesName
+          $expected = @($zipName, ($zipName + ".sha256"), $sbomName, $notesName) | Sort-Object
+          $actual = @(Get-ChildItem -LiteralPath $root -File | ForEach-Object { $_.Name } | Sort-Object)
+          if ($actual.Count -ne 4 -or @(Compare-Object $expected $actual).Count -ne 0) {
+            throw "Unexpected release file set."
+          }
+          python tools/verify_release.py --zip $zip --sha256 $sha256 --sbom $sbom --version $version --smoke
+          if ($LASTEXITCODE -ne 0) { throw "Release verification failed." }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $entry = $archive.GetEntry("Aruba2930FConfigBackup/BUILD_INFO.json")
+            if ($null -eq $entry) { throw "Missing BUILD_INFO.json." }
+            $reader = [System.IO.StreamReader]::new($entry.Open())
+            try { $info = $reader.ReadToEnd() | ConvertFrom-Json }
+            finally { $reader.Dispose() }
+          }
+          finally { $archive.Dispose() }
+          if ($info.commit -ne $env:GITHUB_SHA -or $info.version -ne $version -or $info.dirtyTree -ne $false) {
+            throw "BUILD_INFO does not match the verified source commit."
+          }
+          $remote = (gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/$branch" --jq '.object.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $remote -ne $env:GITHUB_SHA) { throw "Branch changed before release." }
+          $main = (gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $main -eq $env:GITHUB_SHA) { throw "Refusing main release." }
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Existing release will not be overwritten." }
+          $tagSha = (gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/tags" -f tag="$tag" -f message="Branch-only preview $tag" -f object="$env:GITHUB_SHA" -f type=commit --jq '.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $tagSha -notmatch '^[0-9a-f]{40}$') { throw "Could not create annotated release tag." }
+          gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$tagSha" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish annotated tag." }
+          gh release create $tag $zip $sha256 $sbom --repo $env:GITHUB_REPOSITORY --verify-tag --prerelease --title "Aruba 2930F Config Backup v0.9.5 (branch preview)" --notes-file $notes
+          if ($LASTEXITCODE -ne 0) { throw "Verified prerelease publish failed." }
+          Write-Host "Published audited branch preview; main was not changed."
