@@ -11,7 +11,9 @@
 
 반복적인 장비 접속과 수동 설정 백업을 줄이고, **장비 식별 → 안전한 CLI 수집 → 실패 격리 → 결과 무결성 확인 → 보고서 생성**을 하나의 운영 절차로 묶는 것을 목표로 합니다.
 
-> **개발 브랜치 사전 릴리스: [v0.9.3](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.9.3)** (`Aruba2930FConfigBackup_v0.9.3_windows_x64.zip`)입니다. 기존 v0.9.2 main 병합 없이 상단 PoE 진행 현황 UI를 검증하는 Windows 패키지입니다. 현장 장비 검증을 구분하기 위해 GitHub 사전릴리즈로 게시합니다.
+> **개발 브랜치 사전 릴리스: [v0.9.4](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.9.4)** (`Aruba2930FConfigBackup_v0.9.4_windows_x64.zip`)입니다. v0.9.3의 상단 PoE 진행 상황 UI에 WC.16.01 구형 SSH의 장비별 명시적 호환 예외를 추가했습니다. 기존 main v0.9.2는 병합하거나 변경하지 않습니다. 현장 장비 검증 전에는 GitHub 사전 릴리스입니다.
+
+> **WC.16.01 SSH 연결이 실패할 때:** 포트 통합 관리 화면에서 `레거시 SSH (장비별)` → 해당 스위치 IP:SSH포트 선택 → 확인 문자열 직접 입력 → 예외 허용을 실행하세요. 해당 장비만 서버 호스트 키 `ssh-rsa`를 현 세션에서 허용하고 읽기 전용 재조회를 진행합니다. 최초 SSH 지문은 별도 경로로 검증해야 합니다. [상세 절차 및 위험](docs/SSH_LEGACY_COMPAT_KO.md).
 
 > 새 일괄 제어 기능은 여러 AP의 무선 서비스에 영향을 줄 수 있습니다. 실제 운영 장비 검증은 사용자 직접 수행 범위입니다. 컨피그 수집/포트 제어의 SSH 인증·장비 지문·작업 이력 보호는 그대로 유지합니다.
 
@@ -175,7 +177,7 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 
 ## 빠른 시작
 
-1. GitHub **Releases**에서 검증용 `Aruba2930FConfigBackup_v0.9.3_windows_x64.zip`을 받습니다. 현행 main은 v0.9.2입니다.
+1. GitHub **Releases**에서 검증용 `Aruba2930FConfigBackup_v0.9.4_windows_x64.zip`을 받습니다. 현행 main은 v0.9.2입니다.
    아직 게시되지 않은 개발 버전은 해당 PR의 성공한 Windows CI 실행에서
    `Aruba2930FConfigBackup-windows-x64-ci` 아티팩트를 내려받습니다.
 2. 함께 제공되는 `.sha256` 파일로 ZIP 해시를 확인합니다.
