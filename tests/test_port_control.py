@@ -116,6 +116,11 @@ class Session:
     def send_show(self, command: str) -> str:
         if command == "show version":
             return f"Aruba {self.device.sku} 2930F Switch\nSoftware revision WC.16.11.0025"
+        if command == "show system information":
+            return (
+                "Status and Counters - General System Information\n"
+                f"System Name : {self.device.hostname}\n"
+            )
         assert command == "show modules"
         return f"Chassis: Aruba 2930F {self.device.sku}"
 
@@ -217,6 +222,18 @@ def test_each_action_changes_only_its_setting_and_is_verified(
     assert [row["status"] for row in records] == ["pending", "verified"]
     assert records[0]["interface"] == "24"
     assert CREDENTIALS.password not in result.audit_path.read_text()
+
+
+def test_inspect_uses_system_name_not_cli_prompt(setup: Any) -> None:
+    service, device, _clock = setup
+    device.hostname = "DIRECT-CONFIG-SW"
+    original = Session.get_prompt
+    Session.get_prompt = lambda self: "different-prompt#"
+    try:
+        snapshot = inspect(service, device)
+        assert snapshot.hostname == "DIRECT-CONFIG-SW"
+    finally:
+        Session.get_prompt = original
 
 
 def test_poe_on_accepts_unknown_hostname_when_fingerprint_and_settings_match(
