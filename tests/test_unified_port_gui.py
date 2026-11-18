@@ -1027,9 +1027,7 @@ def test_quick_invalid_checked_port_does_not_silently_drop_or_open_review(
         replace(queried("2"), snapshot=None, status=QueryStatus.FAILED, message="SSH timeout")
     )
     triggered: list[tuple[PoETarget, ...]] = []
-    monkeypatch.setattr(
-        dialog, "_start", lambda groups, _auth: triggered.append(groups)
-    )
+    monkeypatch.setattr(dialog, "_start", lambda groups, _auth: triggered.append(groups))
     monkeypatch.setattr(
         QuickPoEReviewDialog,
         "exec",
