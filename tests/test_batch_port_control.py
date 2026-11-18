@@ -180,6 +180,46 @@ def test_missing_hostname_poe_on_uses_pinned_identity_and_fresh_preflight(
         create_batch_plan([invalid_key], PortAction.POE_ON)
 
 
+def test_missing_hostname_only_in_fresh_inspection_does_not_block_poe_on(
+    tmp_path: Path,
+) -> None:
+    initial = row("11")
+    assert initial.snapshot is not None
+    fresh = replace(initial.snapshot, hostname="확인 불가", poe_enabled=True)
+    # Keep the originally observed PoE configuration: a changed PoE setting
+    # must be rejected even if the hostname is temporarily unavailable.
+    bad_controller = FakeControl(actual=fresh)
+    bad = BatchPortController(
+        controller_factory=lambda: bad_controller,
+        journal_directory=tmp_path / "bad",
+    ).execute(create_batch_plan([initial], PortAction.POE_ON), CREDS)
+    assert bad.results[0].status is BatchStatus.PREFLIGHT_FAILED
+    assert bad_controller.applied == []
+
+    allowed = replace(initial.snapshot, hostname="확인 불가")
+    controller = FakeControl(actual=allowed)
+    good = BatchPortController(
+        controller_factory=lambda: controller,
+        journal_directory=tmp_path / "good",
+    ).execute(create_batch_plan([initial], PortAction.POE_ON), CREDS)
+    assert good.results[0].status is BatchStatus.VERIFIED
+    assert controller.applied == [("11", PortAction.POE_ON)]
+
+
+def test_changed_known_hostname_still_blocks_poe_on(tmp_path: Path) -> None:
+    initial = row("13")
+    assert initial.snapshot is not None
+    controller = FakeControl(
+        actual=replace(initial.snapshot, hostname="unexpected-switch"),
+    )
+    result = BatchPortController(
+        controller_factory=lambda: controller,
+        journal_directory=tmp_path,
+    ).execute(create_batch_plan([initial], PortAction.POE_ON), CREDS)
+    assert result.results[0].status is BatchStatus.PREFLIGHT_FAILED
+    assert controller.applied == []
+
+
 def test_missing_hostname_poe_on_does_not_skip_identity_and_port_safety(
     tmp_path: Path,
 ) -> None:
