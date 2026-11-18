@@ -602,6 +602,15 @@ def test_quick_bar_exposes_only_independent_poe_off_and_on(
     monkeypatch.setattr(dialog, "_run_batch", capture)
     monkeypatch.setattr(QuickPoEReviewDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
     dialog.quick_off_button.click()
+    # The OFF worker is mocked above. Simulate its subsequent fresh port
+    # observation: ON is needed only when Power Enable is now No.
+    from dataclasses import replace
+
+    previous = dialog._results[(TARGET.endpoint, "1")]
+    assert previous.snapshot is not None
+    dialog._on_result(
+        replace(previous, snapshot=replace(previous.snapshot, poe_enabled=False))
+    )
     dialog.quick_on_button.click()
     assert executed == [PortAction.POE_OFF, PortAction.POE_ON]
     dialog.close()
@@ -832,8 +841,14 @@ def test_failed_lldp_requeries_only_for_off_not_on(
     dialog = setup_dialog()
     from dataclasses import replace
 
+    previous = queried("2")
+    assert previous.snapshot is not None
     dialog._on_result(
-        replace(queried("2"), lldp=LLDPObservation(LLDPStatus.FAILED, message="LLDP 오류"))
+        replace(
+            previous,
+            snapshot=replace(previous.snapshot, poe_enabled=False),
+            lldp=LLDPObservation(LLDPStatus.FAILED, message="LLDP 오류"),
+        )
     )
     dialog._set_checked_keys({(TARGET.endpoint, "2")})
     requested: list[tuple[PoETarget, ...]] = []
