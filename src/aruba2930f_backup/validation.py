@@ -238,7 +238,7 @@ def hostname_from_system_information(output: str) -> str | None:
         r"(?im)^[ \t]*System[ \t]+Name[ \t]*:[ \t]*([^\r\n]*)",
         clean,
     )
-    names = [name.strip() for name in matches]
+    names: list[str] = [str(name).strip() for name in matches]
     if (
         not names
         or any(
