@@ -710,16 +710,6 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         )
         self._selection_summary_timer.start()
 
-    def _start(self, groups: tuple[PoETarget, ...], credentials: Credentials) -> None:
-        self.matrixQueryStarted.emit(
-            tuple(
-                (group.target.endpoint, interface)
-                for group in groups
-                for interface in group.interfaces
-            )
-        )
-        super()._start(groups, credentials)
-
     def _apply_result(self, value: object) -> None:
         super()._apply_result(value)
         result = cast(PoEQueryResult, value)
@@ -1176,6 +1166,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             preflight=pending is not None,
             action=ACTION_TITLES[pending[0]] if pending is not None else "",
         )
+        self.matrixQueryStarted.emit(tuple(self._progress_query_keys))
         super()._start(groups, credentials)
 
     def _selected_rows(self) -> tuple[PoEQueryResult, ...]:
