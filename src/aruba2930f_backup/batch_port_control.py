@@ -416,17 +416,24 @@ class BatchPortController:
                 credentials,
                 approve_host_key=lambda _check: False,
             )
-            # AOS-S may return an EXEC prompt without a parseable hostname.
-            # Only PoE ON can use this fallback, and only when the approved
-            # SSH key, 2930F model, exact endpoint, interface and current
-            # configuration still match. A known hostname must match strictly.
+            # AOS-S may return an EXEC prompt without a parseable hostname
+            # on either the initial observation or the fresh inspection.
+            # The fallback is PoE ON only; all other identity/configuration
+            # fields remain strict and two known hostnames must match.
+            hostname_matches = snapshot.hostname == item.expected_hostname or (
+                action is PortAction.POE_ON
+                and (
+                    snapshot.hostname in ("", "확인 불가")
+                    or item.expected_hostname in ("", "확인 불가")
+                )
+            )
             identity_matches = (
                 snapshot.target == item.target
                 and snapshot.interface == item.interface
                 and snapshot.fingerprint == item.fingerprint
                 and snapshot.enabled == item.expected_enabled
                 and snapshot.poe_enabled == item.expected_poe_enabled
-                and (item.allow_unknown_hostname or snapshot.hostname == item.expected_hostname)
+                and hostname_matches
                 and (not item.expected_model or snapshot.model == item.expected_model)
             )
             if not identity_matches:
