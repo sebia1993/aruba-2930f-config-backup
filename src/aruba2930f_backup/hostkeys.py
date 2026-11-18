@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .hostkey_lock import host_key_transaction
+from .ssh_legacy import session_legacy_ssh
 from .models import (
     ApprovedHostKey,
     CollectionFailure,
@@ -31,15 +32,18 @@ class HostKeyProbe(Protocol):
     def probe(self, target: DeviceTarget, *, timeout: float = 15.0) -> HostKeyObservation: ...
 
 
-def disabled_sha1_rsa_algorithms() -> dict[str, list[str]]:
-    """Return a fresh Paramiko policy that rejects RSA/SHA-1 signatures.
+def disabled_sha1_rsa_algorithms(
+    target: DeviceTarget | None = None,
+) -> dict[str, list[str]]:
+    """Share a per-endpoint host-key policy across pre-auth and auth.
 
-    Paramiko 4.0.0 still enables ``ssh-rsa`` for both server host keys and
-    public-key authentication. Keeping this policy in one place prevents the
-    unauthenticated probe and the authenticated Netmiko connection from
-    drifting apart until the Paramiko dependency upgrade is validated.
+    Default: forbid ssh-rsa server host keys and user public-key signatures.
+    Explicit temporary legacy approval: allow only the server host-key
+    ssh-rsa signature for this exact IP:port. User pubkey SHA-1 stays blocked.
+    No KEX, cipher, TLS or host-key identity validation is weakened.
     """
-
+    if target is not None and session_legacy_ssh.allowed(target):
+        return {"pubkeys": ["ssh-rsa"]}
     return {"keys": ["ssh-rsa"], "pubkeys": ["ssh-rsa"]}
 
 
@@ -275,7 +279,7 @@ class ParamikoHostKeyProbe:
             connection.settimeout(timeout)
             transport = paramiko.Transport(
                 connection,
-                disabled_algorithms=disabled_sha1_rsa_algorithms(),
+                disabled_algorithms=disabled_sha1_rsa_algorithms(target),
             )
             transport.start_client(timeout=timeout)
             key = transport.get_remote_server_key()

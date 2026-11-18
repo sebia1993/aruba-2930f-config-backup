@@ -55,6 +55,8 @@ from .poe_targets import merge_targets, parse_pasted_targets
 from .port_control import PortAction
 from .port_paste_dialog import PortTargetPasteDialog
 from .port_progress_panel import PortProgressPanel
+from .ssh_legacy import session_legacy_ssh
+from .ssh_legacy_gui import LegacySSHConsentDialog
 from .storage import default_output_directory
 
 ACTION_TITLES: dict[PortAction, str] = {
@@ -289,6 +291,14 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         ):
             self.filter_combo.addItem(label, code)
         row.addWidget(self.filter_combo, 1)
+        self.legacy_ssh_button = QPushButton("레거시 SSH (장비별)", container)
+        self.legacy_ssh_button.setObjectName("unifiedLegacySsh")
+        self.legacy_ssh_button.setToolTip(
+            "WC.16.01 장비에서 SSH 알고리즘 불일치가 발생한 경우, "
+            "특정 스위치만 명시적으로 RSA/SHA-1 서버키 예외를 허용하거나 해제합니다."
+        )
+        self.legacy_ssh_button.clicked.connect(self._show_legacy_ssh_dialog)
+        row.addWidget(self.legacy_ssh_button)
         layout.addLayout(row)
 
         selection_row = QHBoxLayout()
@@ -477,6 +487,47 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
     @Slot()
     def _select_scope_all(self) -> None:
         self._select_scope(eligible_only=False)
+
+    @Slot()
+    def _show_legacy_ssh_dialog(self) -> None:
+        """Require exact operator consent before any legacy protocol exception."""
+        if self._selection_locked():
+            return
+        try:
+            groups = self._groups or self._validated_targets()
+        except ValueError as exc:
+            QMessageBox.warning(self, "레거시 SSH 대상", str(exc))
+            return
+        if not groups:
+            QMessageBox.information(
+                self, "레거시 SSH 대상", "먼저 조회 대상 스위치를 입력하세요."
+            )
+            return
+        dialog = LegacySSHConsentDialog(tuple(group.target for group in groups), self)
+        selected = self._selected_key()
+        if selected is not None:
+            dialog.select_endpoint(selected[0])
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            target = dialog.selected_target
+            if session_legacy_ssh.allowed(target):
+                session_legacy_ssh.revoke(target)
+                self._invalidate()
+                self.status_label.setText(
+                    f"{target.endpoint} 레거시 SSH 예외 해제 · 재조회를 진행해야 합니다."
+                )
+                return
+            session_legacy_ssh.allow(target)
+            self.status_label.setText(
+                f"{target.endpoint}에만 레거시 ssh-rsa 서버키 허용 · "
+                "SSH 지문 확인을 거쳐 읽기 전용으로 재조회합니다."
+            )
+            matching = tuple(group for group in self._groups if group.target == target)
+            if matching:
+                self._refresh(matching)
+        finally:
+            dialog.deleteLater()
 
     @Slot()
     def _select_scope_eligible(self) -> None:
@@ -1202,6 +1253,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 self.select_eligible_button,
                 self.select_cycle_eligible_button,
                 self.clear_selection_button,
+                self.legacy_ssh_button,
             ):
                 button.setEnabled(not locked)
             self.plan_button.setEnabled(self.plan_button.isEnabled() and not locked)
