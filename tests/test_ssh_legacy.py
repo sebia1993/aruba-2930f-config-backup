@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aruba2930f_backup.ssh_legacy import session_legacy_ssh
+import pytest
 
 from aruba2930f_backup.hostkeys import (
     HostKeyStore,
@@ -17,6 +17,7 @@ from aruba2930f_backup.models import (
     ErrorCode,
     HostKeyObservation,
 )
+from aruba2930f_backup.ssh_legacy import session_legacy_ssh
 
 
 def test_wc1601_requires_explicit_endpoint_consent_and_leaves_other_devices_strict() -> None:
@@ -50,12 +51,12 @@ def test_legacy_server_host_key_is_still_pinned_and_changed_keys_rejected(tmp_pa
     session_legacy_ssh.clear()
     try:
         session_legacy_ssh.allow(target)
-        with __import__("pytest").raises(CollectionFailure) as unknown:
+        with pytest.raises(CollectionFailure) as unknown:
             store.require_trusted(first)
         assert unknown.value.code is ErrorCode.HOST_KEY_REJECTED
         store.approve([store.check(first)])
         store.require_trusted(first)
-        with __import__("pytest").raises(CollectionFailure) as changed_key:
+        with pytest.raises(CollectionFailure) as changed_key:
             store.require_trusted(changed)
         assert changed_key.value.code is ErrorCode.HOST_KEY_CHANGED
     finally:

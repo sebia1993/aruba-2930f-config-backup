@@ -19,6 +19,7 @@ from aruba2930f_backup.manager_gui import (
 from aruba2930f_backup.models import DeviceTarget
 from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from aruba2930f_backup.port_control import PortSnapshot
+from aruba2930f_backup.ssh_legacy import session_legacy_ssh
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -509,3 +510,18 @@ def test_poe_progress_is_pinned_above_resizable_results(app: QApplication) -> No
     )
     assert window.port_page.progress_panel.isVisible()
     window.close()
+
+
+def test_session_clear_revokes_legacy_ssh_exception(app: QApplication) -> None:
+    session_legacy_ssh.clear()
+    window = make_window(app)
+    target = DeviceTarget("192.0.2.10", 22)
+    try:
+        window._ssh_credentials.configure("operator", "fixture-password")
+        session_legacy_ssh.allow(target)
+        assert session_legacy_ssh.allowed(target)
+        window._clear_ssh_session()
+        assert not session_legacy_ssh.allowed(target)
+    finally:
+        window.close()
+        session_legacy_ssh.clear()

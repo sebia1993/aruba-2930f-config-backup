@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .hostkey_lock import host_key_transaction
-from .ssh_legacy import session_legacy_ssh
 from .models import (
     ApprovedHostKey,
     CollectionFailure,
@@ -26,6 +25,7 @@ from .models import (
     HostKeyObservation,
     HostKeyTrustState,
 )
+from .ssh_legacy import session_legacy_ssh
 
 
 class HostKeyProbe(Protocol):
