@@ -96,9 +96,7 @@ def make_matrix_port(
         else "확인 불가"
     )
     watts = (
-        f"{snapshot.watts:g} W"
-        if snapshot is not None and snapshot.watts is not None
-        else "미수집"
+        f"{snapshot.watts:g} W" if snapshot is not None and snapshot.watts is not None else "미수집"
     )
     lldp = result.lldp if result else None
     if lldp and lldp.status is LLDPStatus.OK:
@@ -125,10 +123,7 @@ def make_matrix_port(
     elif lldp and lldp.status in (LLDPStatus.FAILED, LLDPStatus.CANCELLED):
         state = MatrixState.WARNING
         note = "LLDP 확인 실패. 이미 수집한 링크/PoE 정보는 유효합니다."
-    elif (
-        result.assessment is not None
-        and result.assessment.label == "확인 필요"
-    ):
+    elif result.assessment is not None and result.assessment.label == "확인 필요":
         state = MatrixState.WARNING
         note = result.assessment.reason
     elif "up" in link.casefold():
@@ -147,7 +142,6 @@ def make_matrix_port(
         watts=watts,
         ap=ap,
         note=note,
-        observed_at=(snapshot.observed_at if snapshot else "") or (
-            result.finished_at if result else ""
-        ),
+        observed_at=(snapshot.observed_at if snapshot else "")
+        or (result.finished_at if result else ""),
     )
