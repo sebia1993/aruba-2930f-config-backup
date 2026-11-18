@@ -225,20 +225,6 @@ def _production_session(
     return PortControlSSHSession(target, credentials, options, store)
 
 
-def _settings(snapshot: PortSnapshot) -> tuple[object, ...]:
-    # Physical link and delivered watts can legitimately change while a person
-    # reads the dialog. Only target identity and configured settings are bound.
-    return (
-        snapshot.target,
-        snapshot.interface,
-        snapshot.hostname,
-        snapshot.model,
-        snapshot.fingerprint,
-        snapshot.enabled,
-        snapshot.poe_enabled,
-    )
-
-
 def _hostname_matches_for_action(
     before: PortSnapshot, after: PortSnapshot, action: PortAction
 ) -> bool:
