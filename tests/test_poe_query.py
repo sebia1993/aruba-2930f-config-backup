@@ -46,7 +46,7 @@ class QueryConnection(FakeConnection):
             "show modules": ["show modules\nChassis: Aruba 2930F JL255A\nedge-lab#"],
             "show system information": [
                 "show system information\nStatus and Counters - General System Information\n"
-                "System Name : DIRECT-SW-2930F\nSystem Contact :\nedge-lab#"
+                "System Name : edge-lab\nSystem Contact :\nedge-lab#"
             ],
             "show interfaces brief": [
                 "show interfaces brief\nPort Type | Alert Enabled Status Mode\n"
@@ -197,6 +197,12 @@ def test_requested_pairs_use_one_session_and_fresh_status_per_port(tmp_path: Pat
 def test_system_name_has_priority_over_prompt_for_every_port(tmp_path: Path) -> None:
     endpoint = DeviceTarget("192.0.2.1")
     network = Network({endpoint: {"1": 3.0, "2": 8.0}})
+    network.responses[endpoint] = {
+        "show system information": [
+            "show system information\nStatus and Counters - General System Information\n"
+            "System Name : DIRECT-SW-2930F\nSystem Contact :\nedge-lab#"
+        ]
+    }
     rows = network.service(tmp_path).collect(
         [target(endpoint.ip, "1,2")], CREDENTIALS, approve_host_key=lambda _: True
     )

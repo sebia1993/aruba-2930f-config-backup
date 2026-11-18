@@ -43,7 +43,8 @@ from .port_control import (
     parse_poe_status,
 )
 from .port_control_ssh import PortControlSSHSession
-from .validation import ARUBA_2930F_MODELS, hostname_from_prompt, validate_device_identity
+from .hostname_discovery import discover_hostname
+from .validation import ARUBA_2930F_MODELS, validate_device_identity
 
 
 class QuerySession(PortSession, Protocol):
@@ -265,7 +266,10 @@ class PoEQueryService:
             identity = validate_device_identity(
                 version,
                 modules,
-                hostname=hostname_from_prompt(_bounded(cancel, session.get_prompt)),
+                hostname=discover_hostname(
+                    lambda command: _bounded(cancel, lambda: session.send_show(command)),
+                    lambda: _bounded(cancel, session.get_prompt),
+                ),
             )
             # AOS-S show interfaces brief reports all local interfaces.
             # Reading it once per switch prevents hundreds of duplicate SSH

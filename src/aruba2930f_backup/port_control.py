@@ -30,7 +30,8 @@ from .models import (
     HostKeyTrustState,
 )
 from .storage import default_output_directory
-from .validation import ARUBA_2930F_MODELS, hostname_from_prompt, validate_device_identity
+from .hostname_discovery import discover_hostname
+from .validation import ARUBA_2930F_MODELS, validate_device_identity
 
 _PORT_RE = re.compile(r"[1-9][0-9]*(?:/[1-9][0-9]*)?")
 
@@ -487,7 +488,7 @@ class PortControlService:
         identity = validate_device_identity(
             session.send_show("show version"),
             session.send_show("show modules"),
-            hostname=hostname_from_prompt(session.get_prompt()),
+            hostname=discover_hostname(session.send_show, session.get_prompt),
         )
         port = parse_interface_status(session.read_interfaces(), interface)
         poe = PortControlService._read_poe(session, interface, identity, port)

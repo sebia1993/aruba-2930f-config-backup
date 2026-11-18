@@ -227,6 +227,32 @@ def hostname_from_prompt(prompt: str) -> str | None:
     return value
 
 
+def hostname_from_system_information(output: str) -> str | None:
+    """Parse exactly one unambiguous AOS-S 'System Name' identity field.
+
+    Never infer the device name from contact/location, VSF member rows or
+    an SSH prompt. Empty, malformed and conflicting fields remain unknown.
+    """
+    clean = _ANSI_RE.sub("", output or "")
+    matches = re.findall(
+        r"(?im)^[ \t]*System[ \t]+Name[ \t]*:[ \t]*([^\r\n]*)",
+        clean,
+    )
+    names = [name.strip() for name in matches]
+    if (
+        not names
+        or any(
+            not name
+            or len(name) > _MAX_HOSTNAME_LENGTH
+            or any(not character.isprintable() for character in name)
+            for name in names
+        )
+        or len(set(names)) != 1
+    ):
+        return None
+    return names[0]
+
+
 def hostname_from_running_config(config_text: str) -> str | None:
     """Extract one unambiguous top-level ArubaOS-Switch hostname directive.
 
