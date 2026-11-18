@@ -89,7 +89,8 @@ def exercise(page, switch):
     page.locator("#portLiveTab").click()
     tile = page.locator(".matrix-tile")
     expect(tile).to_have_count(1)
-    expect(tile).to_have_attribute("data-state", "normal")
+    # The switch returns a power draw but no AP-535 negotiation details.
+    expect(tile).to_have_attribute("data-state", "warning")
     tile.click()
     expect(page.locator("#matrixDetails")).to_contain_text("8.1 W")
     page.locator("#portControlTab").click()

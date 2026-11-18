@@ -602,7 +602,7 @@ function renderPorts() {
 $('portSearch').oninput = $('switchFilter').onchange = $('portFilter').onchange = () => { portPage = 0; renderPorts(); };
 $('prevRows').onclick = () => { portPage--; renderPorts(); };
 $('nextRows').onclick = () => { portPage++; renderPorts(); };
-function receivePorts(result) {
+function receivePorts(result, openMonitor=false) {
   if (!Array.isArray(result.rows)) return;
   const previousSwitch = $('switchFilter').value;
   ui.rows = result.rows;
@@ -615,9 +615,11 @@ function receivePorts(result) {
   $('queryFiles').replaceChildren(filelinks(result.files));
   const file=(result.files || []).find(f=>f.name.toLowerCase().endsWith('.csv'));
   if (file) {
+    const replaceObservation=openMonitor || !historicalSource();
     ui.matrixFile=file.id;
     $('liveResultsBar').hidden=$('showMatrix').hidden=false;
-    if (!historicalSource() || ui.portView==='live') { ui.pendingMatrix=file.id; postMatrix(); }
+    if (replaceObservation) { ui.pendingMatrix=file.id; postMatrix(); }
+    if (openMonitor) setPortView('monitor');
   }
   renderPorts();
   const selected = ui.rows.find(row=>portKey(row) === ui.detail);
@@ -625,18 +627,12 @@ function receivePorts(result) {
 }
 form('queryForm', () => {
   clearPorts();
-  run('ports.query',{targets:$('queryTargets').value.trim()},result=>{
-    receivePorts(result);
-    if (ui.matrixFile) {
-      if (ui.portView!=='live' && historicalSource()) { ui.pendingMatrix=ui.matrixFile; postMatrix(); }
-      setPortView('monitor');
-    }
-  });
+  run('ports.query',{targets:$('queryTargets').value.trim()},result=>receivePorts(result,true));
 });
 function refreshTargets(bySwitch) {
   if (window.portTools?.refreshTargets) {
     const targets = window.portTools.refreshTargets(bySwitch);
-    if (targets) run('ports.refresh',{targets},receivePorts);
+    if (targets) run('ports.refresh',{targets},result=>receivePorts(result));
     return;
   }
   const detail = ui.rows.find(row=>portKey(row) === ui.detail);
@@ -657,7 +653,7 @@ function refreshTargets(bySwitch) {
     groups.get(key).push(row.interface);
   }
   const targets = [...groups].map(([key,ports])=>key + ' ' + ports.join(',')).join('\n');
-  run('ports.refresh',{targets},receivePorts);
+  run('ports.refresh',{targets},result=>receivePorts(result));
 }
 $('refreshPorts').onclick = () => refreshTargets(false);
 $('refreshSwitch').onclick = () => refreshTargets(true);
