@@ -17,6 +17,19 @@ from playwright.sync_api import expect, sync_playwright
 from verify_http_ssh import MonitorFixture
 
 
+def open_port_controls(page):
+    if not page.locator("#controlPanel").evaluate("panel => panel.open"):
+        page.locator("#controlHeading").click()
+
+
+def edit_query_targets(page):
+    targets = page.locator("#queryTargets")
+    if targets.is_hidden():
+        page.locator("#editQueryTargets").click()
+    expect(targets).to_be_editable()
+    return targets
+
+
 def enter_ssh_credentials(page, switch, *, touch=False):
     dialog = page.get_by_role("dialog", name="SSH 접속 계정", exact=True)
     expect(dialog).to_be_visible()
@@ -263,6 +276,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(matrix_frame.locator("#tbody")).to_contain_text("8.1 W")
     matrix_frame.locator("#tbody").get_by_role("button", name=re.compile("상세 보기")).click()
     expect(matrix_frame.locator("#detail")).to_contain_text("fixture-ap")
+    open_port_controls(page)
     page.locator("#refreshSwitch").click()
     expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
     expect(page.locator("#matrixViewer")).to_be_visible()
@@ -276,6 +290,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(matrix_frame.locator("#extraView")).to_be_visible()
     page.locator("#portMonitorTab").click()
     expect(page.locator("#matrixViewer")).to_be_visible()
+    open_port_controls(page)
     page.locator("#selectEligible").click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     with click_quick_poe(page, "poe_on", [(address, "1")]):

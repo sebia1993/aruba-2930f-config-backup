@@ -2,7 +2,7 @@
 
 from threading import Event
 
-from browser_qa import enter_ssh_credentials, run_browser_case
+from browser_qa import enter_ssh_credentials, open_port_controls, run_browser_case
 from playwright.sync_api import expect
 from verify_http_ssh import MonitorFixture, interface_status_table
 
@@ -11,6 +11,7 @@ class PowerMatrixSwitch(MonitorFixture):
     def __init__(self):
         super().__init__()
         self.draws = {"1": 0, "2": 9, "3": 8, "4": 8, "5": None}
+        self.ap_names = {"4": None}
         self.allow_lldp = Event()
         self.allow_lldp.set()
 
@@ -51,8 +52,8 @@ class PowerMatrixSwitch(MonitorFixture):
                 " PortId :eth0",
                 " System Descr :Aruba AP-535",
             ]
-            if port != "4":
-                lines.append(f" System Name :matrix-ap-{port}")
+            if name := self.ap_names.get(port, "matrix-ap-" + port):
+                lines.append(f" System Name :{name}")
         else:
             return super()._respond(channel, command)
         with self._lock:
@@ -71,6 +72,7 @@ def refresh_without_result(page, port, final_state, selected_tile):
     )
     try:
         selected_tile.click()
+        open_port_controls(page)
         page.locator("#refreshPorts").click()
         tile = page.locator(f'.matrix-tile[data-key$="|{port}"]')
         expect(tile).to_have_attribute("data-phase", "stale")
@@ -106,12 +108,27 @@ def exercise(page, url, switch, _second, _shots, _backup):
     ):
         expect(matrix.locator("#" + selector)).to_have_text(value)
     expect(matrix.locator("#mUnclassified")).to_contain_text("1개")
+    changes = page.get_by_role("button", name="변화만 보기", exact=True)
+    expect(changes).to_have_attribute("aria-pressed", "false")
+    changes.click()
+    expect(result_tiles).to_have_count(0)
+    expect(matrix.locator("#matrix .empty")).to_be_visible()
+    changes.click()
+    expect(result_tiles).to_have_count(5)
     matrix.locator("#status").select_option("limited")
     expect(result_tiles).to_have_count(2)
     matrix.locator("#status").select_option("all")
     page.locator("#portReviewTab").click()
     expect(matrix.locator("#extraView .dr-list button")).to_have_count(3)
+    issues = matrix.locator("#extraView .dr-list button")
+    issues.nth(1).click()
+    expect(matrix.locator("#matrix")).to_be_visible()
+    selected = matrix.locator('#matrix [aria-pressed="true"]')
+    expect(selected).to_have_count(1)
+    expect(selected).to_have_attribute("data-state", "limited")
+    inspected_key = selected.get_attribute("data-port-key")
     matrix.locator("#reviewObservedPort").click()
+    expect(matrix.locator(f'#tbody tr[data-port-key="{inspected_key}"] input')).to_be_checked()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     expect(matrix.locator("#extraView")).to_be_visible()
     expect(page.locator("#controlPanel")).to_be_visible()
@@ -130,8 +147,10 @@ def exercise(page, url, switch, _second, _shots, _backup):
     tiles = page.locator(".matrix-tile")
     current = page.locator('.matrix-tile[data-key$="|3"]')
     switch.draws["3"] = 0
+    switch.ap_names["3"] = "renamed-ap"
     switch.allow_lldp.clear()
     try:
+        open_port_controls(page)
         page.locator("#refreshPorts").click()
         expect(current).to_have_attribute("data-phase", "loading")
         expect(current).to_have_attribute("data-state", "unclassified")
@@ -151,12 +170,50 @@ def exercise(page, url, switch, _second, _shots, _backup):
     expect(page.locator("#matrixViewer")).to_be_visible()
     expect(page.locator("#matrixGroups")).to_be_hidden()
     expected[2] = "unpowered"
+    changes.click()
+    expect(result_tiles).to_have_count(1)
+    expect(result_tiles).to_have_attribute("data-changed", "true")
+    expect(result_tiles).to_have_attribute("data-port-key", f"127.0.0.1:{switch.port}/3")
+    result_tiles.click()
+    comparison = matrix.locator("#portComparison")
+    for value in ("8 W", "0 W", "matrix-ap-3", "renamed-ap"):
+        expect(comparison).to_contain_text(value)
+    changes.click()
     page.reload()
     expect(result_tiles).to_have_count(5)
     assert result_tiles.evaluate_all("tiles => tiles.map(tile => tile.dataset.state)") == expected
     expect(page.locator("#queryForm")).to_be_visible()
     expect(page.locator("#matrixGroups")).to_be_hidden()
     expect(page.locator("#matrixViewer")).to_be_visible()
+    changes.click()
+    expect(result_tiles).to_have_count(1)
+    expect(result_tiles).to_have_attribute("data-changed", "true")
+    result_tiles.click()
+    open_port_controls(page)
+    page.locator("#refreshPorts").click()
+    expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=60000)
+    expect(result_tiles).to_have_count(0, timeout=60000)
+    expect(matrix.locator("#matrix .empty")).to_be_visible()
+    changes.click()
+    # A different LLDP name is a change even when watts and the three-state
+    # classification stay identical on a measured zero-watt port.
+    matrix.locator('#matrix [data-port-key$="/1"]').click()
+    switch.ap_names["1"] = "replacement-ap"
+    open_port_controls(page)
+    page.locator("#refreshPorts").click()
+    expect(page.locator("#matrixViewer")).to_be_visible(timeout=60000)
+    expect(matrix.locator('#tbody tr[data-port-key$="/1"]')).to_contain_text(
+        "replacement-ap", timeout=60000
+    )
+    changes.click()
+    expect(result_tiles).to_have_count(1)
+    expect(result_tiles).to_have_attribute("data-port-key", f"127.0.0.1:{switch.port}/1")
+    result_tiles.click()
+    expect(comparison.locator('[data-comparison="ap"] dd')).to_have_text(
+        "matrix-ap-1 → replacement-ap"
+    )
+    expect(comparison.locator('[data-comparison="watts"] dd')).to_contain_text("0 W → 0 W")
+    changes.click()
     refresh_without_result(page, "2", "failed", matrix.locator('#matrix [data-port-key$="/2"]'))
     refresh_without_result(page, "4", "cancelled", page.locator('.matrix-tile[data-key$="|4"]'))
     page.locator('.matrix-tile[data-key$="|2"]').click()

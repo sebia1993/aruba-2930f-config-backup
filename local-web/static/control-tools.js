@@ -46,6 +46,7 @@
     const state = result.operation==='poe_off' ? 'OFF' : 'ON';
     const title = 'PoE ' + state + ' 즉시 실행';
     const skipped=result.skipped || [], blocked=result.blocked || [];
+    $('controlPanel').open=true;
     quickResult.hidden=false;
     quickResult.replaceChildren(elem('b',title + (cancelled ? ' 취소 결과' : ' 결과')),
       elem('p','선택 ' + result.selected + '개 · 사전 재조회 ' + result.rechecked + '개 · 이미 ' + state + ' ' + skipped.length + '개'));

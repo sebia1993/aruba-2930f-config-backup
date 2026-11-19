@@ -172,6 +172,43 @@ class JobTests(unittest.TestCase):
         self.assertEqual(job["result"]["groups"], self.jobs.workspace()["groups"])
         return self.jobs.workspace()["query"]
 
+    def test_port_comparison_uses_only_the_previous_sample_of_the_exact_endpoint(self):
+        first = self.initial_query()["rows"]
+        self.assertTrue(all("previousObservation" not in row for row in first))
+        service = self.jobs.operations.query_service
+
+        def query(action, target, watts):
+            def collect(*args, **kwargs):
+                return [
+                    replace(read, snapshot=replace(read.snapshot, watts=watts))
+                    for read in self.collect_ports(*args, **kwargs)
+                ]
+
+            with patch.object(service, "collect", collect):
+                result = self.finished(self.jobs.submit(action, {"targets": target}))
+            self.assertEqual(result["state"], "done")
+            rows = result["result"]["rows"]
+            restored = self.jobs.workspace()["query"]["rows"]
+            self.assertEqual(
+                [row.get("previousObservation") for row in rows],
+                [row.get("previousObservation") for row in restored],
+            )
+            self.assertNotIn("_sampledPorts", result["result"])
+            return rows
+
+        one, two, three = query("ports.refresh", "192.0.2.5:2222 2", 0)
+        self.assertNotIn("previousObservation", one)
+        self.assertEqual((two["previousObservation"]["watts"], two["watts"]), (2, 0))
+        self.assertNotIn("previousObservation", three)
+        unrefreshed = query("ports.refresh", "192.0.2.5:2222 1", 5)[1]
+        self.assertEqual(unrefreshed["previousObservation"], two["previousObservation"])
+        again = query("ports.query", "192.0.2.5:2222 1", 3)[0]["previousObservation"]
+        self.assertEqual(again["watts"], 5)
+        self.assertNotIn("previousObservation", again)
+        self.assertNotIn("eligible_operations", again)
+        changed_endpoint = query("ports.query", "192.0.2.5:2223 1", 1)[0]
+        self.assertNotIn("previousObservation", changed_endpoint)
+
     def test_rejected_query_draft_preserves_live_workspace_until_new_targets_are_accepted(self):
         self.initial_query()
         saved = self.jobs.workspace()
@@ -260,6 +297,7 @@ class JobTests(unittest.TestCase):
         restored = self.jobs.workspace()["query"]
         self.assertEqual([r["watts"] for r in restored["rows"]], [1.0, 0, 3.0])
         self.assertNotIn("files", restored)
+        self.assertEqual(restored["rows"][1]["previousObservation"]["watts"], 2)
         service.apply.assert_called_once()
 
     def test_partial_return_updates_live_matrix_and_only_missing_port_loses_authority(self):

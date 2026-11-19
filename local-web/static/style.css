@@ -76,7 +76,20 @@ input[type=number] { max-width: 100px; }
 .filelinks a { text-decoration: none; overflow-wrap: anywhere; }
 .filelinks { gap: 6px; }
 .status { margin: 12px clamp(14px,2vw,30px); padding: 9px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; font-size: 12px; }
-.status span { flex: 1; }
+.status-body { flex: 1 1 0; min-width: 0; }
+.status-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+#jobPercent { flex: none; color: var(--teal); font-weight: 700; font-variant-numeric: tabular-nums; }
+#jobProgress { display: block; width: 100%; height: 6px; margin: 4px 0 2px; appearance: none; border: 0; border-radius: 4px; overflow: hidden; background: var(--stroke); color: var(--teal); }
+#jobProgress[hidden] { display: none; }
+#jobProgress { --progress-track: linear-gradient(to right,color-mix(in srgb,var(--teal) 33%,var(--stroke)) var(--power-read,0%),var(--stroke) var(--power-read,0%)); background: var(--progress-track); }
+#jobProgress::-webkit-progress-bar { background: var(--progress-track); }
+#jobProgress::-webkit-progress-value { background: var(--teal); }
+#jobProgress::-moz-progress-bar { background: var(--teal); }
+#jobProgress:indeterminate { background: repeating-linear-gradient(110deg,var(--stroke) 0 10px,var(--teal) 10px 15px,var(--stroke) 15px 20px); background-size: 42px 100%; animation: job-wait 1.4s linear infinite; }
+#jobProgress:indeterminate::-webkit-progress-bar { background: transparent; }
+#jobProgress:indeterminate::-moz-progress-bar { background: transparent; }
+@keyframes job-wait { to { background-position: 42px 0; } }
+@media (prefers-reduced-motion: reduce) { #jobProgress:indeterminate { animation: none; } }
 .status[data-level=error] { border-color: var(--bad); color: var(--bad); }
 .live-source { margin: 10px clamp(14px,2vw,30px) 0; padding: 8px 13px; background: var(--surface); border: 1px solid var(--stroke); border-radius: 8px; }
 summary { cursor: pointer; font-size: 13px; font-weight: 650; }
@@ -112,7 +125,7 @@ dialog::backdrop { background: #030c17bc; }
 @media(max-width: 650px), (max-width: 950px) and (max-height: 500px) {
   .shell { display: block; } .sidebar { position: static; height: auto; overflow: visible; border: 0; }
   .brand,.navgroup,.crumb-path { display: none; }
-  nav { display: grid; grid-template-columns: 1.2fr repeat(4, minmax(0,1fr)); gap: 2px; padding: 3px 4px; border-bottom: 1px solid var(--stroke); }
+  nav { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 2px; padding: 3px 4px; border-bottom: 1px solid var(--stroke); }
   nav a { min-width: 0; min-height: 44px; flex-direction: column; justify-content: center; gap: 2px; padding: 2px 0; border-radius: 6px; font-size: 11px; line-height: 1.35; text-align: center; white-space: normal; word-break: keep-all; overflow-wrap: anywhere; }
   nav a span { font-size: 16px; }
   nav a[aria-current=page] { color: var(--teal); box-shadow: inset 0 -2px var(--teal); }
@@ -154,13 +167,12 @@ dialog::backdrop { background: #030c17bc; }
 @media(min-width: 651px) and (max-width: 950px) and (max-height: 500px) {
   .shell { position: relative; }
   .sidebar { position: absolute; top: 0; left: 0; z-index: 2; width: calc(100% - 225px); }
-  nav { grid-template-columns: repeat(5,minmax(0,1fr)); padding-block: 4px; }
+  nav { grid-template-columns: repeat(4,minmax(0,1fr)); padding-block: 4px; }
   .topbar { justify-content: end; min-height: 53px; }
   .topbar .crumb { display: none; }
   #logViewer { height: calc(100dvh - 103px); }
 }
 
-.home-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px }
 .key-list { display:grid;gap:6px;max-height: min(45vh,440px);overflow:auto;margin:10px 0 }
 .key-list label { display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px;background:var(--field) }
 .key-list input { width:auto }

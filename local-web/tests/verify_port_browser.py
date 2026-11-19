@@ -9,6 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from browser_qa import open_port_controls
 from playwright.sync_api import expect, sync_playwright
 from verify_http_ssh import MonitorFixture
 
@@ -189,6 +190,7 @@ def exercise(page, switch):
     expect(matrix_view.locator("#extraView .dr-list button")).to_have_count(0)
     page.locator("#portMonitorTab").click()
     tile.click()
+    open_port_controls(page)
     page.locator("#refreshPorts").click()
     expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=45000)
     assert not issues, issues

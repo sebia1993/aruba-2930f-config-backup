@@ -61,6 +61,38 @@ def now():
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def _observation_for_comparison(row):
+    # Only switch readings used by the matrix. No control permissions or older history.
+    fields = (
+        "ip",
+        "ssh_port",
+        "interface",
+        "status",
+        "complete",
+        "error_code",
+        "observed_at",
+        "finished_at",
+        "watts",
+        "poe_enabled",
+        "poe_status",
+        "assessment_status",
+        "assessment_reason",
+        "requested_watts",
+        "allocated_watts",
+        "lldp_status",
+        "lldp_error_code",
+        "lldp_observed_at",
+        "lldp_neighbors",
+        "link_status",
+        "link_observed_at",
+    )
+    snapshot = {key: row[key] for key in fields if key in row}
+    evidence = row.get("power_evidence")
+    if evidence:
+        snapshot["power_evidence"] = {"issues": evidence.get("issues", [])}
+    return snapshot
+
+
 class Busy(Exception):
     pass
 
@@ -199,6 +231,29 @@ class Jobs:
             ]
             return {"groups": groups, "query": {"rows": rows}}
 
+    def _store_port_view(self, result):
+        sampled = set(result.pop("_sampledPorts", ()))
+        if self.port_view:
+            prior = {
+                (row["ip"], row["ssh_port"], row["interface"]): row
+                for row in self.port_view["rows"]
+            }
+            for row in result["rows"]:
+                key = row["ip"], row["ssh_port"], row["interface"]
+                old = prior.get(key)
+                if old is None:
+                    continue
+                if key in sampled:
+                    if (
+                        old.get("complete")
+                        and old["status"] == "ok"
+                        and not old.get("refreshInvalidated")
+                    ):
+                        row["previousObservation"] = _observation_for_comparison(old)
+                elif "previousObservation" in old:
+                    row["previousObservation"] = old["previousObservation"]
+        self.port_view = {"rows": result["rows"]}
+
     def _output(self, relative):
         if not isinstance(relative, str) or Path(relative).is_absolute():
             raise ValueError("결과 파일 경로를 확인하세요.")
@@ -321,7 +376,7 @@ class Jobs:
             with self.lock:
                 if action == "ports.query":
                     if result and "rows" in result:
-                        self.port_view = result
+                        self._store_port_view(result)
                     elif self.operations.query_started:
                         self.port_view = None
                 elif action in {
@@ -331,7 +386,7 @@ class Jobs:
                     "control.apply",
                 }:
                     if result and "rows" in result:
-                        self.port_view = result
+                        self._store_port_view(result)
                     elif state != "done":
                         invalid = self.operations.invalidate_failed_refresh(cancel.is_set())
                         if invalid:

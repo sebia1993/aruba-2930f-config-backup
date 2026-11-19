@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from browser_power_matrix import PowerMatrixSwitch
-from browser_qa import enter_ssh_credentials, run_browser_case
+from browser_qa import enter_ssh_credentials, open_port_controls, run_browser_case
 from playwright.sync_api import expect
 from verify_http_ssh import interface_status_table
 
@@ -44,6 +44,7 @@ def assert_live_readings(page, switch, expected, *, poe_failed=None):
     matrix_view = page.frame_locator("#matrixViewer")
     endpoint = f"127.0.0.1:{switch.port}"
     page.locator("#portMonitorTab").click()
+    open_port_controls(page)
     page.locator("#operation").select_option("poe_off")
     page.locator("#selectEligible").click()
     for port, link in expected.items():

@@ -57,11 +57,11 @@ def check_fingerprint(host, port, fingerprint):
 def check_phone_navigation(peer):
     nav = peer.get_by_role("navigation", name="주 메뉴")
     links = nav.get_by_role("link")
-    expect(links).to_have_count(5)
+    expect(links).to_have_count(4)
     # A locator tap alone would silently scroll horizontally to a clipped menu item.
     for width, height, route in (
         (320, 568, "backup"),
-        (360, 800, "home"),
+        (360, 800, "logs"),
         (844, 390, "history"),
         (390, 844, "ports"),
     ):
@@ -96,6 +96,14 @@ def check_phone_port_control(peer, switch, shots):
     tile = matrix.locator("#matrix [data-port-key]")
     expect(tile).to_have_count(1, timeout=90000)
     expect(matrix.locator("#sourceName")).to_have_text("실시간 조회 결과")
+    expect(peer.locator("#queryTargets")).to_be_hidden()
+    expect(peer.locator("#editQueryTargets")).to_be_visible()
+    expect(peer.locator("#controlPanel")).not_to_have_attribute("open", "")
+    changes = peer.get_by_role("button", name="변화만 보기", exact=True)
+    peer.touchscreen.tap(*hit_point(changes))
+    expect(tile).to_have_count(0)
+    peer.touchscreen.tap(*hit_point(changes))
+    expect(tile).to_have_count(1)
     rect = tile.bounding_box()
     assert rect["width"] >= 44 and rect["height"] >= 44, rect
     peer.touchscreen.tap(*hit_point(tile))
@@ -113,6 +121,11 @@ def check_phone_port_control(peer, switch, shots):
         expect_power_result(peer, address, "8.1 W", "0 W", delta="\N{MINUS SIGN}8.1 W")
     assert switch.commands.count("no interface 1 power-over-ethernet") == 1
     expect(matrix.locator("#tbody tr[data-port-key]")).to_contain_text("0 W")
+    changes.tap()
+    expect(tile).to_have_attribute("data-changed", "true")
+    tile.tap()
+    expect(matrix.locator("#portComparison")).to_contain_text("8.1 W")
+    expect(matrix.locator("#portComparison")).to_contain_text("0 W")
     # Keep the observed result and selected route when rotating the phone.
     resize_workspace(peer, 844, 390)
     expect(peer.locator("nav a[aria-current=page]")).to_have_attribute("href", "#ports")

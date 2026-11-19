@@ -3,7 +3,14 @@
 from threading import Event
 from unittest.mock import patch
 
-from browser_qa import click_quick_poe, enter_ssh_credentials, expect_power_result, run_browser_case
+from browser_qa import (
+    click_quick_poe,
+    edit_query_targets,
+    enter_ssh_credentials,
+    expect_power_result,
+    open_port_controls,
+    run_browser_case,
+)
 from playwright.sync_api import expect
 from verify_http_ssh import MonitorFixture, interface_status_table
 
@@ -135,6 +142,7 @@ def exercise_port_off(page, switch, address):
     table = page.frame_locator("#matrixViewer").locator("#tbody")
     first = table.locator(f'tr[data-port-key="{address}/1"] input')
     second = table.locator(f'tr[data-port-key="{address}/2"] input')
+    open_port_controls(page)
     page.locator("#operation").select_option("disable")
     page.locator("#selectEligible").click()
     expect(first).to_be_checked()
@@ -156,6 +164,7 @@ def exercise_port_off(page, switch, address):
     switch.linked.clear()
     page.locator("#queryPorts").click()
     expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
+    open_port_controls(page)
     page.locator("#clearSelection").click()
     first.check()
     expect(second).not_to_be_checked()
@@ -178,6 +187,7 @@ def run_range(page, url, switch, second, shots, output):
     page.locator("#targetVerify").click()
     page.locator("#acceptTargets").click()
     page.locator("#targetOptions > summary").click()
+    open_port_controls(page)
     page.get_by_role("button", name="범위 전체 선택", exact=True).click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     page.get_by_role("button", name="PoE OFF 즉시 실행").click()
@@ -205,10 +215,11 @@ def run_range(page, url, switch, second, shots, output):
             switch.replacement_key = second.host_key
             switch.prompt = "Aruba 2930F Edge#"
         start = len(switch.commands)
-        page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1-2")
+        edit_query_targets(page).fill(f"127.0.0.1:{switch.port} 1-2")
         page.locator("#queryForm .primary").click()
         expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
         expect(page.locator("#matrixViewer")).to_be_visible()
+        open_port_controls(page)
         page.locator("#selectionScope").select_option("all")
         page.get_by_role("button", name="범위 전체 선택", exact=True).click()
         expect(page.locator("#selectedCount")).to_have_text("선택 2개")

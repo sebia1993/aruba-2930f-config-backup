@@ -3,7 +3,14 @@
 from threading import Event
 from unittest.mock import patch
 
-from browser_qa import click_quick_poe, enter_ssh_credentials, expect_power_result, run_browser_case
+from browser_qa import (
+    click_quick_poe,
+    edit_query_targets,
+    enter_ssh_credentials,
+    expect_power_result,
+    open_port_controls,
+    run_browser_case,
+)
 from playwright.sync_api import expect
 
 WORKSPACE_SIZES = ((1366, 768), (1280, 720), (390, 844))
@@ -46,20 +53,23 @@ def verify_viewport_controls(page, view, endpoint):
     tiles = view.locator("#matrix [data-port-key]")
     for width, height in WORKSPACE_SIZES:
         resize_workspace(page, width, height)
-        hit_point(page.locator("#queryPorts"))
-        hit_point(tiles.first)
+        expect(panel).not_to_have_attribute("open", "")
+        expect(page.locator("#queryTargets")).to_be_hidden()
+        for locator in (
+            page.locator("#queryPorts"),
+            page.locator("#editQueryTargets"),
+            *tiles.all(),
+        ):
+            hit_point(locator)
+        filter_toggle = view.locator("#shortFilterToggle")
+        if search.is_hidden():
+            page.mouse.click(*hit_point(filter_toggle))
         page.mouse.click(*hit_point(search))
         page.keyboard.insert_text(endpoint)
         expect(tiles).to_have_count(1)
         checkbox = view.locator("#tbody input[data-control-key]")
-        if width > 390:
-            page.mouse.click(*hit_point(checkbox))
-            expect(checkbox).to_be_checked()
-            page.mouse.click(*hit_point(checkbox))
-            expect(checkbox).not_to_be_checked()
-        if width == 390:
-            expect(panel).not_to_have_attribute("open", "")
-            page.mouse.click(*hit_point(heading))
+        # The matrix takes precedence over the table in the initial viewport.
+        page.mouse.click(*hit_point(heading))
         expect(panel).to_have_attribute("open", "")
         page.mouse.click(*hit_point(page.locator("#selectVisible")))
         expect(page.locator("#selectedCount")).to_have_text("선택 1개")
@@ -68,14 +78,15 @@ def verify_viewport_controls(page, view, endpoint):
             hit_point(page.locator(selector))
         page.mouse.click(*hit_point(page.locator("#clearSelection")))
         expect(page.locator("#selectedCount")).to_have_text("선택 0개")
-        if width == 390:
-            page.keyboard.press("Escape")
-            expect(heading).to_be_focused()
-            expect(panel).not_to_have_attribute("open", "")
+        page.keyboard.press("Escape")
+        expect(heading).to_be_focused()
+        expect(panel).not_to_have_attribute("open", "")
         page.mouse.click(*hit_point(search))
         page.keyboard.press("ControlOrMeta+a")
         page.keyboard.press("Backspace")
         expect(tiles).to_have_count(2)
+        if filter_toggle.is_visible():
+            filter_toggle.click()
         assert page.evaluate("scrollY === 0 && document.documentElement.scrollWidth <= innerWidth")
     page.set_viewport_size({"width": 1440, "height": 960})
 
@@ -127,6 +138,17 @@ def select_measured_port(page, matrix_view, changed, available, untouched_switch
     expect_power_result(page, changed, "0 W", "9.7 W", delta="+9.7 W")
     expect(matrix_view.locator(f'#tbody tr[data-port-key="{changed}/1"]')).to_contain_text("9.7 W")
     assert len(untouched_switch.commands) == untouched_commands
+    # Two devices share an IP, hostname, interface and AP name. Only the
+    # target whose readback changed from measured zero to 9.7 W belongs here.
+    changes = page.get_by_role("button", name="변화만 보기", exact=True)
+    changes.click()
+    changed_tiles = matrix_view.locator("#matrix [data-port-key]")
+    expect(changed_tiles).to_have_count(1)
+    expect(changed_tiles).to_have_attribute("data-port-key", changed + "/1")
+    changed_tiles.click()
+    expect(matrix_view.locator("#portComparison")).to_contain_text("0 W")
+    expect(matrix_view.locator("#portComparison")).to_contain_text("9.7 W")
+    changes.click()
     expect(changed_row).to_be_enabled()
     expect(other_row).to_be_enabled()
 
@@ -161,7 +183,7 @@ def leave_failed_port_inspection_for_batch(page, matrix_view, failed, available)
 
 
 def verify_rejected_draft_and_failed_read(page, view, addresses, first, second):
-    targets = page.locator("#queryTargets")
+    targets = edit_query_targets(page)
     submit = page.locator("#queryPorts")
     rows = view.locator("#tbody tr[data-port-key]")
     origin = rows.get_by_role("checkbox")
@@ -183,6 +205,7 @@ def verify_rejected_draft_and_failed_read(page, view, addresses, first, second):
     expect(rows).to_have_count(1)
     expect(rows.get_by_role("checkbox")).to_be_disabled()
     expect(page.locator("#selectedCount")).to_have_text("선택 0개")
+    open_port_controls(page)
     page.locator("#quickOn").click()
     expect(page.locator("#statusText")).to_contain_text("포트를 체크하세요")
     assert len(first.commands) == baseline[0]
@@ -250,7 +273,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(tiles).to_have_count(2, timeout=90000)
     verify_viewport_controls(page, matrix_view, addresses[0])
     expect(combined).to_have_attribute("aria-pressed", "true")
-    expect(page.locator("#batchControls")).to_be_visible()
+    expect(page.locator("#batchControls")).to_be_hidden()
     checkboxes = matrix_view.locator("#tbody input[data-control-key]")
     expect(checkboxes).to_have_count(2)
     expect(matrix_view.locator("#tbody")).to_be_visible()
@@ -269,11 +292,12 @@ def exercise(page, url, switch, second, shots, _backup):
     # The device selector distinguishes two switches with the same IP and hostname.
     matrix_view.locator("#device").select_option(addresses[1])
     expect(checkboxes).to_have_count(1)
+    open_port_controls(page)
     page.locator("#selectionScope").select_option("switch")
     page.locator("#selectEligible").click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     expect(checkboxes).to_be_checked()
-    draft = page.locator("#queryTargets")
+    draft = edit_query_targets(page)
     saved_targets = draft.input_value()
     baseline = [len(fixture.commands) for fixture in (switch, second)]
     draft.fill(addresses[0] + " 2")
@@ -390,7 +414,7 @@ def exercise(page, url, switch, second, shots, _backup):
     leave_failed_port_inspection_for_batch(page, matrix_view, addresses[0], addresses[1])
 
     page.set_viewport_size({"width": 390, "height": 844})
-    expect(page.locator("#queryTargets")).to_be_editable()
+    expect(page.locator("#editQueryTargets")).to_be_visible()
     expect(page.locator("#queryPorts")).to_be_enabled()
     expect(page.locator("#matrixViewer")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -405,6 +429,7 @@ def exercise(page, url, switch, second, shots, _backup):
     key = addresses[0] + "/1"
     matrix_view.locator(f'#matrix [data-port-key="{key}"]').click()
     untouched_commands = len(second.commands)
+    open_port_controls(page)
     with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")) as req:
         page.locator("#refreshPorts").click()
     assert req.value.post_data_json["body"]["targets"] == addresses[0] + " 1"
@@ -442,7 +467,7 @@ def exercise(page, url, switch, second, shots, _backup):
     # Submitting the edited targets replaces the inventory, preserving the other switch.
     untouched = len(second.commands)
     start = len(switch.commands)
-    draft.fill(addresses[0] + " 1")
+    edit_query_targets(page).fill(addresses[0] + " 1")
     expect(tiles).to_have_count(2)
     expect(
         matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')

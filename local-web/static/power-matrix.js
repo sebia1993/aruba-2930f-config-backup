@@ -84,9 +84,9 @@
     if (row.complete !== true || token(row.lldp_status) === 'pending') {
       return result('unclassified', '이 포트의 조회가 완료되지 않았습니다.');
     }
+    apName = accessPointName(row);
     watts = measurement(row.watts);
     if (watts === null) return result('unclassified', '유효한 실측 전력값이 없습니다.');
-    apName = accessPointName(row);
     if (watts === 0) return result('unpowered', '스위치에서 실측 전력 0 W를 보고했습니다.');
     const problem = supplyProblem(row);
     if (problem) return result('limited', problem);
