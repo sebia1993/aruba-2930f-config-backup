@@ -210,7 +210,7 @@ def exercise(page, url, switch, other, shots, _backup):
         page.locator("#cableConfirm").click()
         assert switch.confirmed.wait(20), "Switch did not receive the approved test"
         page.reload()
-        expect(page.locator("#statusText")).to_contain_text("진행 중인 작업")
+        expect(page.locator("#statusText")).to_contain_text(endpoint)
     finally:
         switch.release_result.set()
     expect(workspace.locator("#cableResultTitle")).to_contain_text("재연결한 작업", timeout=60000)
