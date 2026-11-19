@@ -15,10 +15,10 @@ def first_use_keys(page, url, first, second, shots, output):
     browser_qa.enter_ssh_credentials(page, first)
     expect(page.locator("#backupResult")).to_contain_text("성공", timeout=90000)
     assert first.auth_attempts and second.auth_attempts
-    page.locator('nav a[href="#home"]').click()
-    expect(page.locator("#homeBackup")).to_contain_text("구성 백업")
-
-    page.locator('nav a[href="#ports"]').click()
+    expect(page.locator('nav a[href="#home"],[data-page="home"]')).to_have_count(0)
+    page.evaluate("location.hash = 'home'")
+    page.wait_for_url("**/#ports")
+    expect(page.locator('nav a[href="#ports"]')).to_have_attribute("aria-current", "page")
     page.locator("#queryTargets").fill(other + " 1")
     page.locator("#queryForm button.primary").click()
     observed = page.frame_locator("#matrixViewer").locator("#tbody")

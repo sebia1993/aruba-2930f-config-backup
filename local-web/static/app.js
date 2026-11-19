@@ -28,11 +28,33 @@ function button(text, fn, className) {
   node.addEventListener('click', fn);
   return node;
 }
-function notify(message, error = false) {
+function notify(message, error = false, inMatrix = false) {
+  $('statusBar').classList.toggle('query-complete',inMatrix);
   $('statusBar').hidden = !message;
   $('statusBar').dataset.level = error ? 'error' : '';
-  $('statusText').textContent = message;
+  if ($('statusText').textContent!==message) $('statusText').textContent = message;
   $('dismissStatus').hidden = ui.busy;
+}
+function setJobProgress(progress) {
+  const meter=$('jobProgress'), percent=$('jobPercent');
+  meter.hidden=progress===null;
+  const total=progress?.total, completed=progress?.completed;
+  const counted=Number.isSafeInteger(total) && total>0 &&
+    Number.isSafeInteger(completed) && completed>=0 && completed<=total;
+  percent.hidden=!counted;
+  const received=progress?.powerRead;
+  const hasReadings=counted && Number.isSafeInteger(received) && received>=0 && received<=total;
+  meter.style.setProperty('--power-read',hasReadings ? received*100/total+'%' : '0%');
+  if (counted) {
+    meter.max=total;
+    meter.value=completed;
+    meter.setAttribute('aria-valuetext',completed+' / '+total);
+    percent.textContent=Math.floor(completed*100/total)+'%';
+  } else {
+    meter.removeAttribute('value');
+    meter.removeAttribute('aria-valuetext');
+    percent.textContent='';
+  }
 }
 function sync() {
   const active = ui.session.active;
@@ -86,10 +108,14 @@ async function poll(id) {
     window.backupTools?.onProgress?.(job.action,job.progress || {});
     window.controlTools?.onProgress?.(job.action,job.progress || {});
     if (Number.isInteger(job.progress?.cursor)) cursor = job.progress.cursor;
-    if (!$('homePorts').closest('section').hidden) displayHomeProgress(job.action,job.progress || {});
     if (job.progress?.message && !$('stopJob').disabled) {
+      setJobProgress(job.progress);
       const {message,completed,total} = job.progress;
-      notify((jobNames[job.action] || '작업') + ' · ' + message + (Number(total) > 0 ? ' (' + completed + ' / ' + total + ')' : ''));
+      const counts=Number.isSafeInteger(job.progress.powerRead)
+        ? ' · PoE 수집 '+job.progress.powerRead+'/'+total+' · 포트 완료 '+completed+' / '+total
+        : total>0 ? ' ('+completed+' / '+total+')' : '';
+      const prefix=job.action==='ports.query' ? '' : (jobNames[job.action] || '작업')+' · ';
+      notify(prefix+message+counts);
     }
     await delay(450);
   }
@@ -100,6 +126,7 @@ async function run(action, body, receive) {
   $('stopJob').disabled = false;
   sync();
   const quick = action === 'control.quick-execute' ? body : null;
+  setJobProgress({});
   notify(quick ? operationNames[quick.operation] + ' 즉시 실행 · 선택 ' + quick.targets.length + '개' : jobNames[action] + ' 진행 중…');
   try {
     window.portTools?.onJob?.(action,'running',body);
@@ -124,7 +151,9 @@ async function run(action, body, receive) {
       notify(jobNames[action] + (cancelled ? ' 취소됨' : ' 완료') + ' · 전력 자동 재조회 ' + measured + '개 측정' +
         (missing ? ' · ' + missing + '개 미측정' : '') + singlePowerChange(result),missing>0);
     } else {
-      notify(jobNames[action] + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'));
+      const shownInMatrix=!cancelled && ['ports.query','ports.refresh'].includes(action) &&
+        result.rows?.length>0 && result.rows.every(row=>row.status==='ok');
+      notify(jobNames[action] + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'),false,shownInMatrix);
     }
   } catch (error) {
     if (action==='ports.query') await window.portTools.recoverQuery();
@@ -134,12 +163,12 @@ async function run(action, body, receive) {
       notify(error.message + ' 선택한 포트의 현재 상태를 다시 조회하세요.',true);
     } else notify(error.message, true);
   } finally {
+    setJobProgress(null);
     ui.jobId = null;
     ui.busy = false;
     sync();
     window.portTools?.onJob?.(action,'idle');
     if (!document.querySelector('[data-page=history]').hidden) loadHistory();
-    if (!$('homePorts').closest('section').hidden) loadHome();
   }
 }
 $('stopJob').onclick = async () => {
@@ -147,7 +176,10 @@ $('stopJob').onclick = async () => {
   $('stopJob').disabled = true;
   try {
     await api('/api/jobs/' + encodeURIComponent(ui.jobId) + '/cancel', {});
-    if (ui.busy) notify('취소를 요청했습니다. 스위치에서 진행 중인 단계가 끝날 때까지 기다려 주세요.');
+    if (ui.busy) {
+      setJobProgress({});
+      notify('취소를 요청했습니다. 스위치에서 진행 중인 단계가 끝날 때까지 기다려 주세요.');
+    }
   } catch (e) { if (ui.busy) { notify(e.message, true); $('stopJob').disabled = false; } }
 };
 $('dismissStatus').onclick = () => notify('');
@@ -218,10 +250,11 @@ function updatePortActions() {
   $('portMonitor').classList.toggle('has-data',!!source?.hasData);
   for (const [name,id] of Object.entries(monitorTabs)) $(id).setAttribute('aria-pressed',String(view===name));
   $('portReviewTab').disabled=!source?.hasData || inventory;
+  $('portChanges').disabled=$('portReviewTab').disabled || view!=='overview';
+  $('portChanges').setAttribute('aria-pressed',String(!!source?.changesOnly));
   $('controlMode').disabled=inspected;
   $('singleIP').readOnly=$('singlePort').readOnly=inspected;
   window.portTools?.showInventory(inventory);
-  $('liveScope').hidden=!(inventory || (source?.liveId===ui.liveId && !!ui.liveId && view==='overview' && !inspected));
   updateControlTarget();
 }
 for (const [view,id] of Object.entries(monitorTabs)) {
@@ -230,16 +263,26 @@ for (const [view,id] of Object.entries(monitorTabs)) {
     updatePortActions();
   };
 }
-const compactControls=matchMedia('(max-width: 1039px)');
-function revealControlsOnDesktop(available=true) {
-  if (!available) $('controlPanel').open=false;
-  else if (!compactControls.matches) $('controlPanel').open=true;
+$('portChanges').onclick=()=>{
+  const viewer=monitor();
+  if (!viewer || $('portChanges').disabled) return;
+  viewer.setChangesOnly(!viewer.source().changesOnly);
+  updatePortActions();
+};
+function setQueryExpanded(expanded) {
+  $('queryFields').hidden=!expanded;
+  const edit=$('editQueryTargets');
+  edit.setAttribute('aria-expanded',String(expanded));
+  edit.textContent=expanded?'조회 대상 접기':'조회 대상 변경';
 }
-compactControls.addEventListener('change',()=>{
-  $('controlPanel').open=!compactControls.matches && !!(ui.rows.length || window.portTools?.hasInventory() || currentInspection());
-});
-$('controlPanel').addEventListener('keydown',event=>{
-  if (event.key==='Escape' && compactControls.matches && $('controlPanel').open) {
+$('editQueryTargets').onclick=()=>{
+  const open=$('queryFields').hidden || !$('queryTargets').value.trim();
+  setQueryExpanded(open);
+  if (open) $('queryTargets').focus();
+};
+$('controlPanel').addEventListener('toggle',updateControlTarget);
+$('portLiveControl').addEventListener('keydown',event=>{
+  if (event.key==='Escape' && $('controlPanel').open) {
     event.preventDefault();
     $('controlPanel').open=false;
     $('controlHeading').focus({preventScroll:true});
@@ -289,7 +332,6 @@ function selectObservedBatch(openControls) {
   if (keys.some(key=>!available.has(key))) { syncMonitorChecks(); return; }
   clearInspection();
   ui.selected=new Set(keys);
-  if (keys.length) revealControlsOnDesktop();
   $('controlMode').value='batch'; $('controlMode').onchange();
   renderPorts();
   if (openControls && keys.length) focusControls();
@@ -356,6 +398,7 @@ mobileServerInfo.addEventListener('keydown', event => {
   }
 });
 function route() {
+  if (location.hash==='#home') history.replaceState(history.state,'','#ports');
   const key = location.hash.slice(1);
   const admin = key === 'connect';
   const links = all('nav a');
@@ -369,7 +412,6 @@ function route() {
   $('crumb').textContent = admin ? $('connectionHeading').textContent : link.lastChild.textContent;
   if (name === 'ports' && !$('matrixViewer').hasAttribute('src')) $('matrixViewer').src = $('matrixViewer').dataset.src;
   if (name === 'history' && ui.token) loadHistory();
-  if (name === 'home' && ui.token) loadHome();
   if (dialog.open) dialog.close();
   if (queryCredentials.open) queryCredentials.close();
 }
@@ -439,25 +481,6 @@ function keyChecklist(checks) {
     list.append(label);
   }
   return {list, checked:()=>Array.from(selected,c=>({endpoint:c.endpoint,fingerprint:c.fingerprint}))};
-}
-function homeSlot(action) {
-  if (action === 'backup.run') return $('homeBackup');
-  if (['ports.query','ports.refresh','control.apply','control.quick-execute'].includes(action)) return $('homePorts');
-  return null;
-}
-function displayHomeProgress(action,progress) {
-  const slot = homeSlot(action);
-  if (slot) slot.textContent = (jobNames[action] || action) + ' · ' + (progress.message || '진행 중') +
-    (progress.total ? ' (' + progress.completed + ' / ' + progress.total + ')' : '');
-}
-async function loadHome() {
-  try {
-    const data = await api('/api/history');
-    for (const slot of [$('homeBackup'),$('homePorts')]) {
-      const latest = data.items.find(item=>homeSlot(item.action) === slot);
-      slot.textContent = latest ? [jobNames[latest.action],latest.summary || states[latest.state],dateText(latest.finished || latest.started)].join(' · ') : '실행 이력이 없습니다.';
-    }
-  } catch (err) { notify(err.message,true); }
 }
 async function applySshAccount(username, password, enableSecret) {
   const user = username.value.trim();
@@ -613,16 +636,21 @@ const endpoint = row => Number(row.ssh_port || 22) === 22 ? row.ip : row.ip + ':
 const portKey = row => endpoint(row) + '|' + row.interface;
 const targetFromRow = row => ({ip:row.ip,sshPort:Number(row.ssh_port || 22),port:String(row.interface)});
 const controlPortKey = target => portKey({ip:target.ip,ssh_port:target.sshPort,interface:target.port});
-function expireLiveMatrix() {
+function expireLiveMatrix(preserveView=false) {
   ui.liveId=null; clearInspection();
-  monitor()?.invalidateLive();
+  monitor()?.invalidateLive(preserveView);
   updatePortActions();
 }
-function clearPorts() {
+function clearPorts(preserveView=false) {
   window.controlTools?.clearQuickResult();
   ui.rows = []; ui.selected.clear();
   $('controlResult').hidden = true;
-  expireLiveMatrix();
+  expireLiveMatrix(preserveView);
+  $('controlPanel').open=false;
+  if (!preserveView) {
+    $('editQueryTargets').hidden=true;
+    setQueryExpanded(true);
+  }
   renderPorts();
 }
 function powerBadge(view) {
@@ -641,10 +669,23 @@ function updateControlTarget() {
       const [address,port]=key.split('|');
       return address+' / 포트 '+port;
     });
+    if (keys.length===1) {
+      const row=ui.rows.find(item=>portKey(item)===keys[0]);
+      if (row && !row.refreshInvalidated && !row.controlUsed) {
+        const power=PowerMatrix.classify(row);
+        ports.push(wattsText(power.watts));
+        if (power.apName) ports.push(power.apName);
+      }
+    }
     target.textContent=ports.join(' · ')+(keys.length>3?' 외 '+(keys.length-3)+'개':'');
   } else target.textContent='';
   target.hidden=!target.textContent;
-  $('selectedCount').hidden=$('controlMode').value==='single';
+  const batch=$('controlMode').value==='batch';
+  $('selectedCount').hidden=!batch;
+  const hasTargets=ui.selected.size>0 || $('controlPanel').open;
+  $('quickActions').hidden=!batch || !hasTargets;
+  $('liveScope').hidden=!hasTargets || !!currentInspection() || !(ui.liveId || displayingInventory());
+  $('portActionStrip').hidden=target.hidden && $('quickActions').hidden && $('liveScope').hidden;
 }
 function syncMonitorChecks() {
   const viewer=monitor();
@@ -670,13 +711,17 @@ function receivePorts(result,keepView=false,refreshedKeys) {
   if (ui.rows.length && !ui.rows.some(row=>row.status==='refresh_pending')) {
     ui.liveId=++observationSequence;
     postMatrix(keepView);
-  } else expireLiveMatrix();
+  } else expireLiveMatrix(keepView);
   renderPorts();
 }
 function queryPorts(targets) {
   return run('ports.query',{targets},result=>{
     window.portTools.acceptQuery(result.groups);
-    receivePorts(result);
+    receivePorts(result,true);
+    if (ui.rows.some(row=>row.status==='ok')) {
+      $('editQueryTargets').hidden=false;
+      setQueryExpanded(false);
+    } else setQueryExpanded(true);
   });
 }
 let credentialRequest=null;
@@ -996,7 +1041,13 @@ async function start() {
     if (workspace.groups?.length && !$('queryTargets').value.trim()) {
       if (document.readyState === 'loading') await new Promise(resolve=>window.addEventListener('DOMContentLoaded', resolve,{once:true}));
       window.portTools?.restoreInventory?.(workspace.groups);
-      if (workspace.query) receivePorts(workspace.query);
+      if (workspace.query) {
+        receivePorts(workspace.query);
+        if (ui.rows.some(row=>row.status==='ok')) {
+          $('editQueryTargets').hidden=false;
+          setQueryExpanded(false);
+        }
+      }
     }
     if (resumed?.action === 'control.quick-execute') {
       window.controlTools.showQuickResult(resumed.result,resumed.cancelled,true);

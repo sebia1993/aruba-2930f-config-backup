@@ -428,7 +428,7 @@ class Operations:
         for row in observed:
             if row.complete and row.status is QueryStatus.OK and row.snapshot:
                 self.unverified_controls.discard((row.group.target, row.interface))
-        result = {"rows": self._matrix_rows()}
+        result = self._port_view(requested)
         if not refresh:
             result["groups"] = self.inventory_view()
         return result
@@ -441,15 +441,24 @@ class Operations:
             self._query_targets = groups
         _abort_if_cancelled(cancel)
 
+        power_reads = set()
+        completed_ports = set()
+
         def on_row(row):
             observation = matrix_observation(row)
+            key = row.group.target, row.interface
             with self._progress_lock:
                 self._query_events.append(observation)
-                self._start_progress(
-                    "포트 관측 완료" if row.complete else "PoE 관측 · LLDP 조회 중",
-                    total,
-                    self.progress["completed"] + int(row.complete),
-                )
+                if row.snapshot is not None:
+                    power_reads.add(key)
+                if row.complete:
+                    completed_ports.add(key)
+                self.progress = {
+                    "message": message,
+                    "total": total,
+                    "completed": len(completed_ports),
+                    "powerRead": len(power_reads),
+                }
 
         return self.query_service.collect(
             groups,
@@ -521,7 +530,7 @@ class Operations:
             ):
                 retry.append(key)
         if retry and not cancel.is_set():
-            self._start_progress("PoE 전력 변화 대기 중", len(retry))
+            self._start_progress(f"포트 {len(retry)}개 전력 변화 대기 중", 0)
             if not cancel.wait(POWER_SETTLE_SECONDS):
                 rechecked = collect(retry, "PoE 전력 변화 재조회 중")
                 for key in retry:
@@ -571,7 +580,7 @@ class Operations:
             for key in registered:
                 if outcomes[key] == "unverified":
                     self.unverified_controls.add(key)
-            result["rows"] = self._matrix_rows()
+            result.update(self._port_view(registered))
         return result
 
     def _merge_query_results(self, groups, observed, cancelled):
@@ -649,6 +658,13 @@ class Operations:
             path.write_text(text.removeprefix("\ufeff"), encoding="utf-8")
             groups = load_target_profile(path)
         return {"targets": target_table(groups)}
+
+    def _port_view(self, sampled):
+        # A partial refresh returns other ports too. Identify the ports sampled by this operation.
+        return {
+            "rows": self._matrix_rows(),
+            "_sampledPorts": [(target.ip, target.port, port) for target, port in sampled],
+        }
 
     def _matrix_rows(self):
         rows = []

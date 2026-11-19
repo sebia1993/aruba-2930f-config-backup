@@ -1,97 +1,102 @@
-/* Keep the query, current view and selected-port actions in one workspace. */
-[data-page=ports] {display:flex;flex-direction:column;gap:8px;padding:10px clamp(10px,1.25vw,22px);width:100%}
-.port-heading {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 18px}
+/* The matrix gets the full workspace width. Query and control details expand on demand. */
+[data-page=ports] {display:flex;flex-direction:column;gap:7px;padding:8px clamp(8px,1.25vw,22px);width:100%}
+/* Successful reads are visible in the matrix; announce completion once to screen readers. */
+main:has([data-page=ports]:not([hidden])) .status.query-complete {position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+main:has([data-page=ports]:not([hidden])) .status.query-complete button {display:none}
+.port-toolbar,.port-heading,.query-commands {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.port-heading {flex:1 1 auto;justify-content:space-between;gap:6px 12px}
 .port-heading h1 {margin:0;font-size:clamp(21px,2vw,28px)}
-.port-workspace-bar {gap:6px;margin:0}
-.port-query {margin:0}
-.port-query form {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 16px;padding:9px 12px}
-.port-query-input {display:grid;grid-template-columns:auto minmax(7rem,1fr) auto;align-items:center;gap:10px}
+.port-workspace-bar {gap:4px;margin:0}
+.port-query {flex:1 1 100%;margin:0}
+.port-query form {display:flex;align-items:center;gap:8px 16px;padding:7px 10px}
+#queryFields {flex:1 1 25rem;min-width:0}
+.port-query-input {display:flex;align-items:center;gap:10px}
 .port-query-input label {font-weight:500}
-.port-query-input textarea {min-height:38px;max-height:9rem;min-width:0}
-.port-query-input button {min-height:38px}
-#targetOptions summary {color:var(--teal);padding:6px 0}
-#targetOptions[open] {grid-column:1/-1}
+.port-query-input textarea {flex:1;min-height:38px;max-height:9rem;min-width:0}
+.query-commands {justify-content:flex-end}
+#queryPorts {white-space:nowrap}
+#targetOptions summary {color:var(--teal);padding:5px 0}
 #targetOptions .target-tools {margin-top:6px}
-#targetCount {grid-column:1/-1;color:var(--muted);font-size:12px}
+#targetCount {color:var(--muted);font-size:12px;overflow-wrap:anywhere}
 #targetCount:empty {display:none}
 #profileFiles:not([hidden]) {margin-top:8px}
+.port-query:has(#queryFields[hidden]) {flex:0 1 auto;border:0;box-shadow:none;background:none}
+.port-query:has(#queryFields[hidden]) form {padding:0}
+.port-toolbar:has(#queryFields[hidden]) .port-heading {justify-content:flex-start}
+.port-query:has(#queryFields[hidden]) #targetCount {margin-inline:4px}
 #selectedCount {float:right;font-size:12px}
-.port-station {display:grid;grid-template-columns:minmax(0,1fr) clamp(294px,24vw,375px);gap:10px;min-height:0}
+.port-station {display:flex;flex-direction:column;gap:6px;min-height:0}
 #portMonitor {min-width:0;min-height:0;margin:0}
 #portLiveControl {min-width:0}
-#liveScope {margin:0}
 #controlPanel {margin:0}
-#controlPanel .panelbody {gap:8px;padding:10px 12px}
-#controlHeading {padding:10px 12px;background:var(--surface);border-radius:inherit}
+#controlHeading {padding:8px 12px;background:var(--surface);border-radius:inherit;color:var(--teal)}
 #controlPanel[open] #controlHeading {border-radius:12px 12px 0 0}
-#controlPanel .bar {gap:6px}
-#controlPanel .panelbody > .bar > label {flex:1 1 7rem}
-#batchControls {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end;gap:6px}
-#quickActions {grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
-#quickActions button {min-height:38px}
+#portLiveControl .panelbody {display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;padding:8px 12px 12px}
+#controlPanel .bar {gap:6px;flex:1 1 18rem}
+#controlPanel .bar > label {flex:1 1 7rem}
+#controlPanel :is(.output,#controlProgress) {order:-1;flex:1 1 100%;min-width:0}
+#controlHint {flex:1 1 25rem}
+#batchControls,.port-action-strip,#quickActions,#liveScope {display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+#batchControls {align-items:flex-end}
+#batchControls label {min-width:7rem}
+.port-action-strip {padding:6px 10px;background:var(--surface);border:1px solid var(--stroke);border-radius:9px;margin-bottom:4px}
+#controlTarget {flex:1 1 13rem;font-size:12px;overflow-wrap:anywhere}
+#liveScope {margin:0}
 #quickOff {color:var(--bad)}
 #quickOn {color:var(--teal)}
-#controlTarget {font-size:12px;overflow-wrap:anywhere}
 #controlResult p,#quickResult p {margin:5px 0}
-@media(min-height:520px) {
+@media(min-height:360px) {
   .shell:has([data-page=ports]:not([hidden])) {height:100dvh;min-height:0}
   main:has([data-page=ports]:not([hidden])) {height:100%;min-height:0;display:flex;flex-direction:column}
   main:has([data-page=ports]:not([hidden])) > :is(.topbar,.status) {flex:none}
   main:has([data-page=ports]:not([hidden])) > .topbar {min-height:44px;padding-block:4px}
-  main:has([data-page=ports]:not([hidden])) > .status {margin:6px clamp(10px,1.25vw,22px) 0;padding:4px 9px}
+  main:has([data-page=ports]:not([hidden])) > .status {margin:4px clamp(8px,1.25vw,22px) 0;padding:3px 8px}
   [data-page=ports] {min-height:0;flex:1;overflow:auto;margin:0 auto}
-  [data-page=ports] > :not(.port-station) {flex:none}
-  .port-station {flex:1;min-height:12rem}
+  .port-toolbar {flex:none}
+  .port-station {flex:1;min-height:0}
+  #portMonitor {flex:1 1 auto}
   #portMonitor .viewer {height:100%;min-height:0}
-  #portMonitor:not(.has-data) .viewer {max-height:100%}
-  #monitorInventory {max-height:100%;overflow:auto}
-  #portLiveControl {overflow:auto;scrollbar-gutter:stable}
+  #portMonitor:not(.has-data) .viewer,#monitorInventory {max-height:100%}
+  #monitorInventory {overflow:auto}
+  #portLiveControl {flex:0 1 auto;max-height:min(64%,30rem);overflow:auto}
   #controlHeading {position:sticky;top:0;z-index:1}
 }
-@media(max-width:1039px) {
-  .port-station {grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:6px}
-  #portLiveControl {scrollbar-gutter:auto}
-  #controlPanel:not([open]) #controlHeading {color:var(--teal)}
-  #controlPanel .panelbody {padding-bottom:max(10px,env(safe-area-inset-bottom))}
-  #controlHeading {min-height:42px}
+@media(max-width:800px), (pointer:coarse) {
+  .port-workspace-bar button,.query-commands button,#controlHeading,.port-action-strip button {min-height:44px}
+  #controlHeading {padding-block:10px}
 }
-@media(max-width:1039px) and (min-height:520px) {
-  .port-station {display:flex;flex-direction:column;min-height:0}
-  #portMonitor {flex:1;min-height:0}
-  #portLiveControl {flex:0 1 auto;max-height:100%}
-  #portLiveControl:has(#controlPanel[open]) {max-height:min(86%,34rem)}
-}
-@media(max-width:760px) {
-  .port-query form {column-gap:10px}
-  .port-query-input {grid-template-columns:minmax(0,1fr) auto;gap:4px 6px}
-  .port-query-input > div {grid-column:1/-1;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+@media(max-width:800px) {
+  .port-query-input {align-items:stretch;flex-direction:column;gap:3px}
+  .port-query-input > div {display:flex;align-items:baseline;gap:4px 8px;flex-wrap:wrap}
   .port-query-input label {font-size:12px}
+  .port-query form {flex-wrap:wrap;gap:3px}
+  #queryFields {flex-basis:100%}
+  .query-commands {flex:1 1 auto}
+  #portLiveControl .panelbody {display:grid;grid-template-columns:minmax(0,1fr)}
+  #batchControls {display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .port-action-strip {gap:4px 6px}
+  #controlTarget {flex:1 1 100%}
+  #controlPanel .panelbody {padding-bottom:max(10px,env(safe-area-inset-bottom))}
 }
 @media(max-width:650px) {
-  [data-page=ports] {gap:6px;padding:6px 8px}
-  .port-heading {gap:4px 10px}
-  .port-heading h1 {font-size:21px}
-  .port-workspace-bar {flex:1 1 100%;align-items:center}
-  .port-workspace-bar button {padding-inline:9px;min-height:36px}
-  .port-query form {padding:6px 9px;gap:3px 6px}
-  .port-query-input {grid-column:1/-1}
-  .port-query form {grid-template-columns:auto minmax(0,1fr)}
-  #targetOptions {grid-column:1}
-  #targetCount {grid-column:auto;text-align:end}
-  #targetOptions[open] + #targetCount {grid-column:1/-1;text-align:start}
-  #targetOptions[open] {grid-column:1/-1}
-  #targetOptions summary {padding:4px 0}
+  [data-page=ports] {gap:4px;padding:4px 8px}
+  .port-toolbar {gap:4px}
+  .port-toolbar:has(#queryFields[hidden]) .port-heading {flex:0 1 auto}
+  .port-workspace-bar {flex-wrap:nowrap}
+  .port-workspace-bar button,.query-commands button {min-width:44px;padding-inline:6px}
   .port-heading h1 {position:absolute;width:1px;height:1px;white-space:nowrap;overflow:hidden;clip-path:inset(50%)}
-  .port-station #controlHeading {min-height:44px}
-  .port-station #quickActions button {min-height:44px}
+  #portLiveControl {max-height:85%}
+  .query-commands {gap:4px}
+  .port-query:has(#queryFields[hidden]) #targetCount {display:none}
+  .port-action-strip {padding:5px}
+  .port-action-strip button {padding-inline:6px}
 }
-@media(max-width:1039px) and (max-height:660px) {
-  [data-page=ports]:has(#controlPanel[open]:not([hidden])) .port-query,
-  [data-page=ports]:has(#controlPanel[open]:not([hidden])) .port-heading {display:none}
-  #portLiveControl:has(#controlPanel[open]) {max-height:100%}
-}
-@media(max-width:650px) and (min-height:520px) {
+@media(max-width:650px) and (min-height:360px) {
   .shell:has([data-page=ports]:not([hidden])) {display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+}
+@media(max-height:500px) {
+  [data-page=ports]:has(#controlPanel[open]) .port-toolbar {display:none}
+  #portLiveControl:has(#controlPanel[open]) {max-height:92%}
 }
 #targetEditor {width:min(60rem,95vw); max-height:90vh;overflow:auto}
 .target-body {padding:0 20px 20px;display:grid;gap:12px}

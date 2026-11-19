@@ -53,6 +53,14 @@ test('a failed LLDP read, placeholders, ordinary neighbors and ambiguous rows do
   }
 });
 
+test('a completed LLDP reading retains its AP identity when watts are missing', () => {
+  const observation = classify({...row, watts: null});
+  assert.equal(observation.state, 'unclassified');
+  assert.equal(observation.watts, null);
+  assert.equal(observation.apName, ap.system_name);
+  assert.equal(classify({...row, watts: null, lldp_status: 'failed'}).apName, '');
+});
+
 test('a measured positive draw with conflicting, insufficient or unconfirmed supply stays yellow', () => {
   for (const fields of [
     {poe_status: 'Searching'}, {poe_status: 'Fault'}, {poe_status: ''},

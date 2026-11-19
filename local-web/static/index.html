@@ -22,7 +22,6 @@
     <div class="navgroup">워크스페이스</div>
     <nav aria-label="주 메뉴">
       <a href="#logs" aria-current="page"><span aria-hidden="true">▦</span>AP 로그 관제</a>
-      <a href="#home"><span aria-hidden="true">⌂</span>작업 현황</a>
       <a href="#ports"><span aria-hidden="true">⇄</span>관제·제어</a>
       <a href="#backup"><span aria-hidden="true">▤</span>구성 백업</a>
       <a href="#history"><span aria-hidden="true">◷</span>작업 이력</a>
@@ -43,13 +42,10 @@
         <span>라이트</span>
       </button></div>
     </header>
-    <div id="statusBar" class="status" hidden><span id="statusText" role="status"></span><button id="stopJob" type="button" hidden>작업 취소</button><button id="dismissStatus" aria-label="메시지 닫기" hidden>닫기</button></div>
-    <section data-page="home" hidden>
-      <div class="heading"><div><h1>작업 현황</h1><p>백업과 포트 작업의 최근 실행 결과를 확인합니다.</p></div></div>
-      <div class="home-grid"><article class="panel"><header><h2>구성 백업</h2></header><div class="panelbody"><p id="homeBackup">이력 읽는 중</p><a href="#backup">백업 화면 열기</a></div></article>
-      <article class="panel"><header><h2>관제·제어</h2></header><div class="panelbody"><p id="homePorts">이력 읽는 중</p><a href="#ports">포트 화면 열기</a></div></article></div>
-      <a href="#history">전체 작업 이력 보기</a>
-    </section>
+    <div id="statusBar" class="status" hidden><div class="status-body">
+      <div class="status-line"><span id="statusText" role="status"></span><output id="jobPercent" aria-hidden="true" hidden></output></div>
+      <progress id="jobProgress" aria-label="현재 작업 단계 진행률" hidden></progress>
+    </div><button id="stopJob" type="button" hidden>작업 취소</button><button id="dismissStatus" aria-label="메시지 닫기" hidden>닫기</button></div>
     <section data-page="logs" aria-label="AP 로그 관제">
       <details class="live-source" id="sshLogs"><summary>스위치에서 로그 가져오기 <span>SSH · show logging</span></summary>
         <form id="logForm" class="formrow"><label class="grow">스위치 주소 <textarea id="logTargets" rows="2" autocapitalize="none" spellcheck="false" placeholder="스위치 IP 또는 IP:SSH포트 (한 줄에 한 대)" required></textarea></label><button class="primary" data-job>로그 수집</button></form>
@@ -58,19 +54,21 @@
       <iframe id="logViewer" class="viewer" title="AP 포트 이벤트 상태 · 로그 파일과 붙여넣기" src="/logs?embedded=1"></iframe>
     </section>
     <section data-page="ports" aria-label="관제·제어" hidden>
+      <div class="port-toolbar">
       <div class="port-heading">
         <h1>관제·제어</h1>
         <div class="bar port-workspace-bar" role="group" aria-label="관제 결과 보기">
           <button type="button" id="portMonitorTab" aria-pressed="true" aria-controls="portMonitor">관제</button>
+          <button type="button" id="portChanges" aria-pressed="false" aria-controls="portMonitor" disabled>변화만 보기</button>
           <button type="button" id="portReviewTab" aria-pressed="false" aria-controls="portMonitor" disabled>우선 확인</button>
         </div>
       </div>
-      <article class="panel port-query" aria-labelledby="queryHeading">
+      <article class="panel port-query" aria-label="조회 대상">
         <form id="queryForm">
+          <div id="queryFields">
           <div class="port-query-input">
             <div><h2 id="queryHeading">실시간 조회</h2><label for="queryTargets">스위치 주소와 포트 (한 줄에 한 대)</label></div>
             <textarea id="queryTargets" rows="1" autocapitalize="none" spellcheck="false" placeholder="주소와 포트 목록을 공백으로 구분하세요." required></textarea>
-            <button id="queryPorts" class="primary" data-job disabled>포트 조회</button>
           </div>
           <details id="targetOptions"><summary>대상 목록 관리</summary>
             <div class="bar target-tools">
@@ -79,17 +77,26 @@
             </div>
             <div id="profileFiles" class="filelinks" hidden></div>
           </details>
-          <span id="targetCount" role="status"></span>
+          </div>
+          <div class="query-commands">
+            <span id="targetCount" role="status"></span>
+            <button type="button" id="editQueryTargets" aria-controls="queryFields" aria-expanded="true" hidden>조회 대상 접기</button>
+            <button id="queryPorts" class="primary" data-job disabled>포트 조회</button>
+          </div>
         </form>
       </article>
+      </div>
       <div class="port-station">
       <div id="portMonitor"><iframe id="matrixViewer" class="viewer" title="포트 관제 · 점검 목록" data-src="/matrix?embedded=1"></iframe><div id="monitorInventory"></div></div>
       <div id="portLiveControl">
-      <details class="panel" id="controlPanel"><summary id="controlHeading">포트 제어<span id="selectedCount" aria-live="polite">선택 0개</span></summary><div class="panelbody">
+      <div class="port-action-strip" id="portActionStrip" hidden>
         <p id="controlTarget" class="control-target" hidden></p>
+        <div id="quickActions" hidden></div>
+        <div id="liveScope" class="bar" hidden><button type="button" id="refreshPorts" data-job>선택 포트 재조회</button><button type="button" id="refreshSwitch" data-job>현재 스위치 재조회</button></div>
+      </div>
+      <details class="panel" id="controlPanel"><summary id="controlHeading">포트 제어<span id="selectedCount" aria-live="polite">선택 0개</span></summary><div class="panelbody">
         <div class="bar"><label>제어 방식<select id="controlMode"><option value="batch">조회 결과에서 선택</option><option value="single" selected>단일 포트 직접 지정</option></select></label><label>작업<select id="operation"><option value="poe_off">PoE 전원 OFF</option><option value="poe_on">PoE 전원 ON</option><option value="disable">포트 비활성화 (Disable)</option><option value="enable">포트 활성화 (Enable)</option></select></label></div>
-        <div id="batchControls" hidden><div id="quickActions"></div><label>선택 범위<select id="selectionScope"><option value="filtered">검색 결과</option><option value="switch">현재 스위치</option><option value="all">조회된 전체</option></select></label><button type="button" id="selectVisible">범위 전체 선택</button><button type="button" id="selectEligible">제어 가능 포트만 선택</button><button type="button" id="clearSelection">선택 해제</button></div>
-      <div id="liveScope" class="bar" hidden><button type="button" id="refreshPorts" data-job>선택 포트 재조회</button><button type="button" id="refreshSwitch" data-job>현재 스위치 재조회</button></div>
+        <div id="batchControls" hidden><label>선택 범위<select id="selectionScope"><option value="filtered">검색 결과</option><option value="switch">현재 스위치</option><option value="all">조회된 전체</option></select></label><button type="button" id="selectVisible">범위 전체 선택</button><button type="button" id="selectEligible">제어 가능 포트만 선택</button><button type="button" id="clearSelection">선택 해제</button></div>
         <div id="singleControls" class="bar"><label>스위치 주소<input id="singleIP" placeholder="스위치 IP 또는 IP:SSH포트"></label><label>포트<input id="singlePort" placeholder="인터페이스 번호"></label></div>
         <p id="controlHint" class="hint">직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.</p>
         <button id="preview" type="button" class="primary" data-job>제어 대상과 명령 검토</button><div id="controlResult" class="output" hidden></div>

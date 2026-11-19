@@ -132,7 +132,6 @@
     await run('targets.apply',accepted.groups.length ? {targets:accepted.targets} : {rows:[]},r=>{
       groups = stableGroups(r.groups); registeredText = raw.value = r.targets;
       focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
-      revealControlsOnDesktop(groups.length>0);
       $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
       updateTargetCount();
       editor.close(); renderMatrix();
@@ -271,7 +270,7 @@
     if (row?.observed_at) facts.push('포트 관측 시각 ' + dateText(row.observed_at));
     const checkLabel = elem('label','', 'inline-check'), check = elem('input'); check.type='checkbox';
     check.dataset.matrixCheck = key; check.checked = ui.selected.has(key); check.disabled = ui.busy;
-    check.onchange = ()=>{if(check.checked){ui.selected.add(key);revealControlsOnDesktop();}else ui.selected.delete(key);renderPorts();};
+    check.onchange = ()=>{if(check.checked)ui.selected.add(key);else ui.selected.delete(key);renderPorts();};
     checkLabel.append(check,document.createTextNode('이 포트 체크'));
     area.replaceChildren(title,powerBadge(view),elem('span',facts.join(' · ')),checkLabel,elem('small',view.reason));
   }
@@ -319,7 +318,6 @@
         check.setAttribute('aria-label',addr+' 등록 포트 전체 체크');
         check.onchange=()=>{
           const blocked=invalidatedKeys();
-          if (check.checked) revealControlsOnDesktop();
           for(const p of item.g.interfaces){const key=addr+'|'+p;if(check.checked && !blocked.has(key))ui.selected.add(key);else ui.selected.delete(key);}
           renderPorts();
         };
@@ -348,18 +346,17 @@
     const lines=[['IP','ssh_port','interfaces','label'],...items.map(g=>[g.ip,g.ssh_port,g.interfaces.join(','),g.label])];
     return lines.map(row=>row.map(quote).join('\t')).join('\n');
   }
-  function replaceQueryInventory(items,text) {
+  function replaceQueryInventory(items,text,preserveView=false) {
     groups=stableGroups(items); registeredText=text;
     focused=''; page=0; live.clear(); loading.clear(); $('inventorySearch').value='';
-    clearPorts();
-    revealControlsOnDesktop(groups.length>0);
+    clearPorts(preserveView);
     $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
     updateTargetCount();
   }
   function acceptQuery(items) {
     if (!fullQuery || fullQuery.accepted || !items?.length) return;
     fullQuery.accepted=true;
-    replaceQueryInventory(items,fullQuery.text);
+    replaceQueryInventory(items,fullQuery.text,true);
   }
   async function recoverQuery() {
     if (!fullQuery) return;
@@ -399,7 +396,7 @@
             const {ip,ssh_port,interface:port,label}=row;
             return {ip,ssh_port,interface:port,label,status:'refresh_pending',controlUsed:true,refreshInvalidated:true};
           });
-          expireLiveMatrix();
+          expireLiveMatrix(true);
         }
       } else {
         fullQuery=null;
@@ -423,7 +420,6 @@
   function restoreInventory(items,targetsText=inventoryText(items)) {
     if(!Array.isArray(items) || !items.length) return;
     groups=stableGroups(items); registeredText=raw.value=targetsText;
-    revealControlsOnDesktop();
     $('controlMode').value='batch'; $('controlMode').onchange();
     updateTargetCount();
     updatePortActions(); renderMatrix();

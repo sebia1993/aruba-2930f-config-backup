@@ -205,7 +205,39 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .embedded #mUnclassified{display:inline-flex;align-items:center;gap:4px}
 .embedded #mUnclassified:before{border:1px dashed var(--muted)}
 .embedded .matrix-area{padding:1px 8px 6px}
-.embedded #matrix{max-height:clamp(80px,23vh,170px);gap:6px}
+.embedded #matrix{max-height:none;overflow:visible;gap:7px}
+.embedded #matrixStage{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;align-items:start}
+.embedded #matrixStage.review-mode{grid-template-columns:minmax(170px,26%) minmax(0,1fr)}
+.embedded #matrixStage.review-mode #extraView{position:sticky;top:0}
+.embedded #matrixStage.review-mode .dr-list{max-height:50vh;overflow:auto}
+.embedded #matrixStage .issue-btn{align-items:center}
+.embedded #matrixStage .issue-btn[aria-pressed=true]{background:var(--surface3);box-shadow:inset 3px 0 var(--teal)}
+.embedded #matrixStage .issue-mid{overflow-wrap:anywhere}
+.embedded .port-tile[data-changed=true]{outline:2px dashed var(--ink);outline-offset:-3px}
+.embedded .site-devices{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:8px 12px}
+.embedded .device-ports{min-width:0}
+.embedded .device-ports.dense{grid-column:1/-1}
+.embedded .site-label{margin:0 0 4px;color:var(--sub);font-size:11px}
+.embedded #matrix .siteheading{display:flex;justify-content:flex-start;flex-wrap:wrap;gap:2px 8px;margin:0 0 3px}
+.embedded #matrix .port-tile.selected{box-shadow:inset 0 0 0 2px var(--ink)}
+.embedded #matrix .port-tile.for-action{box-shadow:inset 0 0 0 3px var(--teal)}
+.embedded #portComparison{display:flex;flex-wrap:wrap;gap:4px 18px;margin:5px 0 0}
+.embedded #portComparison div{min-width:0;overflow-wrap:anywhere}
+.embedded #portComparison dt{font-size:11px;color:var(--sub)}
+.embedded #portComparison dd{margin:0;font-size:12px;font-variant-numeric:tabular-nums}
+.embedded .port-reading .ap-name{overflow-wrap:anywhere;font-size:12px}
+/* The host's expanded controls can leave a short viewer on any device. */
+@media(min-width:760px) and (min-height:480px) and (hover:hover) and (pointer:fine){
+  .embedded .selection-dock:not(:has(details[open])){position:sticky;bottom:0;z-index:2}
+}
+@media(max-width:600px){
+  .embedded #matrixStage.review-mode{grid-template-columns:minmax(0,1fr)}
+  .embedded #matrixStage.review-mode #extraView{position:static}
+  .embedded #matrixStage.review-mode .dr-list{max-height:138px}
+  .embedded #matrixStage .issue-btn{min-height:44px}
+  .embedded #overviewRoot>#shortFilterToggle{display:inline-flex;min-height:44px;margin:0 0 4px}
+  .embedded #overviewRoot>#shortFilterToggle[aria-expanded=false]+.filterbar{display:none}
+}
 .embedded .siteheading{margin:0 0 4px}
 .embedded .siteheading span{white-space:nowrap}
 .embedded .port-grid{display:flex;align-items:start;flex-wrap:wrap;gap:3px}
@@ -214,10 +246,17 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .embedded[data-theme=light] .port-tile.unpowered{color:#000}
 .embedded[data-theme=light] .port-tile.normal{color:#fff}
 .embedded .port-tile.unclassified{color:var(--ink)}
-@media(min-width:620px){
-  .embedded #matrix>section{display:grid;grid-template-columns: minmax(140px,26%) minmax(0,1fr);gap:9px;align-items:start}
-  .embedded .siteheading{display:grid;gap:0;margin:0;font-size:11px;line-height:1.25}
+@media(max-width:600px){
+  .embedded .content{padding:3px 1px}
+  .embedded .matrix-area{padding:1px 2px 4px}
+  .embedded #matrix{padding:1px}
+  .embedded #matrix .port-grid{gap:2px 1px}
+  .embedded #matrix .port-tile.selected{outline-offset:-2px}
+  .embedded .site-devices{row-gap:6px}
+  .embedded .siteheading{line-height:1.3}
 }
+.embedded .panel-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.embedded #sourceTime{font-size:10px;color:var(--sub)}
 .embedded section[aria-labelledby=detailTitle]>.panel-head{position:absolute;width:1px;height:1px;min-height:0;overflow:hidden;clip-path:inset(50%);padding:0;border:0}
 .embedded #detail{padding:6px 10px}
 .embedded .port-reading{display:flex;align-items:center;flex-wrap:wrap;gap:3px 10px}
@@ -590,7 +629,7 @@ window.PortViews = (() => {
   const collator = new Intl.Collator('ko', {numeric:true, sensitivity:'base'});
   const pageSize = 18;
   const state = {current:null, view:'overview', rows:[], found:[],
-    selected:null, page:0, issueRows:[], lookup:new Map(), tileByKey:new Map()};
+    selected:null, page:0, changesOnly:false, preserveView:false, issueRows:[], lookup:new Map(), tileByKey:new Map()};
   let searchFrame = 0;
   const embedded=parent!==window && location.pathname==='/matrix' && new URLSearchParams(location.search).get('embedded')==='1';
   let checkedPorts=new Set(), excludedPorts=new Set();
@@ -619,6 +658,7 @@ window.PortViews = (() => {
   function needsRefresh(row) { return liveSelectionId() && row.queryStatus==='ok' && excludedPorts.has(row.key); }
   function labelTile(tile,row) {
     const parts=[row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status],row.apName];
+    if (row.comparison?.changed) parts.push('직전 조회에서 변화');
     if (row.unobserved || needsRefresh(row)) parts.push(refreshNotice);
     const label=parts.filter(Boolean).join(' · ');
     tile.setAttribute('aria-label',label);
@@ -675,12 +715,14 @@ window.PortViews = (() => {
       if (status==='disabled') return row.admin==='Disable';
       return status==='all' || row.status===status;
     }
-    state.found = state.rows.filter(row => (!site || site === row.site) && (!device || device===endpoint(row)) && matchesStatus(row)
+    state.found = state.rows.filter(row => (!state.changesOnly || state.view==='review' || row.comparison?.changed)
+      && (!site || site === row.site) && (!device || device===endpoint(row)) && matchesStatus(row)
       && (!query || [row.hostname,endpoint(row),row.port,row.apName,row.ap,row.site,row.label,row.poeStatus,row.link,row.reportedLink,
         row.assessmentModel,row.diagnosis,row.raw.message,statusNames[row.status]].some(value => String(value||'').toLowerCase().includes(query))));
     state.issueRows = state.found.filter(isIssue).sort((a,b) => severity[a.status]-severity[b.status]);
     if (!state.found.some(row => row.key === state.selected)) {
-      state.selected = (state.issueRows[0] || state.found[0])?.key ?? null;
+      const fallback=state.view==='review' ? state.issueRows[0] : !embedded && (state.issueRows[0] || state.found[0]);
+      state.selected = fallback?.key ?? null;
     }
   }
   function renderMetrics() {
@@ -702,6 +744,7 @@ window.PortViews = (() => {
   function renderMatrix() {
     const groups = new Map();
     const tiles = new Map();
+    const siteGroups = new Map();
     const fragment = document.createDocumentFragment();
     el('matrixCount').textContent = state.found.length.toLocaleString('ko-KR')+' / '+state.rows.length.toLocaleString('ko-KR')+'포트';
     for (const row of state.found) {
@@ -712,13 +755,26 @@ window.PortViews = (() => {
         const heading = node('div',null,'siteheading');
         const count = node('span');
         const grid = node('div',null,'port-grid');
-        const caption=embedded ? [...new Set([row.site,row.hostname,endpoint(row)].filter(Boolean))].join(' · ') : row.site;
+        const caption=embedded ? [...new Set([row.hostname,endpoint(row)].filter(Boolean))].join(' · ') : row.site;
         heading.append(node('b',caption),count);
         grid.setAttribute('role','group');
         grid.setAttribute('aria-label',caption+' 지정 포트');
         section.append(heading, grid);
-        fragment.append(section);
-        group = {grid, count, endpoints:new Set(), ports:0};
+        let container=fragment;
+        if (embedded) {
+          if (!siteGroups.has(row.site)) {
+            const siteGroup=node('section');
+            const devices=node('div',null,'site-devices');
+            if (row.site && row.site!=='사업장 미지정') siteGroup.append(node('h3',row.site,'site-label'));
+            siteGroup.append(devices);
+            siteGroups.set(row.site,devices);
+            fragment.append(siteGroup);
+          }
+          container=siteGroups.get(row.site);
+          section.className='device-ports';
+        }
+        container.append(section);
+        group = {section,grid,count,endpoints:new Set(),ports:0};
         groups.set(groupKey,group);
       }
       group.ports++;
@@ -726,6 +782,7 @@ window.PortViews = (() => {
       const tile = button(embedded ? row.port : null,'port-tile '+row.status);
       tile.dataset.portKey = row.key;
       tile.dataset.state = row.status;
+      if (row.comparison?.changed) tile.dataset.changed='true';
       labelTile(tile,row);
       tile.setAttribute('aria-pressed',String(row.key===state.selected));
       tile.classList.toggle('selected',row.key===state.selected);
@@ -733,19 +790,30 @@ window.PortViews = (() => {
       group.grid.append(tile);
       tiles.set(row.key,tile);
     }
-    for (const group of groups.values()) group.count.textContent = (embedded?'':group.endpoints.size+'대 · ')+group.ports+'개 포트';
-    if (!state.found.length) fragment.append(node('div','조건에 일치하는 포트가 없습니다.','empty'));
+    for (const group of groups.values()) {
+      if (embedded) group.section.classList.toggle('dense',group.ports>8);
+      group.count.textContent = (embedded?'':group.endpoints.size+'대 · ')+group.ports+'개 포트';
+    }
+    if (!state.found.length) {
+      let message='조건에 일치하는 포트가 없습니다.';
+      if (state.changesOnly && state.view==='overview') {
+        message=state.rows.some(row=>row.comparison?.comparable)
+          ? '현재 조건에 변화가 있는 포트가 없습니다.' : '비교할 실측값이 없습니다. 같은 포트를 다시 조회하세요.';
+      }
+      fragment.append(node('div',message,'empty'));
+    }
     el('matrix').replaceChildren(fragment);
     state.tileByKey = tiles;
   }
   function renderIssues() {
     const container = el('issues');
     const frag = document.createDocumentFragment();
-    for (const row of state.issueRows.slice(0,8)) {
+    for (const row of embedded ? state.issueRows : state.issueRows.slice(0,8)) {
       const item = button(null,'issue-btn'+(state.selected===row.key?' current':''));
       item.dataset.portKey=row.key;
+      item.setAttribute('aria-pressed',String(state.selected===row.key));
       const mid=node('span',null,'issue-mid');
-      mid.append(node('strong',row.hostname+' · '+row.port+' · '+watts(row)),node('small',row.reason));
+      mid.append(node('strong',row.hostname+' · '+row.port+' · '+watts(row)),node('small',embedded ? endpoint(row) : row.reason));
       item.append(node('span',null,'issue-dot '+row.status),mid,node('span',statusNames[row.status],'issue-status'));
       frag.append(item);
     }
@@ -754,10 +822,37 @@ window.PortViews = (() => {
     el('issueCount').textContent = state.issueRows.length+'포트';
     el('allIssues').textContent = '점검 목록 전체 보기 ('+state.issueRows.length+') →';
   }
+  function comparisonDetail(row) {
+    const before=row.comparison.previous;
+    const grid=node('dl',null);
+    grid.id='portComparison';
+    grid.setAttribute('aria-label','직전 조회와 현재 조회');
+    function field(key,title,value) {
+      const part=node('div');
+      part.dataset.comparison=key;
+      part.append(node('dt',title),node('dd',value)); grid.append(part);
+    }
+    const formatAp=value=>lldpMeasured(value)?value.apName || '이름 없음':'미수집';
+    let readings=watts(before)+' → '+watts(row);
+    if (before.watts!=null && row.watts!=null) {
+      const delta=Number((row.watts-before.watts).toFixed(3));
+      readings+=' ('+(delta>0?'+':delta<0?'−':'')+Math.abs(delta)+' W)';
+    }
+    field('watts','직전 전력 → 현재 전력',readings);
+    field('ap','LLDP AP',formatAp(before)+' → '+formatAp(row));
+    field('status','전력 판정',statusNames[before.status]+' → '+statusNames[row.status]);
+    field('time','관측 시각',timeText(before.observed)+' → '+timeText(row.observed));
+    return grid;
+  }
   function renderDetail() {
     const row = state.lookup.get(state.selected);
     const box = el('detail');
     const factsOpen=box.querySelector('.port-facts')?.open;
+    if (embedded) {
+      const panel=el('detailTitle').closest('section');
+      panel.hidden=!row;
+      if (!row) panel.classList.remove('selection-dock');
+    }
     if (!row) { box.replaceChildren(node('div','표시할 포트가 없습니다.','empty')); return; }
     if (row.unobserved) {
       box.replaceChildren(node('div',row.hostname,'detail-name'),node('div',endpoint(row)+' · 포트 '+row.port,'detail-address'),
@@ -795,11 +890,14 @@ window.PortViews = (() => {
       const selection=node('div',null,'port-reading');
       badges.append(node('strong',watts(row),'observed-watts'));
       selection.append(identity,badges);
-      addPortAction(selection,row,'inspectObservedPort');
+      badges.append(node('span','LLDP AP · '+(row.apName || (row.lldp==='ok'?'이름 없음':'미수집')),'ap-name'));
+      addPortAction(selection,row,state.view==='review'?'reviewObservedPort':'inspectObservedPort');
       facts=node('details',null,'port-facts');
       facts.open=!!factsOpen;
       facts.append(node('summary','포트 상세 정보'),fields,reason);
-      box.replaceChildren(selection,facts);
+      box.replaceChildren(selection);
+      if (row.comparison?.comparable) (row.comparison.changed ? box : facts).append(comparisonDetail(row));
+      box.append(facts);
     } else {
       box.replaceChildren(name,address,badges,node('div',null,'detail-divider'),fields,reason);
     }
@@ -866,7 +964,7 @@ window.PortViews = (() => {
   function targetKey(target) { return target.ip+':'+target.sshPort+'/'+target.port; }
   function controlBatch() {
     const liveId=liveSelectionId();
-    if (!liveId || state.view!=='overview') return null;
+    if (!liveId) return null;
     return {liveId,rows:[...checkedPorts].map(key=>state.lookup.get(key)).filter(row=>row && canCheck(row))
       .map(({ip,sshPort,port})=>({ip,sshPort,port}))};
   }
@@ -965,7 +1063,12 @@ window.PortViews = (() => {
     state.selected=key;
     const tile=state.tileByKey.get(key);
     tile?.classList.add('selected'); tile?.setAttribute('aria-pressed','true');
-    for (const item of el('issues').children) item.classList.toggle('current',item.dataset.portKey===key);
+    for (const item of el('issues').querySelectorAll('[data-port-key]')) {
+      const selected=item.dataset.portKey===key;
+      item.classList.toggle('current',selected);
+      item.setAttribute('aria-pressed',String(selected));
+    }
+    if (embedded) el('detailTitle').closest('section').classList.add('selection-dock');
     for (const item of el('tbody').children) item.classList.toggle('selected',item.dataset.portKey===key);
     renderDetail();
     if (scroll) {
@@ -975,14 +1078,15 @@ window.PortViews = (() => {
   }
   function renderOverview() {
     filterRows(); renderMetrics(); renderMatrix();
-    if (!embedded) renderIssues();
+    if (!embedded || state.view==='review') renderIssues();
     renderDetail(); renderTable();
   }
   function showView(view, scopedRows) {
     state.view=view;
     const extra = el('extraView');
     const isOverview=view==='overview';
-    el('overviewRoot').hidden=!state.current || !isOverview;
+    el('overviewRoot').hidden=!state.current || (!embedded && !isOverview);
+    if (embedded) el('matrixStage').classList.toggle('review-mode',!isOverview);
     extra.hidden=isOverview;
     const title=isOverview?'포트 운영 관제':'우선 확인 포트';
     el('pageTitle').textContent=title;
@@ -995,7 +1099,11 @@ window.PortViews = (() => {
     if (embedded) parent.postMessage({type:'aruba-port-view'},location.origin);
     if (!state.current) return;
     const back=embedded?null:()=>openView('overview');
-    if (isOverview) { extra.replaceChildren(); renderOverview(); }
+    if (embedded) {
+      filterRows();
+      if (!isOverview && !state.issueRows.some(row=>row.key===state.selected)) state.selected=state.issueRows[0]?.key ?? null;
+      renderOverview();
+    } else if (isOverview) { extra.replaceChildren(); renderOverview(); }
     else {
       window.PortViews.renderReview(extra,scopedRows||state.rows,back,key=>{
         if (!state.found.some(r=>r.key===key)) clearFilters();
@@ -1008,7 +1116,9 @@ window.PortViews = (() => {
     const current=state.current;
     el('sourceName').textContent=current?'실시간 조회 결과':'조회 결과 대기';
     el('sourceHint').hidden=!!current;
-    el('sourceTime').textContent=current?.latestObserved?'최근 관측 · '+timeText(current.latestObserved):'';
+    const stamp=current?.latestObserved;
+    el('sourceTime').textContent=stamp?'최근 관측 · '+timeText(stamp):'';
+    if (embedded) el('sourceBar').hidden=!!current;
     el('dataMode').textContent=current?'실시간 조회':'조회 대기';
     el('dataMode').classList.toggle('pending',!current);
     el('navReview').disabled=!current;
@@ -1033,10 +1143,28 @@ window.PortViews = (() => {
       poeStatus:raw.poe_status,assessmentModel:raw.assessment_model,diagnosis:raw.port_poe_state
     };
   }
+  function lldpMeasured(row) {
+    return row.queryStatus==='ok' && !row.raw.error_code && row.raw.complete===true && row.lldp==='ok' &&
+      !row.raw.lldp_error_code && Array.isArray(row.raw.lldp_neighbors);
+  }
+  function comparePrevious(row) {
+    const previousRaw=row.raw.previousObservation;
+    if (!previousRaw || previousRaw.ip!==row.ip || previousRaw.ssh_port!==row.sshPort ||
+        String(previousRaw.interface)!==row.port) return null;
+    const previous=observedRow(previousRaw);
+    const power=previous.watts!=null && row.watts!=null;
+    const ap=lldpMeasured(previous) && lldpMeasured(row);
+    // A failed LLDP read does not establish that an AP disappeared.
+    const color=power && (ap || previous.status==='unpowered' || row.status==='unpowered');
+    return {previous,comparable:power || ap,changed:(power && previous.watts!==row.watts) ||
+      (ap && previous.apName!==row.apName) || (color && previous.status!==row.status)};
+  }
   function loadLive(liveId, records, stillCurrent, unobserved=[], keepView=false) {
     if (!liveId || !stillCurrent()) return;
-    keepView=keepView && !!liveSelectionId();
+    keepView=state.preserveView || (keepView && !!liveSelectionId());
+    state.preserveView=false;
     const rows=records.map(observedRow);
+    for (const row of rows) row.comparison=comparePrevious(row);
     const pending=unobserved.map(target=>({...target,key:targetKey(target),hostname:target.label || target.ip,
       site:'사업장 미지정',raw:{},status:'unclassified',queryStatus:'refresh_pending',unobserved:true,
       reason:'재조회 필요 · 등록한 포트에 현재 사용할 수 있는 조회값이 없습니다.'}));
@@ -1054,19 +1182,29 @@ window.PortViews = (() => {
     if (keepView) showView(state.view,state.found);
     else openView('overview');
   }
-  function invalidateLive() {
+  function invalidateLive(preserveView=false) {
+    if (!preserveView) {
+      state.changesOnly=false;
+      state.view='overview';
+      state.selected=null;
+    }
+    state.preserveView=preserveView && (!!state.current || state.preserveView);
     if (!state.current) return;
+    const previousView=state.view, previousKey=state.selected;
     state.current=null;
     state.rows=[]; state.found=[]; state.issueRows=[];
     state.selected=null;
     state.lookup.clear(); state.tileByKey.clear();
     checkedPorts.clear(); excludedPorts.clear();
-    clearFilters();
-    el('site').replaceChildren(option('','전체 사업장'));
-    el('device').replaceChildren(option('','전체 스위치'));
+    if (!preserveView) {
+      clearFilters();
+      el('site').replaceChildren(option('','전체 사업장'));
+      el('device').replaceChildren(option('','전체 스위치'));
+    }
     renderOverview();
-    el('extraView').replaceChildren();
+    if (!embedded) el('extraView').replaceChildren();
     showView('overview');
+    if (preserveView) { state.selected=previousKey; state.view=previousView; }
     updateSource();
   }
   function navigate(view) {
@@ -1074,17 +1212,27 @@ window.PortViews = (() => {
     else if (view==='review' && state.current) openView(view,state.found);
   }
   function monitorScope() {
-    if (state.view!=='overview' || !liveSelectionId()) return null;
+    if (!liveSelectionId()) return null;
     const target=({ip,sshPort,port})=>({ip,sshPort,port});
     const current=state.lookup.get(state.selected);
-    return {liveId:liveSelectionId() || null,current:current?target(current):null,device:el('device').value,rows:state.found.map(target)};
+    const scope=state.view==='review' ? state.issueRows : state.found;
+    return {liveId:liveSelectionId(),current:current?target(current):null,device:el('device').value,rows:scope.map(target)};
   }
   if (embedded) {
     window.PortMonitor={
       loadLive,
       navigate,
       scope:monitorScope,
-      source: ()=>({hasData:!!state.current,view:state.view,liveId:state.current?.liveId}),
+      source: ()=>({hasData:!!state.current,view:state.view,liveId:state.current?.liveId,
+        changesOnly:state.changesOnly,hasBaseline:state.rows.some(row=>row.comparison?.comparable)}),
+      setChangesOnly(enabled) {
+        if (!state.current || state.view!=='overview') return;
+        state.changesOnly=!!enabled;
+        state.page=0;
+        renderOverview();
+        window.scrollTo({top:0,behavior:'instant'});
+        publishSource();
+      },
       selected:selectedActionRow,
       batch:controlBatch,
       setControlSelection,
@@ -1099,9 +1247,20 @@ window.PortViews = (() => {
     document.querySelector('.sidebar').hidden=true;
     document.querySelector('.heading').hidden=true;
     const matrixPanel=el('matrixTitle').closest('section');
+    matrixPanel.querySelector('.panel-right').prepend(el('sourceTime'));
+    const stage=node('div');
+    stage.id='matrixStage';
+    matrixPanel.before(stage);
+    stage.append(el('extraView'),matrixPanel);
+    const issuePanel=el('issuesTitle').closest('section');
+    el('extraView').append(issuePanel);
+    el('priorityButton').hidden=true;
+    el('issuesTitle').append(document.createTextNode('점검 목록'));
+    el('allIssues').closest('.priority-foot').hidden=true;
+    el('issues').classList.add('dr-list');
     matrixPanel.querySelector('.matrix-area').before(document.querySelector('.metrics'));
     document.querySelector('.metrics').append(el('mUnclassified'));
-    matrixPanel.after(el('detailTitle').closest('section'));
+    stage.after(el('detailTitle').closest('section'));
     el('sort').before(el('controlPicks'));
     document.querySelector('.rightcol').hidden=true;
 
@@ -1154,7 +1313,15 @@ window.PortViews = (() => {
   for(const id of ['matrix','issues','tbody']) el(id).addEventListener('click',event=>{
     if (event.target.closest('.control-cell')) return;
     const item=event.target.closest('[data-port-key]');
-    if(item) selectPort(item.dataset.portKey,id==='tbody'||window.matchMedia('(max-width:780px)').matches);
+    if(!item) return;
+    selectPort(item.dataset.portKey,id==='tbody'||window.matchMedia('(max-width:780px)').matches);
+    if (embedded && id==='issues') {
+      const tile=state.tileByKey.get(item.dataset.portKey);
+      if (tile) {
+        const rect=tile.getBoundingClientRect(), dock=el('detailTitle').closest('section').getBoundingClientRect();
+        if (rect.top<0 || rect.bottom>Math.min(innerHeight,dock.top)) tile.scrollIntoView({block:'center'});
+      }
+    }
   });
   function filtersChanged() { state.page=0; renderOverview(); }
   el('search').addEventListener('input',()=>{
