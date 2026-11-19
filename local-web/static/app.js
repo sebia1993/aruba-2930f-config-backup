@@ -265,7 +265,7 @@ function matrixControlTargets(operation=$('operation').value) {
         checked.rows.some(target=>!ui.selected.has(controlPortKey(target)))) return [];
   }
   const tile=ui.tileRow;
-  if (!ui.selected.size && (!tile || tile!==viewer?.selected() || viewer.source().multiSelect)) return [];
+  if (!ui.selected.size && (!tile || tile!==viewer?.selected())) return [];
   const keys=ui.selected.size ? ui.selected : new Set([controlPortKey(tile)]);
   const targets=window.portTools.availableControlTargets(operation).filter(target=>keys.has(controlPortKey(target)));
   return targets.length===keys.size ? targets : [];
@@ -712,6 +712,7 @@ function observedInspectionTarget() {
   return $('controlMode').value==='batch' ? viewer.inspectionTarget() : null;
 }
 function updateControlTarget() {
+  updateMatrixSelectAll();
   const target=$('controlTarget');
   const batch=$('controlMode').value==='batch';
   const targets=batch ? matrixControlTargets() : [];
@@ -861,18 +862,44 @@ function retryFailedPorts(key=null) {
 $('retryFailedPorts').onclick=()=>retryFailedPorts();
 $('refreshPorts').onclick = () => refreshTargets(false);
 $('refreshSwitch').onclick = () => refreshTargets(true);
-function selectScope(eligibleOnly) {
+function updateMatrixSelectAll() {
+  const toggle=$('matrixSelectAll'), scope=$('selectionScope');
+  const keys=ui.busy ? [] : (window.portTools?.scopeKeys() || []);
+  const checked=keys.length>0 && keys.every(key=>ui.selected.has(key));
+  const action=checked ? '전체 선택 해제' : '전체 선택';
+  const scopeName=scope.selectedOptions[0].textContent;
+  const description=scopeName+' 범위의 선택 가능한 포트';
+  $('matrixSelectionScope').hidden=scope.value==='filtered';
+  $('matrixSelectionScope').textContent=scopeName;
+  toggle.disabled=ui.busy || !keys.length;
+  toggle.textContent=action;
+  toggle.setAttribute('aria-pressed',String(checked));
+  toggle.setAttribute('aria-description',description);
+  toggle.title=description+' '+action;
+}
+$('selectionScope').onchange=updateMatrixSelectAll;
+$('matrixSelectAll').onclick=()=>{
   const keys=window.portTools.scopeKeys();
-  if (!keys) return;
+  if (ui.busy || !keys.length) return;
+  const remove=keys.every(key=>ui.selected.has(key));
+  clearInspection();
   ui.tileRow=null;
-  const allowed=eligibleOnly && $('operation').value!=='disable' && new Set(ui.rows
+  for (const key of keys) {
+    if (remove) ui.selected.delete(key); else ui.selected.add(key);
+  }
+  $('controlMode').value='batch';
+  $('controlMode').onchange();
+  renderPorts();
+};
+$('selectEligible').onclick=()=>{
+  const keys=window.portTools.scopeKeys();
+  if (ui.busy || !keys.length) return;
+  ui.tileRow=null;
+  const allowed=$('operation').value!=='disable' && new Set(ui.rows
     .filter(row=>!row.controlUsed && (row.eligible_operations || []).includes($('operation').value)).map(portKey));
   ui.selected=new Set(allowed ? keys.filter(key=>allowed.has(key)) : keys);
   renderPorts();
-}
-$('selectVisible').onclick=()=>selectScope(false);
-$('selectEligible').onclick=()=>selectScope(true);
-$('clearSelection').onclick = () => { ui.tileRow=null; ui.selected.clear(); renderPorts(); };
+};
 $('operation').onchange=()=>{
   const available=new Set(window.portTools.availableControlTargets().map(controlPortKey));
   for (const key of ui.selected) if (!available.has(key)) ui.selected.delete(key);

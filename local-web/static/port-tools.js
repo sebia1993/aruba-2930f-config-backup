@@ -249,14 +249,12 @@
     const range=$('selectionScope').value, scope=currentScope();
     const device=range==='switch' && currentAddress();
     if (range==='switch' && !device) {
-      notify('스위치 필터 또는 포트 상세에서 현재 장비를 선택하세요.',true);
-      return null;
+      return [];
     }
     const available=availableControlTargets().map(controlPortKey);
     if (range==='filtered') {
       if (ui.liveId && !scope) {
-        notify('관제에서 검색할 포트를 표시하세요.',true);
-        return null;
+        return [];
       }
       const visible=new Set(scope ? scope.rows.map(controlPortKey) : visibleEntries(entries()).map(item=>item.key));
       return available.filter(key=>visible.has(key));
@@ -368,7 +366,14 @@
   function selectItem(item) {
     directCableTarget=false;
     focused=item.key;
-    renderMatrix();
+    const selectable=!ui.busy && !item.view.failure && !['loading','stale'].includes(item.view.phase);
+    if (selectable && availableControlTargets().some(target=>controlPortKey(target)===item.key)) {
+      if (ui.selected.has(item.key)) ui.selected.delete(item.key); else ui.selected.add(item.key);
+      $('controlMode').value='batch';
+      $('controlMode').onchange();
+    }
+    renderPorts();
+    matrix.querySelector(`.matrix-tile[data-key="${CSS.escape(item.key)}"]`)?.focus({preventScroll:true});
     if (item.view.failure) $('matrixDetails').scrollIntoView({block:'nearest'});
   }
   function showInventory(visible) {
@@ -449,7 +454,8 @@
         mark.setAttribute('aria-hidden','true');
         tile.append(mark);
       }
-      tile.setAttribute('aria-pressed',String(focused===item.key));
+      tile.setAttribute('aria-pressed',String(ui.selected.has(item.key)));
+      tile.classList.toggle('focused-port',focused===item.key);
       tile.title=[addr+' / '+item.port,item.view.failure?'조회 실패':'',item.view.label,item.view.power.watts!=null ? item.view.power.watts+' W' : '',item.view.power.apName].filter(Boolean).join(' · ');
       tile.setAttribute('aria-label',tile.title); grids.get(addr).append(tile);
     }
@@ -459,7 +465,7 @@
     details(visible.find(x=>x.key===focused)); syncChecks();
   }
   $('matrixSize').onchange=()=>{$('matrixGroups').dataset.zoom=$('matrixSize').value;};
-  $('inventorySearch').oninput=()=>{page=0;renderMatrix();};
+  $('inventorySearch').oninput=()=>{page=0;renderMatrix();updateMatrixSelectAll();};
   $('matrixPrev').onclick=()=>{page--;renderMatrix();};
   $('matrixNext').onclick=()=>{page++;renderMatrix();};
   function inventoryText(items) {

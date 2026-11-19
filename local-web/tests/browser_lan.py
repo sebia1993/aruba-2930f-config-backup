@@ -85,10 +85,13 @@ def check_phone_port_control(peer, switch, shots):
     rect = tile.bounding_box()
     assert rect["width"] >= 44 and rect["height"] >= 44, rect
     peer.touchscreen.tap(*hit_point(tile))
+    expect(tile).to_have_attribute("aria-pressed", "true")
     expect(matrix.locator("#detail .observed-watts")).to_have_text("8.1 W")
     assert matrix.locator("html").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
     peer.locator("#listView").tap()
     expect(matrix.locator(".resulttable")).to_be_visible()
+    checked_port = matrix.locator(f'#tbody tr[data-port-key="{address}/1"] input')
+    expect(checked_port).to_be_checked()
     assert matrix.locator(".tablewrap").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
     peer.locator("#matrixView").tap()
     if shots:
@@ -97,7 +100,7 @@ def check_phone_port_control(peer, switch, shots):
     expect(card.locator("#selectedCount")).to_have_text("선택 1개")
     expect(card.locator("#controlTarget")).to_contain_text(address)
     expect(card.locator("#controlPanel")).not_to_have_attribute("open", "")
-    expect(matrix.locator("#tbody input:checked")).to_have_count(0)
+    expect(card.locator("#matrixSelectAll")).to_have_text("전체 선택 해제")
     assert "configure terminal" not in switch.commands
     for selector in ("#quickOn", "#quickOff"):
         hit_point(card.locator(selector))
@@ -110,6 +113,8 @@ def check_phone_port_control(peer, switch, shots):
     changes.tap()
     expect(tile).to_have_attribute("data-changed", "true")
     tile.tap()
+    expect(tile).to_have_attribute("aria-pressed", "true")
+    expect(checked_port).to_be_checked()
     expect(matrix.locator("#portComparison")).to_contain_text("8.1 W")
     expect(matrix.locator("#portComparison")).to_contain_text("0 W")
     # Keep the observed result and selected route when rotating the phone.

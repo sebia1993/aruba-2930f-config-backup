@@ -72,6 +72,7 @@ def refresh_without_result(page, port, final_state, selected_tile):
     )
     try:
         selected_tile.click()
+        expect(page.locator("#selectedCount")).to_have_text("선택 1개")
         open_port_controls(page)
         page.locator("#refreshPorts").click()
         tile = page.locator(f'.matrix-tile[data-key$="|{port}"]')
@@ -85,6 +86,7 @@ def refresh_without_result(page, port, final_state, selected_tile):
         expect(detail).not_to_contain_text("matrix-ap-")
         page.locator('.matrix-tile[data-key$="|1"]').click()
         expect(detail.get_by_role("checkbox")).to_be_enabled()
+        detail.get_by_role("checkbox").uncheck()
     finally:
         page.unroute(jobs)
         page.unroute(poll)
@@ -123,8 +125,9 @@ def exercise(page, url, switch, _second, _shots, _backup):
     issues = matrix.locator("#extraView .dr-list button")
     issues.nth(1).click()
     expect(matrix.locator("#matrix")).to_be_visible()
-    selected = matrix.locator('#matrix [aria-pressed="true"]')
+    selected = matrix.locator("#matrix .port-tile.selected")
     expect(selected).to_have_count(1)
+    expect(selected).to_have_attribute("aria-pressed", "false")
     expect(selected).to_have_attribute("data-state", "limited")
     inspected_key = selected.get_attribute("data-port-key")
     expect(matrix.locator(f'#tbody tr[data-port-key="{inspected_key}"] input')).not_to_be_checked()
@@ -145,7 +148,9 @@ def exercise(page, url, switch, _second, _shots, _backup):
     page.locator("#matrixView").click()
     expect(matrix.locator("#detail .badge.normal")).to_be_visible()
     matrix.locator("#status").select_option("all")
-    matrix.locator('#matrix [data-port-key$="/3"]').click()
+    expect(matrix.locator('#matrix [data-port-key$="/3"]')).to_have_attribute(
+        "aria-pressed", "true"
+    )
     tiles = page.locator(".matrix-tile")
     current = page.locator('.matrix-tile[data-key$="|3"]')
     switch.draws["3"] = 0
@@ -199,6 +204,9 @@ def exercise(page, url, switch, _second, _shots, _backup):
     changes.click()
     # A different LLDP name is a change even when watts and the three-state
     # classification stay identical on a measured zero-watt port.
+    page.locator("#listView").click()
+    matrix.locator('#tbody tr[data-port-key$="/3"] input').uncheck()
+    page.locator("#matrixView").click()
     matrix.locator('#matrix [data-port-key$="/1"]').click()
     switch.ap_names["1"] = "replacement-ap"
     open_port_controls(page)
@@ -216,6 +224,9 @@ def exercise(page, url, switch, _second, _shots, _backup):
     )
     expect(comparison.locator('[data-comparison="watts"] dd')).to_contain_text("0 W → 0 W")
     changes.click()
+    page.locator("#listView").click()
+    matrix.locator('#tbody tr[data-port-key$="/1"] input').uncheck()
+    page.locator("#matrixView").click()
     refresh_without_result(page, "2", "failed", matrix.locator('#matrix [data-port-key$="/2"]'))
     refresh_without_result(page, "4", "cancelled", page.locator('.matrix-tile[data-key$="|4"]'))
     page.locator('.matrix-tile[data-key$="|2"]').click()
