@@ -194,6 +194,17 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 @media(max-width:1120px){.log-layout{grid-template-columns:minmax(0,1.5fr) minmax(210px,.85fr)}.state-pill{font-size:10.5px}}
 @media(max-width:850px){.log-layout{grid-template-columns:1fr}.rightcol{grid-row:auto;display:block}.log-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:600px){.log-metrics{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.count-card{padding:9px 7px;min-height:83px}.count-card .m-title{align-items:flex-start;gap:3px;font-size:10px}.count-card .state-mark{width:11px;height:13px;flex:0 0 11px;font-size:10px}.count-card .value{font-size:22px}.nav .navtxt{display:inline}.nav button{gap:6px;padding:0 8px}.log-filters .field{min-width:0;flex:1}.log-filters .search{min-width:100%}#portFilter{width:100%}.log-filters .field select{max-width:100%}.log-notice{display:block}.log-notice .noteright{display:block;margin-top:4px}.log-head .heading-actions{align-self:stretch}.log-table th,.log-table td{padding:9px 3px}.log-table th:first-child,.log-table td:first-child{padding-left:6px}.state-pill{font-size:10px;gap:2px;padding:4px}.row-name{font-size:12px}.topbar{padding-inline:8px}.count-card .suffix{font-size:10px}}
+#backToLogPort{display:none}
+@media(max-width:850px){
+  #backToLogPort:not([hidden]){display:inline-flex}
+}
+@media(max-width:650px), (pointer:coarse){
+  .app>.sidebar .nav button,.embedded .app>.sidebar .nav button,
+  .log-head .btn,.input-panel .btn,.log-filters :is(.search,input,select),
+  #backToLogPort,.log-table .row-name,.paginate button{min-height:44px}
+  .log-filters :is(input,select),.input-panel :is(input,textarea){font-size:16px}
+}
+
 </style>
 </head><body>
 
@@ -228,7 +239,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 <section class="filterbar log-filters" aria-label="원본과 포트 필터"><label class="search"><svg fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-search"/></svg><input id="search" type="search" placeholder="스위치 또는 포트 검색" aria-label="스위치 또는 포트 검색"></label><label class="field">AP 전용 포트 (선택)<input id="portFilter" placeholder="예: 1, 2, 1/24" aria-label="AP 전용 포트"></label><label class="field">로그 원본<select id="sourceFilter" aria-label="로그 원본"></select></label></section>
 <div class="layout log-layout"><div class="leftcol"><section class="panel"><div class="panel-head"><div><h2 id="tableCaption">포트별 상태</h2><div class="panel-sub">점검 우선순 · 포트를 선택하면 마지막 전력·링크 기록이 열립니다.</div></div><span class="count" id="shown"></span></div>
 <table class="log-table"><thead><tr><th>상태</th><th>스위치 / 포트</th><th>마지막 이벤트</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty-msg" hidden></div><div class="table-foot" id="pager"><span id="range"></span><div class="paginate"><button id="prev">이전</button><span id="pageNumber"></span><button id="next">다음</button></div></div></section></div>
-<aside class="rightcol"><section class="panel"><div class="panel-head"><div><h2>선택 포트 상세</h2><div class="panel-sub">원본에 기록된 최근 이벤트</div></div></div><div id="detail" class="evidence-box"></div></section></aside></div>
+<aside class="rightcol"><section class="panel"><div class="panel-head"><div><h2 id="logDetailTitle" tabindex="-1">선택 포트 상세</h2><div class="panel-sub">원본에 기록된 최근 이벤트</div></div><button id="backToLogPort" class="btn" type="button" hidden>목록으로</button></div><div id="detail" class="evidence-box"></div></section></aside></div>
 <p class="read-note">연결 관측은 AP 전용 포트의 유선 링크가 올라온 기록입니다. 일반 장비가 섞인 로그는 AP 전용 포트 번호를 입력해 범위를 좁히세요.</p>
 </div>
 </main></div></div>
@@ -451,6 +462,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   }
   function renderDetails(item) {
     const d=id('detail'); d.replaceChildren();
+    id('backToLogPort').hidden=!item;
     if(!item) { d.append(node('div','현재 조건에 표시할 포트가 없습니다.','source-info')); return; }
     d.append(badge(item.status),node('h3',item.device+' · 포트 '+item.port),node('span',sources[active].name,'source-info'));
     evidence(d,'최근 전력 이벤트',item.powerEvent);evidence(d,'최근 링크 이벤트',item.linkEvent);
@@ -474,8 +486,21 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     const isPower=item.powerEvent && item.lastEvent?.text===item.powerEvent.text;
     const eventSummary=isPower?(item.status==='off'?'PoE 공급 중단':'PoE 공급 이벤트'):item.status==='up'?'포트 링크 연결':item.status==='down'?'포트 링크 끊김':'포트 링크 이벤트';
     latest.append(node('strong',tm),node('span',eventSummary,'t-sub'));
-    tr.append(stat,target,latest);tr.addEventListener('click',()=>setSelected(item));return tr;
+    tr.append(stat,target,latest);
+    tr.addEventListener('click',()=>{
+      setSelected(item);
+      if(window.matchMedia('(max-width:850px)').matches) {
+        const title=id('logDetailTitle');
+        title.focus({preventScroll:true});
+        title.closest('section').scrollIntoView({block:'start',behavior:'instant'});
+      }
+    });
+    return tr;
   }
+  id('backToLogPort').addEventListener('click',()=>{
+    const row=id('rows').querySelector('tr[data-selected=true] .row-name');
+    if(row) { row.focus({preventScroll:true}); row.scrollIntoView({block:'center',behavior:'instant'}); }
+  });
   function sourceOptions() {
     id('sourceFilter').replaceChildren(...sources.map((s,i)=>new Option(sources.length>1?(i+1)+' · '+s.name:s.name,String(i))));
     id('sourceFilter').value=String(active);
