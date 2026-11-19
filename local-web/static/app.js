@@ -67,6 +67,7 @@ function sync() {
   $('dismissStatus').hidden = ui.busy;
   $('shutdown').disabled = ui.busy || !ui.token;
   updateControlTarget();
+  window.cableTools?.sync();
 }
 async function api(path, data) {
   const options = {credentials:'same-origin', cache:'no-store'};
@@ -412,6 +413,7 @@ function route() {
   if (name === 'ports' && !$('matrixViewer').hasAttribute('src')) $('matrixViewer').src = $('matrixViewer').dataset.src;
   if (dialog.open) dialog.close();
   if (queryCredentials.open) queryCredentials.close();
+  if (name === 'cable') window.cableTools?.sync();
 }
 window.addEventListener('hashchange',route);
 route();
@@ -1035,6 +1037,9 @@ async function start() {
       showProfileFiles(resumed.result);
     } else if (resumed?.action === 'control.quick-execute') {
       window.controlTools.showQuickResult(resumed.result,resumed.cancelled,true);
+    } else if (resumed?.action === 'cable.show' || resumed?.action === 'cable.test') {
+      window.cableTools?.sync(true);
+      window.cableTools?.showResult(resumed.action,resumed.result,resumed.cancelled,true);
     } else if (resumed?.action === 'control.apply' && resumed.result.results?.length) {
       window.controlTools.finishProgress();
       showControlResults(resumed.result,operationNames[resumed.result.operation] || '포트 제어');

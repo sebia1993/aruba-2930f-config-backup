@@ -6,7 +6,7 @@ import re
 import tempfile
 import threading
 from collections import Counter
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -61,6 +61,7 @@ from aruba2930f_backup.validation import require_valid_prompt, validate_device_i
 from .backup_destination import copy_backup_files, selected_directory
 from .backup_history import backup_history
 from .backup_tools import BackupProgress, HistoryFolders, pick_directory
+from .cable import CableSession, diagnose_ports
 from .port_tools import group_targets, matrix_observation, preview_targets, target_table
 
 POWER_SETTLE_SECONDS = 3
@@ -391,6 +392,25 @@ class Operations:
         if action in {"ports.query", "ports.refresh"}:
             return self._query(
                 _groups(body), self.credentials, cancel, refresh=action == "ports.refresh"
+            )
+        if action in {"cable.show", "cable.test"}:
+            testing = action == "cable.test"
+            if testing and body.get("confirmed") is not True:
+                raise ValueError("선택 포트의 링크 단절 가능성을 확인한 뒤 테스트를 실행하세요.")
+            groups = _groups(body)
+            total = sum(len(group.interfaces) for group in groups)
+            self._start_progress("케이블 진단 중", total)
+            options = CollectionOptions(
+                max_attempts=1, command_timeout_seconds=35, max_output_bytes=64 * 1024
+            )
+            return diagnose_ports(
+                groups,
+                lambda target: self._prepared_switch(
+                    target, self.credentials, options, cancel, cable=True, privileged=testing
+                ),
+                testing,
+                cancel,
+                self._progress,
             )
         if action == "backup.run":
             return self._backup(body, self.credentials, cancel)
@@ -884,6 +904,56 @@ class Operations:
             "output_directory": str(output),
         }
 
+    @contextmanager
+    def _prepared_switch(
+        self, target, credentials, options, cancel, *, cable=False, privileged=False
+    ):
+        session = None
+        try:
+            _abort_if_cancelled(cancel)
+            observation = self.collector.host_key_probe.probe(
+                target, timeout=options.connect_timeout_seconds
+            )
+            _abort_if_cancelled(cancel)
+            if observation.target != target:
+                raise CollectionFailure(
+                    ErrorCode.HOST_KEY_REJECTED, "SSH 지문 조회 대상이 일치하지 않습니다."
+                )
+            check = self.host_key_store.check(observation)
+            if check.state is HostKeyTrustState.UNKNOWN:
+                _abort_if_cancelled(cancel)
+                self.host_key_store.approve([check])
+            self.host_key_store.require_trusted(observation)
+            _abort_if_cancelled(cancel)
+            if cable:
+                session = CableSession(target, credentials, options, self.host_key_store)
+            else:
+                session = self.collector.session_factory.create(target, credentials, options)
+            session.connect()
+            _abort_if_cancelled(cancel)
+            if credentials.enable_secret or (privileged and not session.get_prompt().endswith("#")):
+                session.enter_enable()
+                _abort_if_cancelled(cancel)
+            session.disable_paging()
+            _abort_if_cancelled(cancel)
+            session.set_terminal_width()
+            _abort_if_cancelled(cancel)
+            version = session.send_show("show version", cancel_event=cancel)
+            _abort_if_cancelled(cancel)
+            try:
+                modules = session.send_show("show modules", cancel_event=cancel)
+            except CollectionFailure as exc:
+                if exc.code is not ErrorCode.COMMAND_REJECTED:
+                    raise
+                modules = ""
+            validate_device_identity(version, modules)
+            _abort_if_cancelled(cancel)
+            yield session
+        finally:
+            if session is not None:
+                with suppress(Exception):
+                    session.close()
+
     def _logs(self, body: dict, credentials: Credentials, cancel: threading.Event) -> dict:
         targets = _devices(body)
         options = CollectionOptions(
@@ -893,7 +963,6 @@ class Operations:
         remaining = MAX_LOG_BATCH_BYTES
         self._start_progress("스위치 이벤트 로그 조회 중", len(targets))
         for target in targets:
-            session = None
             row = {
                 "endpoint": target.endpoint,
                 "hostname": "",
@@ -908,42 +977,9 @@ class Operations:
                         ErrorCode.OUTPUT_LIMIT_EXCEEDED,
                         "작업당 로그 용량 8 MiB에 도달했습니다. 이 스위치만 선택해 다시 조회하세요.",
                     )
-                observation = self.collector.host_key_probe.probe(
-                    target, timeout=options.connect_timeout_seconds
-                )
-                _abort_if_cancelled(cancel)
-                if observation.target != target:
-                    raise CollectionFailure(
-                        ErrorCode.HOST_KEY_REJECTED, "SSH 지문 조회 대상이 일치하지 않습니다."
-                    )
-                check = self.host_key_store.check(observation)
-                if check.state is HostKeyTrustState.UNKNOWN:
-                    _abort_if_cancelled(cancel)
-                    self.host_key_store.approve([check])
-                self.host_key_store.require_trusted(observation)
-                _abort_if_cancelled(cancel)
-                session = self.collector.session_factory.create(target, credentials, options)
-                session.connect()
-                _abort_if_cancelled(cancel)
-                if credentials.enable_secret:
-                    session.enter_enable()
-                    _abort_if_cancelled(cancel)
-                session.disable_paging()
-                _abort_if_cancelled(cancel)
-                session.set_terminal_width()
-                _abort_if_cancelled(cancel)
-                version = session.send_show("show version", cancel_event=cancel)
-                _abort_if_cancelled(cancel)
-                try:
-                    modules = session.send_show("show modules", cancel_event=cancel)
-                except CollectionFailure as exc:
-                    if exc.code is not ErrorCode.COMMAND_REJECTED:
-                        raise
-                    modules = ""
-                validate_device_identity(version, modules)
-                _abort_if_cancelled(cancel)
-                hostname = require_valid_prompt(session.get_prompt())
-                text = session.send_show("show logging", cancel_event=cancel)
+                with self._prepared_switch(target, credentials, options, cancel) as session:
+                    hostname = require_valid_prompt(session.get_prompt())
+                    text = session.send_show("show logging", cancel_event=cancel)
                 _abort_if_cancelled(cancel)
                 size = len(text.encode("utf-8"))
                 if size > remaining:
@@ -961,10 +997,6 @@ class Operations:
                 )
             except Exception:
                 row["message"] = "스위치 이벤트 로그를 읽지 못했습니다."
-            finally:
-                if session is not None:
-                    with suppress(Exception):
-                        session.close()
             rows.append(row)
             self._progress("스위치 이벤트 로그 조회 중", finished=True)
         return {"logs": rows}

@@ -12,6 +12,7 @@
   <script src="/static/app.js" defer></script>
   <script src="/static/port-tools.js" defer></script>
   <script src="/static/control-tools.js" defer></script>
+  <script src="/static/cable-tools.js" defer></script>
   <script src="/static/backup-tools.js" defer></script>
   <script src="/static/lan.js" defer></script>
 </head>
@@ -23,6 +24,7 @@
     <nav aria-label="주 메뉴">
       <a href="#logs" aria-current="page"><span aria-hidden="true">▦</span>AP 로그 관제</a>
       <a href="#ports"><span aria-hidden="true">⇄</span>관제·제어</a>
+      <a href="#cable"><span aria-hidden="true">⌁</span>케이블 테스트</a>
       <a href="#backup"><span aria-hidden="true">▤</span>스위치 컨피그 백업</a>
     </nav>
     <div class="sidefoot" id="serverInfo"><b><i></i>로컬 웹 서버</b><span id="version">버전 읽는 중</span><button id="shutdown" type="button" class="textbtn">서버 종료</button></div>
@@ -104,6 +106,21 @@
         <div id="portMonitor"><iframe id="matrixViewer" class="viewer" title="포트 관제 · 점검 목록" data-src="/matrix?embedded=1"></iframe><div id="monitorInventory"></div></div>
         <div id="matrixFeedback" role="region" aria-label="포트 제어 결과"><div id="controlResult" class="output" hidden></div></div>
       </section>
+    </section>
+    <section data-page="cable" aria-labelledby="cableHeading" hidden>
+      <div class="heading"><div><h1 id="cableHeading">케이블 테스트</h1><p>구리 포트의 케이블 페어별 상태와 거리를 확인합니다.</p></div></div>
+      <article class="panel" aria-labelledby="cableTargetHeading">
+        <header><h2 id="cableTargetHeading">진단 대상</h2><a id="cableEdit" href="#ports">관제·제어에서 변경</a></header>
+        <div class="panelbody">
+          <div><p id="cableScope" class="hint"></p><pre id="cableTargets" class="cable-targets"></pre></div>
+          <div class="bar"><button type="button" id="cableShow" data-job disabled>저장 결과 조회</button><button type="button" id="cableTest" data-job class="primary" disabled>테스트 실행</button></div>
+          <p class="hint">새 테스트 중에는 대상 포트의 링크가 잠시 끊깁니다. 저장 결과 조회는 링크를 유지합니다.</p>
+        </div>
+      </article>
+      <article class="panel" aria-labelledby="cableResultTitle">
+        <header><h2 id="cableResultTitle">진단 결과</h2><span id="cableResultCount"></span></header>
+        <div class="panelbody" id="cableResult"><p class="empty">대상을 선택한 뒤 저장 결과를 조회하거나 새 테스트를 실행하세요.</p></div>
+      </article>
     </section>
     <section data-page="backup" hidden>
       <div class="heading"><div><div class="eyebrow">CONFIGURATION BACKUP</div><h1>스위치 컨피그 백업</h1><p>선택한 스위치의 설정 파일과 작업 보고서를 PC에 저장합니다.</p></div></div>
