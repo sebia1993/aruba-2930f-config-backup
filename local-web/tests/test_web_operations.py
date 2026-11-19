@@ -76,9 +76,10 @@ class OperationsTests(unittest.TestCase):
         return self.ops.dispatch(name, body, self.cancel)
 
     def read_cable(self, target):
-        self.session.read_cable.return_value = {"status": "stored", "pairs": []}
+        self.session.test_cable.return_value = "Test completed."
+        self.session.read_cable.return_value = {"status": "complete", "pairs": []}
         with patch("localweb.operations.CableSession", self.factory.create):
-            (row,) = self.call("cable.show", targets=f"{target.endpoint} 1")["rows"]
+            (row,) = self.call("cable.test", targets=f"{target.endpoint} 1", confirmed=True)["rows"]
             return row
 
     def approve(self):
@@ -116,13 +117,13 @@ class OperationsTests(unittest.TestCase):
         self.probe.probe.side_effect = [original, other, other]
         for device in (self.target, second):
             row = self.read_cable(device)
-            self.assertEqual(row["status"], "stored")
+            self.assertEqual(row["status"], "measured")
         store = HostKeyStore(self.ops.host_key_store.path)
         self.assertEqual(store.check(original).state, HostKeyTrustState.TRUSTED)
         self.assertEqual(store.check(other).state, HostKeyTrustState.TRUSTED)
         before = store.path.read_bytes()
         row = self.read_cable(second)
-        self.assertEqual(row["status"], "stored")
+        self.assertEqual(row["status"], "measured")
         self.assertEqual(store.path.read_bytes(), before)
 
     def test_cancel_during_first_probe_leaves_no_pin_or_authenticated_session(self):
@@ -158,11 +159,13 @@ class OperationsTests(unittest.TestCase):
                 self.assertEqual(self.ops.host_key_store.list_approved(), ())
                 self.factory.create.assert_not_called()
 
-    def test_cable_read_blocked_for_unsupported_switch(self):
+    def test_cable_diagnosis_blocked_for_unsupported_switch(self):
         self.approve()
         self.commands.update({"show version": "Unidentified", "show modules": "Unknown"})
         row = self.read_cable(self.target)
         self.assertEqual(row["status"], "failed")
+        self.session.clear_cable.assert_not_called()
+        self.session.test_cable.assert_not_called()
         self.session.read_cable.assert_not_called()
         self.session.close.assert_called_once()
 
@@ -558,7 +561,7 @@ class OperationsTests(unittest.TestCase):
     def test_cancel_and_invalid_addresses_never_open_a_connection(self):
         self.cancel.set()
         with self.assertRaises(CollectionFailure):
-            self.call("cable.show", targets=f"{self.target.endpoint} 1")
+            self.call("cable.test", targets=f"{self.target.endpoint} 1", confirmed=True)
         self.cancel.clear()
         with self.assertRaises(ValueError):
             self.call("backup.run", targets=f"{self.target.endpoint}\ninvalid", max_attempts=1)

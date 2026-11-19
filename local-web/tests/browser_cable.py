@@ -1,6 +1,7 @@
 """Exercise shared monitoring targets and cable TDR over a loopback SSH connection."""
 
 import re
+import sys
 from threading import Event
 
 from browser_power_matrix import PowerMatrixSwitch
@@ -17,6 +18,8 @@ from playwright.sync_api import expect
 class CableSwitch(PowerMatrixSwitch):
     def __init__(self):
         super().__init__()
+        self.readings = {"1": "11m", "2": "12m", "9": "99m"}
+        self.reject_clear = False
         self.tested = []
         self.confirmations = []
         self.confirmed = Event()
@@ -24,6 +27,17 @@ class CableSwitch(PowerMatrixSwitch):
         self.release_result.set()
 
     def _respond(self, channel, command):
+        if command == "clear cable-diagnostics":
+            with self._lock:
+                self.commands.append(command)
+            response = [command]
+            if self.reject_clear:
+                response.append("Invalid input: clear")
+            else:
+                self.readings.clear()
+            response.append("edge-lab(config)#")
+            channel.sendall("\r\n".join(response).encode())
+            return False
         if not command.startswith(("show cable-diagnostics ", "test cable-diagnostics ")):
             return super()._respond(channel, command)
         port = command.rsplit(" ", 1)[-1]
@@ -45,11 +59,17 @@ class CableSwitch(PowerMatrixSwitch):
             self.confirmations.append(reply)
             if reply == b"y":
                 self.tested.append(port)
+                self.readings[port] = "17m"
                 self.confirmed.set()
                 self.release_result.wait(12)
             channel.sendall(b"\r\n" + self.prompt.encode())
         else:
-            distance = "17m" if port in self.tested else "11m"
+            if port not in self.readings:
+                channel.sendall(
+                    "\r\n".join([command, "No results available", self.prompt]).encode()
+                )
+                return False
+            distance = self.readings[port]
             lines = [
                 command,
                 "Cable Diagnostic Status - Copper Ports",
@@ -71,6 +91,9 @@ def exercise(page, url, switch, other, shots, _backup):
     other_endpoint = f"127.0.0.1:{other.port}"
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
+    touch = page.context.browser.browser_type.name == "webkit"
+    if touch:
+        resize_workspace(page, 390, 844)
     page.goto(url)
     nav = page.get_by_role("navigation", name="주 메뉴")
     cable = nav.get_by_role("link", name="케이블 진단", exact=True)
@@ -83,11 +106,10 @@ def exercise(page, url, switch, other, shots, _backup):
     expect(workspace.get_by_role("heading", name="케이블 진단", exact=True)).to_be_visible()
     expect(page.locator("#crumb")).to_have_text("케이블 진단")
     expect(workspace.locator('textarea,input:not([type="hidden"])')).to_have_count(0)
-    show = workspace.locator("#cableShow")
+    expect(workspace.get_by_role("button", name="저장 결과 조회")).to_have_count(0)
     test = workspace.locator("#cableTest")
     targets = workspace.locator("#cableTargets")
     results = workspace.locator("#cableResult")
-    expect(show).to_be_disabled()
     expect(test).to_be_disabled()
 
     def edit(text):
@@ -95,6 +117,35 @@ def exercise(page, url, switch, other, shots, _backup):
         expect(ports).to_have_attribute("aria-current", "page")
         edit_query_targets(page).fill(text)
         cable.click()
+
+    review = page.locator("#review")
+
+    def click(button):
+        if touch:
+            button.tap()
+        else:
+            button.click()
+
+    def start():
+        click(test)
+        expect(review).to_be_visible()
+        expect(review).to_contain_text("선택하지 않은 포트")
+        expect(review).to_contain_text("링크")
+        expect(results.locator("table")).to_have_count(0)
+        click(page.locator("#cableConfirm"))
+
+    def commands(start_at):
+        return [
+            cmd
+            for cmd in switch.commands[start_at:]
+            if "cable-diagnostics" in cmd or cmd in ("configure terminal", "end")
+        ]
+
+    def sequence(*port_numbers):
+        steps = ["configure terminal", "clear cable-diagnostics", "end"]
+        for port in port_numbers:
+            steps += [f"test cable-diagnostics {port}", f"show cable-diagnostics {port}"]
+        return steps
 
     # A single address/port entered in monitoring control options needs no re-entry either.
     ports.click()
@@ -110,14 +161,32 @@ def exercise(page, url, switch, other, shots, _backup):
     # A raw monitoring draft can be used before a port query or SSH login.
     edit(endpoint + " 1")
     expect(targets).to_contain_text(endpoint)
-    show.click()
-    enter_ssh_credentials(page, switch)
-    expect(results).to_contain_text(re.compile(r"11\s*m"), timeout=60000)
-    expect(workspace.locator("#cableResultTitle")).to_contain_text("저장")
-    assert "show cable-diagnostics 1" in switch.commands and not switch.tested
-    assert not any(cmd.startswith("test cable-diagnostics") for cmd in switch.commands)
+    click(test)
+    expect(review).to_contain_text(endpoint)
+    review.get_by_role("button", name="검토 닫기").click()
+    assert commands(0) == [] and not switch.auth_attempts
+    start()
+    enter_ssh_credentials(page, switch, touch=touch)
+    expect(results).to_contain_text(re.compile(r"17\s*m"), timeout=60000)
+    expect(results).not_to_contain_text(re.compile(r"11\s*m"))
+    expect(workspace.locator("#cableResultTitle")).to_have_text("이번 진단 결과")
+    assert commands(0) == sequence(1)
+    assert "9" not in switch.readings
     for pair in ("1-2", "3-6", "4-5", "7-8"):
         expect(results).to_contain_text(pair)
+
+    # Rejecting clear leaves an old measurement on the switch, but no result on the page.
+    before = len(switch.commands)
+    switch.reject_clear = True
+    try:
+        start()
+        expect(results).to_contain_text("실패", timeout=60000)
+        expect(results.locator("table")).to_have_count(0)
+        assert switch.readings["1"] == "17m"
+        assert "clear cable-diagnostics" in commands(before)
+        assert not any(cmd.startswith(("test cable-", "show cable-")) for cmd in commands(before))
+    finally:
+        switch.reject_clear = False
 
     ports.click()
     expect(ports).to_have_attribute("aria-current", "page")
@@ -130,38 +199,30 @@ def exercise(page, url, switch, other, shots, _backup):
     tiles.last.click()
     cable.click()
     before = len(switch.commands)
-    show.click()
-    expect(show).to_be_enabled(timeout=60000)
-    expect(results).to_contain_text(re.compile(r"11\s*m"), timeout=60000)
-    assert [cmd for cmd in switch.commands[before:] if "cable-diagnostics" in cmd] == [
-        "show cable-diagnostics 2"
-    ]
+    expect(results.locator("table")).to_have_count(0)
+    start()
+    expect(results).to_contain_text("측정 완료", timeout=60000)
+    assert commands(before) == sequence(2)
     ports.click()
     page.locator("#listView").click()
     port_two = matrix.locator(f'#tbody tr[data-port-key="{endpoint}/2"] input')
     expect(port_two).to_be_checked()
     matrix.locator(f'#tbody tr[data-port-key="{endpoint}/1"] input').check()
     expect(page.locator("#selectedCount")).to_have_text("선택 2개")
+    cable.click()
+    before = len(switch.commands)
+    start()
+    expect(results.locator("table")).to_have_count(2, timeout=90000)
+    assert commands(before) == sequence(1, 2)
+    assert switch.confirmations == [b"y"] * len(switch.tested)
+    ports.click()
     port_two.uncheck()
     cable.click()
-
-    review = page.locator("#review")
-    test.click()
-    expect(review).to_be_visible()
-    expect(review).to_contain_text(endpoint)
-    expect(review).to_contain_text("링크")
-    review.get_by_role("button", name="검토 닫기").click()
-    expect(review).to_be_hidden()
-    assert not any(cmd.startswith("test cable-diagnostics") for cmd in switch.commands)
-    test.click()
-    page.locator("#cableConfirm").click()
-    expect(workspace.locator("#cableResultTitle")).to_contain_text("테스트", timeout=90000)
-    expect(results).to_contain_text(re.compile(r"17\s*m"))
-    expect(results).not_to_contain_text(re.compile(r"11\s*m"))
-    assert switch.tested == ["1"] and switch.confirmations == [b"y"]
-    assert [cmd for cmd in switch.commands if cmd.startswith("test cable-diagnostics")] == [
-        "test cable-diagnostics 1"
-    ]
+    expect(results.locator("table")).to_have_count(0)
+    before = len(switch.commands)
+    start()
+    expect(results).to_contain_text(re.compile(r"17\s*m"), timeout=60000)
+    assert commands(before) == sequence(1)
 
     for width, height in ((1440, 960), (390, 844), (320, 568), (844, 390)):
         resize_workspace(page, width, height)
@@ -192,31 +253,21 @@ def exercise(page, url, switch, other, shots, _backup):
     expect(review).not_to_contain_text(endpoint)
     page.keyboard.press("Escape")
     edit("")
-    expect(show).to_be_disabled()
     expect(test).to_be_disabled()
     # A new page picks up the last saved monitoring inventory with its SSH port.
     page.reload()
     expect(targets).to_contain_text(endpoint)
-    before = len(switch.commands)
-    show.click()
-    expect(results).to_contain_text(re.compile(r"11\s*m"), timeout=60000)
-    expect(results).to_contain_text(re.compile(r"17\s*m"))
-    assert [cmd for cmd in switch.commands[before:] if "cable-diagnostics" in cmd] == [
-        "show cable-diagnostics 1",
-        "show cable-diagnostics 2",
-    ]
-
-    # Reopening the browser during an identical remeasurement resumes the original
-    # job. A device returning identical stored pairs without a completion marker
-    # can only prove which values it has stored.
+    expect(results.locator("table")).to_have_count(0)
+    # Reopening mid-run reconnects to that run. Identical pair readings after a
+    # successful clear and new test are fresh, and reconnect never repeats them.
     ports.click()
     matrix.locator(f'#matrix [data-port-key="{endpoint}/1"]').click()
     cable.click()
+    before = len(switch.commands)
     switch.confirmed.clear()
     switch.release_result.clear()
     try:
-        test.click()
-        page.locator("#cableConfirm").click()
+        start()
         assert switch.confirmed.wait(20), "Switch did not receive the approved test"
         # Reload between status requests. WebKit cancels a document's outstanding
         # fetch on navigation even though the server-side cable test continues.
@@ -233,12 +284,10 @@ def exercise(page, url, switch, other, shots, _backup):
     finally:
         switch.release_result.set()
     expect(workspace.locator("#cableResultTitle")).to_contain_text("재연결한 작업", timeout=60000)
-    expect(results).to_contain_text("저장된 측정값")
-    expect(results).not_to_contain_text("측정 완료")
+    expect(results).to_contain_text("측정 완료")
     expect(results).to_contain_text(re.compile(r"17\s*m"))
-    assert switch.tested == ["1", "1"] and switch.confirmations == [b"y", b"y"]
+    assert commands(before) == sequence(1)
     assert not other.commands and not other.auth_attempts
-    assert "configure terminal" not in switch.commands
     assert not errors, errors
     page.locator("#shutdown").click()
     page.locator("#reviewBody").get_by_role("button", name="서버 종료").click()
@@ -246,7 +295,10 @@ def exercise(page, url, switch, other, shots, _backup):
 
 
 if __name__ == "__main__":
-    run_browser_case(exercise, switch_factory=CableSwitch)
+    engine = sys.argv[1] if len(sys.argv) > 1 else "chromium"
+    run_browser_case(
+        exercise, switch_factory=CableSwitch, browser_engine=engine, touch=engine == "webkit"
+    )
     print(
-        "PASS cable menu: shared targets, selected port, confirmed SSH TDR, stored and fresh results"
+        f"PASS {engine}: shared cable targets, clear once then test/show, fresh results, failed clear and active-job recovery."
     )

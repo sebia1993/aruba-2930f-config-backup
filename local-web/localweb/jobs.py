@@ -28,7 +28,6 @@ ACTIONS = frozenset(
         "hostkey.forget",
         "ports.query",
         "ports.refresh",
-        "cable.show",
         "cable.test",
         "targets.preview",
         "targets.apply",
@@ -205,7 +204,7 @@ class Jobs:
                 raise Busy("다른 작업이 실행 중이거나 서버가 종료 중입니다.")
             repeat_message = {
                 "control.quick-execute": DUPLICATE_POE_REQUEST,
-                "cable.test": "이미 접수한 케이블 테스트입니다. 저장된 결과를 조회하세요.",
+                "cable.test": "이미 접수한 케이블 진단입니다. 진행 중인 작업의 완료를 기다려 주세요.",
             }.get(action)
             if repeat_message:
                 key = body.get("requestId")

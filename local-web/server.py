@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.18.1"
+VERSION = "1.18.2"
 STATIC = {
     "/": "index.html",
     "/matrix": "matrix.html",
