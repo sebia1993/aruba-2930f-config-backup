@@ -24,7 +24,6 @@
       <a href="#logs" aria-current="page"><span aria-hidden="true">▦</span>AP 로그 관제</a>
       <a href="#ports"><span aria-hidden="true">⇄</span>관제·제어</a>
       <a href="#backup"><span aria-hidden="true">▤</span>구성 백업</a>
-      <a href="#history"><span aria-hidden="true">◷</span>작업 이력</a>
     </nav>
     <div class="sidefoot" id="serverInfo"><b><i></i>로컬 웹 서버</b><span id="version">버전 읽는 중</span><button id="shutdown" type="button" class="textbtn">서버 종료</button></div>
   </aside>
@@ -113,12 +112,6 @@
         <div class="bar"><button class="primary" data-job>백업 시작</button><button type="button" data-import="backupTargets">대상 열기</button><button type="button" data-save="backupTargets">대상 저장</button></div>
       </form></article>
       <article class="panel"><header><h2>백업 결과</h2><div id="backupFiles" class="filelinks"></div></header><div class="panelbody" id="backupResult"><p class="empty">완료된 백업이 없습니다.</p></div></article>
-    </section>
-    <section data-page="history" hidden>
-      <div class="heading"><div><div class="eyebrow">OPERATION HISTORY</div><h1>작업 이력</h1><p>실행한 작업의 결과와 내려받을 수 있는 파일을 확인합니다.</p></div><button type="button" id="refreshHistory">새로고침</button></div>
-      <article class="panel"><header><h2>최근 작업</h2></header><div class="panelbody" id="historyTable"></div></article>
-      <article class="panel"><header><h2>저장된 백업 보고서</h2><button type="button" id="backupHistory" data-job>보고서 목록 불러오기</button></header><div class="panelbody" id="backupHistoryTable"><p class="empty">이 PC의 데스크톱 및 웹 백업 폴더에서 보고서를 찾습니다.</p></div></article>
-      <article class="panel"><header><h2>포트별 명령 실행 기록</h2><button type="button" id="controlHistory" data-job>기록 불러오기</button></header><div class="panelbody" id="controlHistoryTable"><p class="empty">기록 불러오기를 누르면 실행 시각과 포트별 결과를 표시합니다.</p></div></article>
     </section>
     <section data-page="connect" hidden>
       <div class="heading"><div><div class="eyebrow">SSH CONNECTION</div><h1 id="connectionHeading">SSH 접속 설정</h1><p>이 PC에서 스위치 접속에 사용할 계정과 호스트 키를 설정합니다.</p></div></div>

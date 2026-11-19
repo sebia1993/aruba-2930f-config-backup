@@ -37,15 +37,16 @@ def exercise(page, http, url, switch, folder):
     expect(page.locator("#backupResult")).to_contain_text("지문 시도")
     expect(page.locator("#backupResult")).to_contain_text("백업 시도")
     expect(page.locator("#backupResult")).to_contain_text("기타 실패 1대")
-    assert list(folder.glob("*/*/result.xlsx"))
-    page.locator("nav a[href='#history']").click()
-    page.locator("#backupHistory").click()
-    expect(page.locator("#backupHistoryTable")).to_contain_text("지정한 백업 폴더")
+    (saved_report,) = folder.glob("*/*/result.xlsx")
+    expect(page.locator("#backupResult")).to_contain_text(str(saved_report.parent))
+    report = page.locator('#backupFiles a[download$=".xlsx"]')
+    with page.expect_download() as download:
+        report.click()
+    assert download.value.path().read_bytes() == saved_report.read_bytes()
     expect(
-        page.locator("#backupHistoryTable").get_by_role("button", name="파일 위치 열기").first
+        page.locator("#backupResult").get_by_role("button", name="결과 폴더 열기")
     ).to_be_visible()
 
-    page.locator("nav a[href='#backup']").click()
     page.locator("#backupTargets").fill(endpoint + " " + invalid_password)
     page.locator("#uiInspectorOpen").click()
     page.get_by_role("button", name="요소 선택", exact=True).click()
@@ -54,6 +55,7 @@ def exercise(page, http, url, switch, folder):
     expect(
         page.locator("#uiInspectorDialog option").filter(has_text="SSH 접속 설정")
     ).to_have_count(0)
+    expect(page.locator("#uiInspectorDialog option").filter(has_text="작업 이력")).to_have_count(0)
     text = page.locator("#uiRequestPreview").inner_text()
     assert (
         "UI 식별자: backupTargets" in text

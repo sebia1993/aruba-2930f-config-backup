@@ -16,7 +16,6 @@
   $('backupDirectory').closest('label').after(choose);
   $('backupDirectory').closest('label').querySelector('.hint').textContent =
     'Windows에서 선택하거나 드라이브·공유 폴더의 전체 경로를 입력하세요. 지정한 폴더가 없으면 백업 시 만듭니다.';
-  Object.assign(jobNames, {'backup.pick-directory':'백업 폴더 선택', 'history.open-folder':'기록 폴더 열기'});
 
   const live = elem('details');
   live.id = 'backupDeviceProgress'; live.hidden = true; live.open = true;
@@ -76,13 +75,7 @@
     area.append(block);
   }
 
-  function historyButton(row) {
-    if (!row.folder_id || location.protocol==='https:') return '—';
-    const btn = button('파일 위치 열기',()=>run('history.open-folder',{folder_id:row.folder_id}));
-    btn.dataset.job = '';
-    return btn;
-  }
-  window.backupTools = {onProgress,showSummary,historyButton};
+  window.backupTools = {onProgress,showSummary};
 })();
 
 // Static support metadata. Request text is built from this catalog, never from input values or table contents.
@@ -109,10 +102,6 @@
     ['logout','세션 해제','메모리에 보관 중인 접속 정보를 해제합니다.'],
     ['trustTargets','지문 조회 대상','검토할 스위치 주소를 입력합니다.'],['trustResult','지문 검토','관측한 지문과 승인 상태를 확인합니다.'],
     ['knownKeys','저장된 지문','등록된 호스트 키를 조회하고 제거합니다.']
-  ]);
-  register('작업 이력','static/index.html',[
-    ['historyTable','최근 작업','작업별 상태와 생성 파일을 확인합니다.'],['backupHistoryTable','백업 보고서','저장된 보고서의 장비별 결과를 확인합니다.'],
-    ['controlHistoryTable','포트 변경 기록','단일 및 일괄 제어의 기록을 확인합니다.']
   ]);
   register('관제·제어','static/index.html',[
     ['portMonitorTab','관제','포트별 관측값을 확인하고 제어할 포트를 선택합니다.'],

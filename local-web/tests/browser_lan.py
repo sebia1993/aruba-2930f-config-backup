@@ -57,12 +57,13 @@ def check_fingerprint(host, port, fingerprint):
 def check_phone_navigation(peer):
     nav = peer.get_by_role("navigation", name="주 메뉴")
     links = nav.get_by_role("link")
-    expect(links).to_have_count(4)
+    expect(links).to_have_count(3)
+    expect(peer.locator('nav a[href="#history"], [data-page="history"]')).to_have_count(0)
     # A locator tap alone would silently scroll horizontally to a clipped menu item.
     for width, height, route in (
         (320, 568, "backup"),
         (360, 800, "logs"),
-        (844, 390, "history"),
+        (844, 390, "backup"),
         (390, 844, "ports"),
     ):
         resize_workspace(peer, width, height)
