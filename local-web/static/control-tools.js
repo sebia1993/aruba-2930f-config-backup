@@ -7,6 +7,7 @@
   single.after(inspection);
   function liveButton(id,title,onClick) {
     const node = button(title,onClick);
+    node.setAttribute('aria-label',title+' 즉시 실행');
     node.id = id;
     node.dataset.job = '';
     return node;
@@ -46,7 +47,6 @@
     const state = result.operation==='poe_off' ? 'OFF' : 'ON';
     const title = 'PoE ' + state + ' 즉시 실행';
     const skipped=result.skipped || [], blocked=result.blocked || [];
-    $('controlPanel').open=true;
     quickResult.hidden=false;
     quickResult.replaceChildren(elem('b',title + (cancelled ? ' 취소 결과' : ' 결과')),
       elem('p','선택 ' + result.selected + '개 · 사전 재조회 ' + result.rechecked + '개 · 이미 ' + state + ' ' + skipped.length + '개'));
@@ -65,8 +65,8 @@
   }
   function requestQuick(operation) {
     if (ui.busy || !controlContextMatches(null) || $('controlMode').value!=='batch') return;
-    const targets = window.portTools.checkedTargets();
-    if (!targets.length) return notify('빠른 제어를 실행할 포트를 체크하세요.',true);
+    const targets = matrixControlTargets();
+    if (!targets.length) return notify('빠른 제어를 실행할 포트를 선택하세요.',true);
     if (targets.length > 300) return notify('최대 300포트까지 한 번에 처리할 수 있습니다.',true);
     clearQuickResult();
     finishProgress();
@@ -74,8 +74,8 @@
     const requestId = crypto.randomUUID().replaceAll('-','');
     runSsh('control.quick-execute',{operation,targets,requestId},(result,cancelled)=>showQuickResult(result,cancelled));
   }
-  $('quickActions').append(liveButton('quickOff','PoE OFF 즉시 실행',()=>requestQuick('poe_off')),
-               liveButton('quickOn','PoE ON 즉시 실행',()=>requestQuick('poe_on')));
+  $('quickActions').append(liveButton('quickOff','PoE OFF',()=>requestQuick('poe_off')),
+               liveButton('quickOn','PoE ON',()=>requestQuick('poe_on')));
   const progress = elem('details'); progress.id = 'controlProgress'; progress.hidden = true;
   progress.append(elem('summary','포트별 실행 단계'));
   const stageTable = elem('div'); progress.append(stageTable);

@@ -24,27 +24,32 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 .port-query:has(#queryFields[hidden]) form {padding:0}
 .port-toolbar:has(#queryFields[hidden]) .port-heading {justify-content:flex-start}
 .port-query:has(#queryFields[hidden]) #targetCount {margin-inline:4px}
-#selectedCount {float:right;font-size:12px}
-.port-station {display:flex;flex-direction:column;gap:6px;min-height:0}
+#matrixWorkspace {display:flex;flex-direction:column;min-height:0;min-width:0;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
 #portMonitor {min-width:0;min-height:0;margin:0}
-#portLiveControl {min-width:0}
-#controlPanel {margin:0}
-#controlHeading {padding:8px 12px;background:var(--surface);border-radius:inherit;color:var(--teal)}
-#controlPanel[open] #controlHeading {border-radius:12px 12px 0 0}
-#portLiveControl .panelbody {display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;padding:8px 12px 12px}
+#portLiveControl {position:relative;flex:none;min-width:0;border-bottom:1px solid var(--stroke)}
+.matrix-control-head {display:flex;align-items:center;gap:8px;min-height:38px;padding:4px 5.7rem 4px 12px}
+.matrix-control-head h2 {line-height:1.3}
+#selectedCount {font-size:12px;font-weight:650;color:var(--teal);white-space:nowrap}
+#controlHeading {position:absolute;top:0;right:6px;display:list-item;padding:8px 7px;color:var(--teal);border-radius:6px}
+#controlPanel .panelbody {display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;max-height:30dvh;overflow:auto;padding:8px 12px;border-top:1px solid var(--stroke);background:var(--surface2)}
 #controlPanel .bar {gap:6px;flex:1 1 18rem}
 #controlPanel .bar > label {flex:1 1 7rem}
-#controlPanel :is(.output,#controlProgress) {order:-1;flex:1 1 100%;min-width:0}
+#controlPanel .output {flex:1 1 100%;min-width:0}
 #controlHint {flex:1 1 25rem}
 #batchControls,.port-action-strip,#quickActions,#liveScope {display:flex;align-items:center;flex-wrap:wrap;gap:6px}
 #batchControls {align-items:flex-end}
 #batchControls label {min-width:7rem}
-.port-action-strip {padding:6px 10px;background:var(--surface);border:1px solid var(--stroke);border-radius:9px;margin-bottom:4px}
+.port-action-strip {padding:3px 10px 7px}
 #controlTarget {flex:1 1 13rem;font-size:12px;overflow-wrap:anywhere}
 #liveScope {margin:0}
 #quickOff {color:var(--bad)}
 #quickOn {color:var(--teal)}
+#matrixFeedback {min-height:0;max-height:min(30dvh,18rem);overflow:auto}
+#matrixFeedback:not(:has(> :not([hidden]))) {display:none}
+#matrixFeedback > :not([hidden]) {margin:0;padding:5px 10px;border-top:1px solid var(--stroke)}
+#matrixFeedback .tablebox {max-height:none}
 #controlResult p,#quickResult p {margin:5px 0}
+#monitorInventory .port-matrix-panel {border:0;border-radius:0;box-shadow:none}
 @media(min-height:360px) {
   .shell:has([data-page=ports]:not([hidden])) {height:100dvh;min-height:0}
   main:has([data-page=ports]:not([hidden])) {height:100%;min-height:0;display:flex;flex-direction:column}
@@ -53,17 +58,16 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   main:has([data-page=ports]:not([hidden])) > .status {margin:4px clamp(8px,1.25vw,22px) 0;padding:3px 8px}
   [data-page=ports] {min-height:0;flex:1;overflow:auto;margin:0 auto}
   .port-toolbar {flex:none}
-  .port-station {flex:1;min-height:0}
+  #matrixWorkspace {flex:1;min-height:0}
   #portMonitor {flex:1 1 auto}
   #portMonitor .viewer {height:100%;min-height:0}
   #portMonitor:not(.has-data) .viewer,#monitorInventory {max-height:100%}
   #monitorInventory {overflow:auto}
-  #portLiveControl {flex:0 1 auto;max-height:min(64%,30rem);overflow:auto}
-  #controlHeading {position:sticky;top:0;z-index:1}
 }
 @media(max-width:800px), (pointer:coarse) {
   .port-workspace-bar button,.query-commands button,#controlHeading,.port-action-strip button {min-height:44px}
-  #controlHeading {padding-block:10px}
+  .matrix-control-head {min-height:44px}
+  #controlHeading {padding:10px 7px}
 }
 @media(max-width:800px) {
   .port-query-input {align-items:stretch;flex-direction:column;gap:3px}
@@ -72,7 +76,7 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   .port-query form {flex-wrap:wrap;gap:3px}
   #queryFields {flex-basis:100%}
   .query-commands {flex:1 1 auto}
-  #portLiveControl .panelbody {display:grid;grid-template-columns:minmax(0,1fr)}
+  #controlPanel .panelbody {display:grid;grid-template-columns:minmax(0,1fr)}
   #batchControls {display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
   .port-action-strip {gap:4px 6px}
   #controlTarget {flex:1 1 100%}
@@ -85,18 +89,18 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   .port-workspace-bar {flex-wrap:nowrap}
   .port-workspace-bar button,.query-commands button {min-width:44px;padding-inline:6px}
   .port-heading h1 {position:absolute;width:1px;height:1px;white-space:nowrap;overflow:hidden;clip-path:inset(50%)}
-  #portLiveControl {max-height:85%}
   .query-commands {gap:4px}
   .port-query:has(#queryFields[hidden]) #targetCount {display:none}
-  .port-action-strip {padding:5px}
-  .port-action-strip button {padding-inline:6px}
+  .port-action-strip {padding:2px 6px 5px}
+  .port-action-strip button {padding-inline:5px}
+  #quickActions,#liveScope {gap:4px}
 }
 @media(max-width:650px) and (min-height:360px) {
   .shell:has([data-page=ports]:not([hidden])) {display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
 }
 @media(max-height:500px) {
-  [data-page=ports]:has(#controlPanel[open]) .port-toolbar {display:none}
-  #portLiveControl:has(#controlPanel[open]) {max-height:92%}
+  #controlPanel .panelbody {max-height:35dvh}
+  #matrixFeedback {max-height:25dvh}
 }
 #targetEditor {width:min(60rem,95vw); max-height:90vh;overflow:auto}
 .target-body {padding:0 20px 20px;display:grid;gap:12px}

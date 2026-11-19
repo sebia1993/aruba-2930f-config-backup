@@ -6,7 +6,13 @@ import socket
 import ssl
 from urllib.parse import urlsplit
 
-from browser_qa import click_quick_poe, enter_ssh_credentials, expect_power_result, run_browser_case
+from browser_qa import (
+    click_quick_poe,
+    enter_ssh_credentials,
+    expect_power_result,
+    launch_test_browser,
+    run_browser_case,
+)
 from browser_unified_controls import hit_point, resize_workspace
 from playwright.sync_api import expect
 
@@ -83,13 +89,18 @@ def check_phone_port_control(peer, switch, shots):
     assert matrix.locator(".tablewrap").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
     if shots:
         peer.screenshot(path=shots / "lan-phone-ports.png")
-    matrix.locator("#inspectObservedPort").tap()
-    expect(peer.locator("#selectedCount")).to_have_text("선택 1개")
-    expect(peer.locator("#controlPanel")).to_have_attribute("open", "")
+    card = peer.get_by_role("region", name="포트 상태 매트릭스", exact=True)
+    expect(card.locator("#selectedCount")).to_have_text("선택 1개")
+    expect(card.locator("#controlTarget")).to_contain_text(address)
+    expect(card.locator("#controlPanel")).not_to_have_attribute("open", "")
+    expect(matrix.locator("#tbody input:checked")).to_have_count(0)
+    assert "configure terminal" not in switch.commands
     for selector in ("#quickOn", "#quickOff"):
-        hit_point(peer.locator(selector))
+        hit_point(card.locator(selector))
     with click_quick_poe(peer, "poe_off", [(address, "1")], touch=True):
         expect_power_result(peer, address, "8.1 W", "0 W", delta="\N{MINUS SIGN}8.1 W")
+    expect(card.locator("#controlResult")).to_be_visible()
+    expect(card.locator("#controlPanel")).not_to_have_attribute("open", "")
     assert switch.commands.count("no interface 1 power-over-ethernet") == 1
     expect(matrix.locator("#tbody tr[data-port-key]")).to_contain_text("0 W")
     changes.tap()
@@ -139,7 +150,9 @@ def exercise(page, url, switch, _second_switch, shots, _backup):
             device_scale_factor=3,
             locale="ko-KR",
         ) as remote,
-        browser.new_context(ignore_https_errors=True) as second,
+        # A second device has its own browser process and network connections.
+        launch_test_browser(browser.browser_type) as guest_browser,
+        guest_browser.new_context(ignore_https_errors=True) as second,
     ):
         peer = remote.new_page()
         guest = second.new_page()

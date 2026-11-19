@@ -47,7 +47,7 @@ def enter_ssh_credentials(page, switch, *, touch=False):
 
 
 def expect_power_result(page, endpoint, before, after, *, port="1", delta=None):
-    table = page.locator("#controlResult table")
+    table = page.locator("#matrixWorkspace #controlResult table")
     row = table.locator("tbody tr").filter(has=page.get_by_text(endpoint, exact=True))
     row = row.filter(has=page.get_by_role("cell", name=port, exact=True))
     expect(row).to_have_count(1, timeout=90000)
@@ -86,7 +86,8 @@ def click_quick_poe(page, operation, targets, *, touch=False):
     try:
         name = "PoE ON 즉시 실행" if operation == "poe_on" else "PoE OFF 즉시 실행"
         with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")):
-            button = page.get_by_role("button", name=name, exact=True)
+            card = page.get_by_role("region", name="포트 상태 매트릭스", exact=True)
+            button = card.get_by_role("button", name=name, exact=True)
             if touch:
                 button.tap()
             else:
@@ -448,12 +449,18 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#statusText")).to_contain_text("종료했습니다.")
 
 
-def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chromium"):
-    root = Path(os.environ.get("ARUBA_WEB_ROOT", Path(__file__).resolve().parents[1]))
-    python = os.environ.get("ARUBA_WEB_PYTHON", sys.executable)
+def launch_test_browser(browser_type):
+    if browser_type.name == "webkit":
+        return browser_type.launch()
     chrome = os.environ.get(
         "ARUBA_WEB_CHROME", r"C:\Program Files\Google\Chrome\Application\chrome.exe"
     )
+    return browser_type.launch(executable_path=chrome, headless=True)
+
+
+def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chromium"):
+    root = Path(os.environ.get("ARUBA_WEB_ROOT", Path(__file__).resolve().parents[1]))
+    python = os.environ.get("ARUBA_WEB_PYTHON", sys.executable)
     shots = (
         Path(os.environ["ARUBA_WEB_SCREENSHOTS"]) if "ARUBA_WEB_SCREENSHOTS" in os.environ else None
     )
@@ -494,10 +501,7 @@ def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chr
                     raise RuntimeError(f"Server exited: {process.returncode}")
                 time.sleep(0.1)
             info = json.loads((folder / "server-info.json").read_text(encoding="utf-8"))
-            if browser_engine == "webkit":
-                browser = playwright.webkit.launch()
-            else:
-                browser = playwright.chromium.launch(executable_path=chrome, headless=True)
+            browser = launch_test_browser(getattr(playwright, browser_engine))
             try:
                 page = browser.new_page(viewport={"width": 1440, "height": 960}, locale="ko-KR")
                 page.set_default_timeout(15000)
