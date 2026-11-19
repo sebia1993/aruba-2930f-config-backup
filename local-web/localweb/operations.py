@@ -206,6 +206,7 @@ class Operations:
         self._unreported_ports: set[tuple[DeviceTarget, str]] = set()
         self.unverified_controls: set[tuple[DeviceTarget, str]] = set()
         self._inventory: tuple[PoETarget, ...] = ()
+        self.query_target_text: str | None = None
         self._review: dict[str, HostKeyCheck] = {}
         self._progress_lock = threading.Lock()
         self.progress: dict = {}
@@ -266,6 +267,7 @@ class Operations:
             if action == "targets.apply":
                 self._inventory = _groups({"targets": view["targets"]}) if view["groups"] else ()
                 self.last_results = ()
+                self.query_target_text = None
                 self.unverified_controls.clear()
             return view
         if action == "session.open" or action.startswith("hostkey."):
@@ -289,6 +291,7 @@ class Operations:
             self.last_results = ()
             self.unverified_controls.clear()
             self.credentials = credentials
+            self.query_target_text = None
             session_legacy_ssh.clear()
             return {"connected": credentials is not None}
         if action == "hostkey.inspect":
@@ -387,7 +390,11 @@ class Operations:
             raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
         if action in {"ports.query", "ports.refresh"}:
             return self._query(
-                _groups(body), self.credentials, cancel, refresh=action == "ports.refresh"
+                _groups(body),
+                self.credentials,
+                cancel,
+                refresh=action == "ports.refresh",
+                target_text=body["targets"],
             )
         if action in {"cable.show", "cable.test"}:
             testing = action == "cable.test"
@@ -412,7 +419,7 @@ class Operations:
             return self._backup(body, self.credentials, cancel)
         raise ValueError("지원하지 않는 작업입니다.")
 
-    def _query(self, groups, credentials, cancel, *, refresh: bool) -> dict:
+    def _query(self, groups, credentials, cancel, *, refresh: bool, target_text=None) -> dict:
         if refresh:
             current = {g.target: g for g in self._inventory}
             for group in groups:
@@ -424,6 +431,7 @@ class Operations:
             )
         else:
             self._inventory = groups
+            self.query_target_text = target_text
             self.last_results = ()
             self._unreported_ports.clear()
             self.unverified_controls.clear()

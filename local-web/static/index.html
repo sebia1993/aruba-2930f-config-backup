@@ -51,43 +51,39 @@
       <progress id="jobProgress" aria-label="현재 작업 단계 진행률" hidden></progress>
     </div><button id="stopJob" type="button" hidden>작업 취소</button><button id="dismissStatus" aria-label="메시지 닫기" hidden>닫기</button></div>
     <section data-page="ports" aria-label="포트·PoE 관리">
-      <div class="port-toolbar">
-      <div class="port-heading">
-        <h1>포트·PoE 관리</h1>
-        <div class="bar port-workspace-bar" role="group" aria-label="관제 결과 보기">
-          <button type="button" id="portChanges" aria-pressed="false" aria-controls="portMonitor" disabled>변화만 보기</button>
-          <button type="button" id="portReviewTab" aria-pressed="false" aria-controls="portMonitor" disabled>우선 확인</button>
-        </div>
-      </div>
-      <article class="panel port-query" aria-label="조회 대상">
-        <form id="queryForm">
-          <div id="queryFields">
-          <div class="port-query-input">
-            <div><h2 id="queryHeading">실시간 조회</h2><label for="queryTargets">스위치 주소와 포트 (한 줄에 한 대)</label></div>
-            <textarea id="queryTargets" rows="1" autocapitalize="none" spellcheck="false" placeholder="주소와 포트 목록을 공백으로 구분하세요." required></textarea>
-          </div>
-          <button type="button" id="manageTargets" data-job aria-haspopup="dialog" aria-controls="targetEditor">대상 목록 관리</button>
-          </div>
-          <div class="query-commands">
-            <span id="targetCount" role="status"></span>
-            <button type="button" id="editQueryTargets" aria-controls="queryFields" aria-expanded="true" hidden>조회 대상 접기</button>
-            <button id="queryPorts" class="primary" data-job formnovalidate disabled>포트 조회</button>
-            <span class="monitor-settings">
-              <label title="전체 조회 대상 모니터링 간격 (1~60분)"><input id="monitorInterval" aria-label="모니터링 간격 (분)" type="number" min="1" max="60" step="1" value="5" required inputmode="numeric">분</label>
-              <button type="button" id="monitorToggle" aria-label="모니터링 시작" aria-pressed="false" title="조회 대상 전체 모니터링 시작" disabled><span id="monitorStartLabel"><span aria-hidden="true">▶</span> 모니터링<span class="monitor-verb"> 시작</span></span><span id="monitorStopLabel" hidden><span aria-hidden="true">■</span> 중지</span></button>
-            </span>
-          </div>
-        </form>
-        <p id="monitorStatus" role="status" hidden></p>
-      </article>
-      </div>
       <section class="port-station" id="matrixWorkspace" aria-labelledby="matrixWorkspaceTitle">
         <div id="portLiveControl">
+          <h1 class="port-setup-title">포트·PoE 관리</h1>
+          <form id="queryForm" aria-label="조회 대상과 모니터링">
+            <div id="queryFields">
+              <div class="port-query-input">
+                <label for="queryTargets" id="queryHeading">스위치 주소와 포트 (한 줄에 한 대)</label>
+                <textarea id="queryTargets" rows="1" autocapitalize="none" spellcheck="false" placeholder="주소와 포트 목록을 공백으로 구분하세요." required></textarea>
+              </div>
+              <div class="query-field-tools">
+                <button type="button" id="manageTargets" data-job aria-haspopup="dialog" aria-controls="targetEditor">대상 목록 관리</button>
+                <label class="monitor-interval">모니터링 간격 <input id="monitorInterval" aria-label="모니터링 간격 (분)" type="number" min="1" max="60" step="1" value="5" required inputmode="numeric"> 분</label>
+              </div>
+            </div>
+            <div class="query-commands">
+              <div class="query-summary"><span id="targetCount" role="status"></span><time id="lastPortQuery" hidden></time></div>
+              <button type="button" id="editQueryTargets" aria-controls="queryFields" aria-expanded="true" hidden>조회 설정</button>
+              <button id="queryPorts" class="primary" data-job formnovalidate disabled>포트 조회</button>
+              <button type="button" id="monitorToggle" aria-label="모니터링 시작" aria-pressed="false" title="조회 대상 전체 모니터링 시작" disabled><span id="monitorStartLabel"><span aria-hidden="true">▶</span> 모니터링<span class="monitor-verb"> 시작</span></span><span id="monitorStopLabel" hidden><span aria-hidden="true">■</span> 모니터링 중지</span></button>
+              <button type="button" id="retryFailedPorts" data-job hidden>실패 포트만 재조회</button>
+            </div>
+            <p id="monitorStatus" role="status" hidden></p>
+          </form>
+          <div class="matrix-controls">
           <div class="matrix-control-head">
             <h2 id="matrixWorkspaceTitle">포트 상태 매트릭스</h2>
             <div id="portPresentation" role="group" aria-label="조회 결과 표시 방식" hidden>
               <button type="button" id="matrixView" aria-pressed="true" aria-controls="portMonitor">매트릭스</button>
               <button type="button" id="listView" aria-pressed="false" aria-controls="portMonitor">결과 목록</button>
+            </div>
+            <div class="port-workspace-bar" role="group" aria-label="관제 결과 보기">
+              <button type="button" id="portChanges" aria-pressed="false" aria-controls="portMonitor" disabled>변화만 보기</button>
+              <button type="button" id="portReviewTab" aria-pressed="false" aria-controls="portMonitor" disabled>우선 확인</button>
             </div>
             <span id="selectedCount" aria-live="polite" hidden>선택 0개</span>
           </div>
@@ -98,6 +94,7 @@
             <p id="controlHint" class="hint">직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.</p>
             <button id="preview" type="button" class="primary" data-job>제어 대상과 명령 검토</button>
           </div></details>
+          </div>
           <div class="port-action-strip" id="portActionStrip" hidden>
             <p id="controlTarget" class="control-target" hidden></p>
             <div id="quickActions" hidden></div>

@@ -3,44 +3,35 @@
 /* Successful reads are visible in the matrix; announce completion once to screen readers. */
 main:has([data-page=ports]:not([hidden])) .status.query-complete {position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 main:has([data-page=ports]:not([hidden])) .status.query-complete button {display:none}
-.port-toolbar,.port-heading,.query-commands {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.port-heading {flex:1 1 auto;justify-content:space-between;gap:6px 12px}
-.port-heading h1 {margin:0;font-size:clamp(21px,2vw,28px)}
-.port-workspace-bar {gap:4px;margin:0}
-.port-query {flex:1 1 100%;margin:0}
-.port-query form {display:flex;align-items:center;gap:8px 16px;padding:7px 10px}
-#queryFields {flex:1 1 25rem;min-width:0}
-.port-query-input {display:flex;align-items:center;gap:10px}
-.port-query-input label {font-weight:500}
-.port-query-input textarea {flex:1;min-height:38px;max-height:9rem;min-width:0}
-.query-commands {justify-content:flex-end}
-#queryPorts {white-space:nowrap}
-.monitor-settings,.monitor-settings label {display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
-.monitor-settings label {flex-direction:row;color:var(--muted);font-size:12px}
+#portLiveControl {position:relative;display:flex;flex-direction:column;flex:none;min-width:0;border-bottom:1px solid var(--stroke)}
+.port-setup-title {margin:0;padding:8px 12px 2px;font-size:clamp(20px,2vw,26px)}
+.matrix-first .port-setup-title {display:none}
+.matrix-controls {position:relative;min-width:0}
+.matrix-first .matrix-controls {order:-1}
+#queryForm {display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;min-width:0;padding:6px 12px;border-bottom:1px solid var(--stroke)}
+.matrix-first #queryForm {border-top:1px solid var(--stroke);border-bottom:0}
+#queryFields {flex:1 1 28rem;min-width:0;display:grid;gap:6px}
+.port-query-input {display:grid;gap:3px}
+.port-query-input label {font-weight:550}
+.port-query-input textarea {width:100%;min-height:36px;max-height:9rem;min-width:0}
+.query-field-tools,.query-commands,.query-summary,.port-workspace-bar {display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0}
+.query-field-tools {justify-content:space-between}
+.query-commands {flex:1 1 auto;justify-content:flex-end}
+.query-commands button {white-space:nowrap}
+.query-summary {flex:1 1 auto;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.query-summary:has(#targetCount:empty):has(#lastPortQuery[hidden]) {display:none}
+.monitor-interval {display:inline-flex;flex-direction:row;align-items:center;gap:4px;color:var(--muted);white-space:nowrap}
 #monitorInterval {box-sizing:border-box;width:3.3rem;min-width:0;padding-inline:4px;text-align:center}
 #monitorToggle[aria-pressed=true] {color:var(--teal);border-color:var(--teal);background:var(--active)}
-#monitorStatus {margin:3px 10px 5px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+#retryFailedPorts {color:var(--bad)}
+#monitorStatus {flex-basis:100%;margin:0;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
 #monitorStatus[data-error=true] {color:var(--bad)}
-@media(max-width:800px),(pointer:coarse) {
-  #monitorInterval {min-height:44px;font-size:16px}
-}
-@media(max-width:650px) {
-  #monitorStatus {margin:2px 0}
-  #monitorInterval {width:44px}
-  .monitor-verb {display:none}
-}
-#manageTargets {margin-top:4px}
 #targetEditor textarea {width:100%;min-width:0}
 #targetCount {color:var(--muted);font-size:12px;overflow-wrap:anywhere}
 #targetCount:empty {display:none}
 #profileFiles:not([hidden]) {margin-top:8px}
-.port-query:has(#queryFields[hidden]) {flex:0 1 auto;border:0;box-shadow:none;background:none}
-.port-query:has(#queryFields[hidden]) form {padding:0}
-.port-toolbar:has(#queryFields[hidden]) .port-heading {justify-content:flex-start}
-.port-query:has(#queryFields[hidden]) #targetCount {margin-inline:4px}
 #matrixWorkspace {display:flex;flex-direction:column;min-height:0;min-width:0;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
 #portMonitor {min-width:0;min-height:0;margin:0}
-#portLiveControl {position:relative;flex:none;min-width:0;border-bottom:1px solid var(--stroke)}
 .matrix-control-head {display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-height:38px;padding:4px 5.7rem 4px 12px}
 .matrix-control-head h2 {line-height:1.3}
 #portPresentation {display:inline-flex;min-width:0;gap:2px}
@@ -57,6 +48,7 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 #batchControls {align-items:flex-end}
 #batchControls label {min-width:7rem}
 .port-action-strip {padding:3px 10px 7px}
+.matrix-first:has(#queryFields[hidden]):not(:has(#controlPanel[open])) #portActionStrip[data-idle] {display:none}
 #controlTarget {flex:1 1 13rem;font-size:12px;overflow-wrap:anywhere}
 #liveScope {margin:0}
 #quickOff {color:var(--bad)}
@@ -74,7 +66,6 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   main:has([data-page=ports]:not([hidden])) > .topbar {min-height:44px;padding-block:4px}
   main:has([data-page=ports]:not([hidden])) > .status {margin:4px clamp(8px,1.25vw,22px) 0;padding:3px 8px}
   [data-page=ports] {min-height:0;flex:1;overflow:auto;margin:0 auto}
-  .port-toolbar {flex:none}
   #matrixWorkspace {flex:1;min-height:0}
   #portMonitor {flex:1 1 auto}
   #portMonitor .viewer {height:100%;min-height:0}
@@ -82,18 +73,16 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   #monitorInventory {overflow:auto}
 }
 @media(max-width:800px), (pointer:coarse) {
-  .port-workspace-bar button,.query-commands button,#controlHeading,.port-action-strip button,#portPresentation button {min-height:44px}
+  .port-workspace-bar button,.query-commands button,#manageTargets,#controlHeading,.port-action-strip button,#portPresentation button {min-height:44px}
   .matrix-control-head {min-height:44px}
   #controlHeading {padding:10px 7px}
 }
 @media(max-width:800px) {
-  .matrix-control-head:has(#portPresentation:not([hidden])) h2 {position:absolute;width:1px;height:1px;white-space:nowrap;overflow:hidden;clip-path:inset(50%)}
-  .port-query-input {align-items:stretch;flex-direction:column;gap:3px}
-  .port-query-input > div {display:flex;align-items:baseline;gap:4px 8px;flex-wrap:wrap}
-  .port-query-input label {font-size:12px}
-  .port-query form {flex-wrap:wrap;gap:3px}
+  #monitorInterval {min-height:44px;font-size:16px}
   #queryFields {flex-basis:100%}
-  .query-commands {flex:1 1 auto}
+  .matrix-control-head {padding-inline:8px}
+  .matrix-control-head h2 {flex-basis:100%;padding-inline-end:5.6rem}
+  .matrix-control-head:has(#portPresentation[hidden]) .port-workspace-bar:has(#portReviewTab:disabled) {display:none}
   #controlPanel .panelbody {display:grid;grid-template-columns:minmax(0,1fr)}
   #batchControls {display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
   .port-action-strip {gap:4px 6px}
@@ -102,13 +91,17 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 }
 @media(max-width:650px) {
   [data-page=ports] {gap:4px;padding:4px 8px}
-  .port-toolbar {gap:4px}
-  .port-toolbar:has(#queryFields[hidden]) .port-heading {flex:0 1 auto}
-  .port-workspace-bar {flex-wrap:nowrap}
-  .port-workspace-bar button,.query-commands button {min-width:44px;padding-inline:6px}
-  .port-heading h1 {position:absolute;width:1px;height:1px;white-space:nowrap;overflow:hidden;clip-path:inset(50%)}
-  .query-commands {gap:4px}
-  .port-query:has(#queryFields[hidden]) #targetCount {display:none}
+  .port-setup-title {padding-left:8px}
+  .matrix-first #editQueryTargets {position:absolute;z-index:1;top:0;right:6rem;min-height:44px;background:transparent;border-color:transparent;color:var(--teal)}
+  .matrix-first .matrix-control-head h2 {padding-right:9.5rem;line-height:1.15;min-height:36px;display:flex;align-items:center}
+  #queryForm {padding:3px 8px;gap:3px}
+  .query-summary {flex-basis:100%;gap:2px 8px}
+  .query-commands,.port-workspace-bar {justify-content:flex-start;gap:3px}
+  .port-workspace-bar button,.query-commands button,#portPresentation button {min-width:44px;padding-inline:5px}
+  .query-commands {column-gap:2px}
+  .query-commands button {padding-inline:4px}
+  #monitorInterval {width:44px}
+  .monitor-verb {display:none}
   .port-action-strip {padding:2px 6px 5px}
   .port-action-strip button {padding-inline:5px}
   #quickActions,#liveScope {gap:4px}

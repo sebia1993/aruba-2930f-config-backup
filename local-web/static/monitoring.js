@@ -4,7 +4,7 @@
 
   const toggle=$('monitorToggle'), interval=$('monitorInterval'), statusLine=$('monitorStatus');
   const clock=new Intl.DateTimeFormat('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
-  let state={active:false}, appliedJob=null, startText='', firstView=false;
+  let state={active:false}, appliedJob=null, startText='', firstView=false, stagedJob=null;
   let timer, generation=0, checking=false, changing=false, initialized=false, notice='', actionError='';
   function time(value) {
     const millis=Date.parse(value);
@@ -37,7 +37,7 @@
   }
   function accept(next) {
     if (next.monitorId!==state.monitorId) {
-      appliedJob=null;
+      appliedJob=stagedJob=null;
       firstView=true;
       startText='';
     }
@@ -55,18 +55,16 @@
     const same=window.portTools.matchesInventory(groups);
     if (!same) {
       clearPorts();
-      window.portTools.restoreInventory(groups,startText || undefined,true);
+      window.portTools.restoreInventory(groups,workspace.targetText ?? (startText || undefined),true);
     }
     const preserve=!!ui.liveId && same;
     receivePorts(query,preserve,new Set(query.rows.map(portKey)),preserve);
-    if (firstView) {
-      monitor()?.setPresentation('matrix');
-      if (query.rows.some(row=>row.status==='ok')) {
-        $('editQueryTargets').hidden=false;
-        setQueryExpanded(false);
-      }
-      firstView=false;
-    }
+    const success=query.rows.some(portObserved);
+    const first=firstView;
+    firstView=false;
+    if (first) monitor()?.setPresentation('matrix');
+    const matrixFirst=$('matrixWorkspace').closest('[data-page]').classList.contains('matrix-first');
+    if (!success || first || (!matrixFirst && $('queryTargets').value===startText)) setQueryWorkspace(success);
     return true;
   }
   async function check() {
@@ -84,6 +82,16 @@
         if (!ui.session.active || changedAccount) clearPorts();
         sync();
       }
+      if (next.active && firstView && next.jobId && !next.lastJobId && next.jobId!==stagedJob) {
+        const job=await api('/api/jobs/'+encodeURIComponent(next.jobId));
+        if (ticket!==generation || ui.busy) return;
+        if (job.progress?.targets?.length) {
+          const text=job.progress.targetText || startText;
+          if (text && !$('queryTargets').value) $('queryTargets').value=text;
+          window.portTools.showStartingMatrix(job.progress.targets,text);
+          stagedJob=next.jobId;
+        }
+      }
       if (!next.active || !next.lastJobId || next.lastJobId===appliedJob || next.jobId) return;
       const workspace=await api('/api/workspace');
       if (workspace.busy) return;
@@ -92,7 +100,11 @@
       if (ticket!==generation || ui.busy || !ui.token) return;
       accept(latest);
       if (!latest.active || latest.monitorId!==next.monitorId || latest.lastJobId!==next.lastJobId || latest.jobId) return;
-      if (applyWorkspace(workspace) || latest.error) appliedJob=latest.lastJobId;
+      if (applyWorkspace(workspace)) appliedJob=latest.lastJobId;
+      else if (latest.error) {
+        setQueryWorkspace(false);
+        appliedJob=latest.lastJobId;
+      }
     } catch (error) {
       if (ticket===generation && state.active) {
         notice='모니터링 상태 연결 지연 · '+error.message;
@@ -105,6 +117,7 @@
   }
   async function change(start,targets,minutes) {
     if (changing || !ui.token) return;
+    const stoppedInitial=!start && firstView;
     generation++;
     changing=true;
     actionError='';
@@ -115,8 +128,12 @@
       accept(next);
       if (start) {
         startText=targets;
+        if (next.groups?.length && !ui.busy) {
+          window.portTools.showStartingMatrix(next.groups,targets);
+          stagedJob=next.jobId;
+        }
         if (!ui.busy) notify('');
-      }
+      } else if (stoppedInitial && !ui.rows.some(portObserved)) setQueryWorkspace(false);
     } catch (error) {
       actionError=error.message;
     } finally {
@@ -128,8 +145,8 @@
   toggle.onclick=()=>{
     if (state.active) return change(false);
     if (!interval.reportValidity()) return;
-    const input=$('queryTargets'), targets=input.value.trim();
-    if (!targets) {
+    const input=$('queryTargets'), targets=input.value;
+    if (!targets.trim()) {
       setQueryExpanded(true);
       input.value='';
       input.reportValidity();

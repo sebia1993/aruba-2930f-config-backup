@@ -91,7 +91,7 @@ async function api(path, data) {
   return json;
 }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function poll(id) {
+async function poll(id,resuming=false) {
   let failures = 0;
   let cursor = 0;
   for (;;) {
@@ -106,6 +106,9 @@ async function poll(id) {
     if (job.state === 'cancelled') return {action:job.action, result:job.result || {}, cancelled:true};
     if (job.state === 'failed') throw new Error(job.error || '작업이 실패했습니다.');
     if (!['running','queued'].includes(job.state)) throw new Error('작업 상태를 읽을 수 없습니다.');
+    if (resuming && job.action==='ports.query' && job.progress?.targets?.length) {
+      window.portTools?.resumeQuery(job.progress);
+    }
     window.portTools?.onProgress?.(job.action,job.progress || {});
     window.backupTools?.onProgress?.(job.action,job.progress || {});
     window.controlTools?.onProgress?.(job.action,job.progress || {});
@@ -122,7 +125,7 @@ async function poll(id) {
     await delay(450);
   }
 }
-async function run(action, body, receive) {
+async function run(action, body, receive, keepMatrix=false) {
   if (ui.busy || !ui.token) return;
   ui.busy = true;
   window.powerMonitoring?.foregroundStarted();
@@ -133,18 +136,20 @@ async function run(action, body, receive) {
   setJobProgress({});
   notify(quick ? operationNames[quick.operation] + ' 즉시 실행 · 선택 ' + quick.targets.length + '개' : jobNames[action] + ' 진행 중…');
   try {
-    window.portTools?.onJob?.(action,'running',body);
     const submitted = await api('/api/jobs', {action,body}).catch(error=>{
       if (!requestId || (error.status && error.status < 500)) throw error;
       // The server may have accepted the operation. Read its original job without submitting again.
       return {id:requestId};
     });
+    window.portTools?.onJob?.(action,'running',body,keepMatrix);
     body = null;
     ui.jobId = submitted.id;
     sync();
     const {result,cancelled} = await poll(ui.jobId);
-    if (action==='ports.query' && !Array.isArray(result.rows)) await window.portTools.recoverQuery();
-    else if (receive) receive(result, cancelled);
+    if (action==='ports.query' && !Array.isArray(result.rows)) {
+      await window.portTools.recoverQuery();
+      setQueryWorkspace(false);
+    } else if (receive) receive(result, cancelled);
     if (['control.apply','control.quick-execute'].includes(action) && hasUncertainControl(result)) {
       notify(result.message || '포트 제어 결과를 확인하지 못했습니다.',true);
     } else if (action === 'control.quick-execute' && result.blocked?.length) {
@@ -155,12 +160,27 @@ async function run(action, body, receive) {
       notify(jobNames[action] + (cancelled ? ' 취소됨' : ' 완료') + ' · 전력 자동 재조회 ' + measured + '개 측정' +
         (missing ? ' · ' + missing + '개 미측정' : '') + singlePowerChange(result),missing>0);
     } else {
+      const portRead=action==='ports.query' || (action==='ports.refresh' && keepMatrix);
+      if (portRead && !cancelled && Array.isArray(result.rows)) {
+        const failed=result.rows.filter(portReadFailed);
+        if (failed.length || (action==='ports.query' && !result.rows.some(portObserved))) {
+          const sample=failed.find(row=>row.message || row.lldp_message) || result.rows.find(row=>row.message);
+          const reason=sample?.message || sample?.lldp_message;
+          const summary=failed.length ? '조회 실패 '+failed.length+'포트' : '조회에 성공한 포트가 없습니다.';
+          const partial=result.rows.some(portObserved);
+          notify(jobNames[action]+' 완료 · '+summary+(reason?' · '+reason:''),!partial,partial);
+          return;
+        }
+      }
       const shownInMatrix=!cancelled && ['ports.query','ports.refresh'].includes(action) &&
-        result.rows?.length>0 && result.rows.every(row=>row.status==='ok');
+        result.rows?.length>0 && result.rows.every(portObserved);
       notify(jobNames[action] + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'),false,shownInMatrix);
     }
   } catch (error) {
-    if (action==='ports.query') await window.portTools.recoverQuery();
+    if (action==='ports.query') {
+      await window.portTools.recoverQuery();
+      setQueryWorkspace(false);
+    }
     if (quick) window.controlTools.finishProgress();
     if (quick && ui.jobId) {
       markControlRowsUsed(quick.targets);
@@ -298,7 +318,37 @@ function setQueryExpanded(expanded) {
   $('queryFields').hidden=!expanded;
   const edit=$('editQueryTargets');
   edit.setAttribute('aria-expanded',String(expanded));
-  edit.textContent=expanded?'조회 대상 접기':'조회 대상 변경';
+  edit.textContent=expanded?'설정 닫기':'조회 설정';
+}
+function setQueryWorkspace(active) {
+  $('matrixWorkspace').closest('[data-page]').classList.toggle('matrix-first',active);
+  $('editQueryTargets').hidden=!active;
+  $('queryPorts').textContent=active?'전체 재조회':'포트 조회';
+  setQueryExpanded(!active);
+}
+function portObserved(row) {
+  return row.status==='ok' || row.status==='unsupported';
+}
+function portReadFailed(row) {
+  return row.status==='failed' || row.lldp_status==='failed';
+}
+function updateQuerySummary() {
+  const failedCount=ui.rows.filter(portReadFailed).length;
+  const retry=$('retryFailedPorts');
+  retry.hidden=!failedCount || !ui.rows.some(portObserved);
+  retry.textContent='실패 포트만 재조회 ('+failedCount+')';
+  const last=$('lastPortQuery');
+  let latest=0;
+  for (const row of ui.rows) {
+    const time=Date.parse(row.finished_at || row.observed_at);
+    if (time>latest) latest=time;
+  }
+  last.hidden=!latest;
+  if (latest) {
+    const stamp=new Date(latest);
+    last.dateTime=stamp.toISOString();
+    last.textContent='최근 조회 '+stamp.toLocaleTimeString('ko-KR',{hour12:false});
+  }
 }
 $('editQueryTargets').onclick=()=>{
   const open=$('queryFields').hidden || !$('queryTargets').value.trim();
@@ -633,10 +683,8 @@ function clearPorts(preserveView=false) {
   $('controlResult').hidden = true;
   expireLiveMatrix(preserveView);
   $('controlPanel').open=false;
-  if (!preserveView) {
-    $('editQueryTargets').hidden=true;
-    setQueryExpanded(true);
-  }
+  updateQuerySummary();
+  if (!preserveView) setQueryWorkspace(false);
   renderPorts();
 }
 function powerBadge(view) {
@@ -678,12 +726,13 @@ function updateControlTarget() {
     target.textContent=observed.ip+(observed.sshPort===22 ? '' : ':'+observed.sshPort)+' / 포트 '+observed.port;
   } else target.textContent='';
   target.hidden=!target.textContent;
-  $('selectedCount').hidden=!batch;
+  $('selectedCount').hidden=!batch || !targets.length;
   $('selectedCount').textContent='선택 '+targets.length+'개';
   $('quickActions').hidden=!targets.length || ($('operation').value==='disable' && !matrixControlTargets('poe_off').length);
   $('liveScope').hidden=!!currentInspection() || !(ui.liveId || displayingInventory());
   const inspect=$('inspectSingle');
   const strip=$('portActionStrip');
+  strip.toggleAttribute('data-idle',!ui.selected.size && !ui.tileRow && !currentInspection() && !observed);
   const container=observed ? strip : $('singleControls');
   if (inspect.parentElement!==container) container.insertBefore(inspect,observed ? $('liveScope') : null);
   inspect.hidden=batch && !observed;
@@ -709,6 +758,7 @@ function receivePorts(result,keepView=false,refreshedKeys,periodic=false) {
   const selectedKey=periodic && ui.tileRow?.key;
   ui.tileRow=null;
   ui.rows = window.portTools.reconcileRows(result.rows,refreshedKeys);
+  updateQuerySummary();
   const available = new Set(window.portTools.availableControlTargets($('operation').value,true).map(controlPortKey));
   ui.selected = new Set([...ui.selected].filter(key=>available.has(key)));
   if (ui.rows.length && !ui.rows.some(row=>row.status==='refresh_pending')) {
@@ -723,11 +773,10 @@ function queryPorts(targets) {
   return run('ports.query',{targets},result=>{
     window.portTools.acceptQuery(result.groups);
     receivePorts(result,true);
-    monitor()?.setPresentation('matrix');
-    if (ui.rows.some(row=>row.status==='ok')) {
-      $('editQueryTargets').hidden=false;
-      setQueryExpanded(false);
-    } else setQueryExpanded(true);
+    const viewer=monitor();
+    viewer?.setPresentation('matrix');
+    if (viewer?.source().view==='review') viewer.navigate('overview');
+    setQueryWorkspace(ui.rows.some(portObserved));
   });
 }
 let credentialRequest=null;
@@ -744,8 +793,8 @@ function runSsh(action, body, receive) {
 }
 form('queryForm', () => {
   if (ui.busy || !ui.token || queryCredentials.open) return;
-  const input = $('queryTargets'), targets = input.value.trim();
-  if (!targets) {
+  const input = $('queryTargets'), targets = input.value;
+  if (!targets.trim()) {
     input.value = '';
     input.reportValidity();
     return;
@@ -779,6 +828,18 @@ function refreshTargets(bySwitch) {
   const targets=window.portTools.refreshTargets(bySwitch);
   if (targets) runSsh('ports.refresh',{targets},result=>receivePorts(result,true));
 }
+$('retryFailedPorts').onclick=()=>withSshAccount(()=>{
+  const failed=ui.rows.filter(portReadFailed);
+  if (!failed.length || !ui.rows.some(portObserved)) return;
+  const byEndpoint=new Map();
+  for (const row of failed) {
+    const address=endpoint(row);
+    if (!byEndpoint.has(address)) byEndpoint.set(address,new Set());
+    byEndpoint.get(address).add(row.interface);
+  }
+  const targets=[...byEndpoint].map(([address,ports])=>address+' '+[...ports].join(',')).join('\n');
+  run('ports.refresh',{targets},result=>receivePorts(result,true,undefined,true),true);
+});
 $('refreshPorts').onclick = () => refreshTargets(false);
 $('refreshSwitch').onclick = () => refreshTargets(true);
 function selectScope(eligibleOnly) {
@@ -1041,27 +1102,25 @@ async function start() {
       setJobProgress({});
       notify('진행 중인 작업을 기다리고 있습니다.');
       try {
-        resumed=await poll(bootstrap.busyJob);
+        resumed=await poll(bootstrap.busyJob,true);
         notify((jobNames[resumed.action] || '작업') + (resumed.cancelled ? ' 취소됨' : ' 완료'));
       } catch (error) {
         notify(error.message,true);
       } finally {
+        window.portTools?.endResumedQuery();
         setJobProgress(null);
         ui.busy = false; ui.jobId = null;
         const latest = await api('/api/bootstrap'); ui.session = latest.session || {active:false};
       }
     }
     const workspace = await api('/api/workspace');
-    if (workspace.groups?.length && !$('queryTargets').value.trim()) {
+    if (workspace.groups?.length) {
       if (document.readyState === 'loading') await new Promise(resolve=>window.addEventListener('DOMContentLoaded', resolve,{once:true}));
-      window.portTools?.restoreInventory?.(workspace.groups);
+      window.portTools.restoreInventory(workspace.groups,workspace.targetText,true);
       if (workspace.query) {
         receivePorts(workspace.query);
-        if (ui.rows.some(row=>row.status==='ok')) {
-          $('editQueryTargets').hidden=false;
-          setQueryExpanded(false);
-        }
-      }
+        setQueryWorkspace(ui.rows.some(portObserved));
+      } else setQueryWorkspace(false);
     }
     if (resumed?.action === 'backup.run' && Array.isArray(resumed.result.rows)) {
       showBackupResult(resumed.result);
