@@ -114,6 +114,25 @@ dl { display: grid; grid-template-columns: minmax(90px,auto) 1fr; gap: 4px 13px;
 dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
 dialog { width: min(550px,95vw); max-height: 85vh; padding: 0; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
 dialog::backdrop { background: #030c17bc; }
+.lan-setting { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#lanToggle { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 86px; min-height: 44px; }
+.lan-track { position: relative; width: 31px; height: 18px; border: 1px solid var(--muted); border-radius: 9px; }
+.lan-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
+#lanToggle[aria-checked=true] { color: var(--teal); border-color: var(--teal); }
+#lanToggle[aria-checked=true] .lan-track { background: var(--teal); border-color: var(--teal); }
+#lanToggle[aria-checked=true] .lan-track::after { left: 15px; background: var(--surface); }
+#lanRunning { display: grid; gap: 10px; }
+.lan-address-row { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 5px 10px; }
+.lan-address-row label { grid-column: 1 / -1; }
+#lanCopy { min-height: 44px; }
+@media(max-width: 430px) {
+  .lan-address-row label { grid-area: 1 / 1; }
+  #lanCopy { grid-area: 1 / 2; }
+  #lanLink { grid-area: 2 / 1 / 3 / 3; }
+}
+#lanDialog p { margin: 0; }
+#lanDialog details p { margin-top: 7px; }
+#lanMessage:empty { display: none; }
 #reviewBody { padding: 16px 18px; display: grid; gap: 12px; }
 #reviewBody p,#reviewBody ul { margin: 0; }
 .warning { color: var(--bad); font-size: 12px; }
@@ -132,6 +151,7 @@ dialog::backdrop { background: #030c17bc; }
   .topbar { padding: 1px 8px; min-height: 46px; gap: 4px; }
   .topbar .tools { flex-wrap: nowrap; gap: 4px; }
   .topbar .tools > button { min-height: 44px; }
+  #lanAccess { padding-inline: 6px; }
   .crumb { font-size: 13px; }
   .theme-toggle { min-width: 44px; padding: 6px; }
   .theme-toggle span { display: none; }

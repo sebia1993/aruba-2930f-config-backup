@@ -5,7 +5,7 @@
 
 ## 브라우저에서 사용하는 로컬 웹
 
-Windows x64용 ZIP을 풀고 **Start-Local-Web.cmd**를 실행하세요. **관제·제어**에서 실시간 포트 매트릭스를 열고, **변화만 보기**로 직전 조회와 비교하거나 **우선 확인**으로 전력을 점검할 포트를 고를 수 있습니다. 다른 IPv4 대역에서도 서버 주소에 연결할 수 있으면 **LAN 공유**에서 발급한 HTTPS 초대 링크로 접속할 수 있습니다. 휴대폰에서도 같은 초대 링크를 열면 화면 크기에 맞춰 포트별 전력과 선택한 제어 대상을 확인할 수 있습니다. [로컬 웹 사용 안내](local-web/README.md) · [웹 v1.6.1 다운로드](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/web-v1.6.1)
+Windows x64용 ZIP을 풀고 **Start-Local-Web.cmd**를 실행하세요. **관제·제어**에서 실시간 포트 매트릭스를 열고, **변화만 보기**로 직전 조회와 비교하거나 **우선 확인**으로 전력을 점검할 포트를 고를 수 있습니다. 서버 PC에서 **네트워크 공유**를 켜면 다른 PC나 휴대폰의 브라우저에 `서버IP:18766`을 입력해 접속할 수 있습니다. 공유를 끄면 원격 연결이 종료됩니다. [로컬 웹 사용 안내](local-web/README.md) · [웹 v1.7.0 다운로드](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/web-v1.7.0)
 
 ## Windows 데스크톱 프로그램
 

@@ -4,41 +4,11 @@ import argparse
 import hashlib
 import socket
 import ssl
-from http.cookies import SimpleCookie
 from urllib.parse import urlsplit
 
 from browser_qa import click_quick_poe, enter_ssh_credentials, expect_power_result, run_browser_case
 from browser_unified_controls import hit_point, resize_workspace
-from playwright.sync_api import Error, expect
-
-
-def open_invitation(page, link):
-    # Exception text from browser navigation normally includes the entire one-use URL.
-    try:
-        response = page.goto(link, wait_until="domcontentloaded")
-    except Error:
-        raise AssertionError("Browser could not reach the LAN listener") from None
-    return response.status
-
-
-def request_invitation(context, invitation):
-    try:
-        return context.request.get(invitation, max_redirects=0)
-    except Error:
-        raise AssertionError("Could not inspect invitation response") from None
-
-
-def admit_second_browser(guest, invitation, base):
-    # Inspect the actual 303 before following it. WebKit's cookie inspector on
-    # Windows reports SameSite=None even when the server sends SameSite=Strict.
-    response = request_invitation(guest.context, invitation)
-    assert response.status == 303 and response.headers.get("location") == "/"
-    cookies = SimpleCookie(response.headers.get("set-cookie", ""))
-    assert len(cookies) == 1
-    cookie = next(iter(cookies.values()))
-    assert cookie["httponly"] and cookie["secure"]
-    assert cookie["samesite"].lower() == "strict" and cookie["path"] == "/"
-    assert guest.goto(base).status == 200
+from playwright.sync_api import expect
 
 
 def check_fingerprint(host, port, fingerprint):
@@ -138,17 +108,27 @@ def check_phone_port_control(peer, switch, shots):
 
 def exercise(page, url, switch, _second_switch, shots, _backup):
     page.goto(url)
-    page.locator("#lanAccess").click()
-    expect(page.locator("#lanDialog")).to_be_visible()
+    menu = page.get_by_role("button", name="네트워크 공유", exact=True)
+    menu.click()
+    dialog = page.locator("#lanDialog")
+    expect(dialog).to_be_visible()
+    toggle = dialog.get_by_role("switch", name="네트워크 공유", exact=True)
+    expect(toggle).to_have_attribute("aria-checked", "false")
     expect(page.locator("#lanAddress option").first).to_be_attached()
     selected = page.locator("#lanAddress").input_value()
-    page.locator("#lanStart").click()
+    toggle.click()
+    expect(toggle).to_have_attribute("aria-checked", "true")
     expect(page.locator("#lanRunning")).to_be_visible()
-    invitation = page.locator("#lanLink").input_value()
-    endpoint = urlsplit(invitation)
+    endpoint = urlsplit(page.locator("#lanLink").input_value())
     assert endpoint.scheme == "https" and endpoint.hostname == selected and endpoint.port == 18766
+    assert endpoint.path in ("", "/") and not endpoint.query and not endpoint.fragment
     check_fingerprint(selected, endpoint.port, page.locator("#lanFingerprint").text_content())
     base = endpoint.scheme + "://" + endpoint.netloc
+    # Returning to the host menu retrieves the actual server state.
+    page.keyboard.press("Escape")
+    menu.click()
+    expect(toggle).to_have_attribute("aria-checked", "true")
+    expect(page.locator("#lanAddress")).to_be_disabled()
     browser = page.context.browser
     with (
         browser.new_context(
@@ -164,7 +144,8 @@ def exercise(page, url, switch, _second_switch, shots, _backup):
         peer = remote.new_page()
         guest = second.new_page()
         assert peer.goto(base + "/api/bootstrap").status == 403
-        assert open_invitation(peer, invitation) == 200
+        # A scheme-less address that starts as HTTP and an explicit HTTPS address both work.
+        assert peer.goto("http://" + endpoint.netloc).status == 200
         expect(peer.locator("nav")).to_be_visible()
         assert peer.url.rstrip("/") == base
         assert (
@@ -172,9 +153,11 @@ def exercise(page, url, switch, _second_switch, shots, _backup):
         )
         expect(peer.locator("#lanAccess")).to_be_hidden()
         expect(peer.locator("#shutdown")).to_be_hidden()
-        assert request_invitation(second, invitation).status == 403
+        assert guest.goto(base).status == 200
+        expect(guest.locator("nav")).to_be_visible()
         cookies = remote.cookies(base)
         assert len(cookies) == 1 and cookies[0]["secure"] and cookies[0]["httpOnly"]
+        assert cookies[0]["value"] != second.cookies(base)[0]["value"]
         assert peer.evaluate("document.cookie") == ""
         assert (
             peer.evaluate("""async () => {
@@ -189,16 +172,21 @@ def exercise(page, url, switch, _second_switch, shots, _backup):
         check_phone_navigation(peer)
         check_phone_port_control(peer, switch, shots)
 
-        with page.expect_response(lambda response: response.url.endswith("/api/sharing/renew")):
-            page.locator("#lanRenew").click()
-        page.wait_for_function(
-            "prior=>document.getElementById('lanLink').value!==prior", arg=invitation
-        )
-        admit_second_browser(guest, page.locator("#lanLink").input_value(), base)
-        expect(guest.locator("nav")).to_be_visible()
-        page.locator("#lanStop").click()
-        expect(page.locator("#lanSetup")).to_be_visible()
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-checked", "false")
+        expect(page.locator("#lanRunning")).to_be_hidden()
+        expect(page.locator("#lanAddress")).to_be_enabled()
         assert not peer.evaluate("fetch('/api/bootstrap').then(r=>r.ok).catch(()=>false)")
+        assert not guest.evaluate("fetch('/api/bootstrap').then(r=>r.ok).catch(()=>false)")
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-checked", "true")
+        assert page.locator("#lanLink").input_value().rstrip("/") == base
+        assert remote.request.get(base + "/api/bootstrap").status == 403
+        assert peer.goto(base).status == 200
+        expect(peer.get_by_role("navigation", name="주 메뉴")).to_be_visible()
+        assert remote.request.get(base + "/api/bootstrap").json()["lanClient"]
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-checked", "false")
     page.locator("#lanDialog form button").click()
     page.locator("#shutdown").click()
     page.locator("#reviewBody button").click()
@@ -211,8 +199,9 @@ if __name__ == "__main__":
     engine = "webkit" if parser.parse_args().webkit else "chromium"
     run_browser_case(exercise, browser_engine=engine)
     print(
-        f"PASS isolated {engine} LAN sharing: actual adapter, TLS fingerprint, one-use admission, "
+        f"PASS isolated {engine} LAN sharing: actual adapter, direct IP:port and HTTPS access, "
+        "TLS fingerprint, owner ON/OFF switch, "
         "separate browser sessions, touch navigation, mobile portrait/landscape, remote SSH query, "
         "single-tap PoE OFF with before/after power verification, restricted host actions, "
-        "renewal and listener shutdown."
+        "listener shutdown, stale session rejection and reconnection."
     )

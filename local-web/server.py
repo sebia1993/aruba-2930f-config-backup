@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.6.1"
+VERSION = "1.7.0"
 STATIC = {
     "/": "index.html",
     "/logs": "logs.html",
@@ -102,20 +102,22 @@ class Handler(BaseHTTPRequestHandler):
         port = self.server.server_port
         return self.headers.get("Host") in {f"127.0.0.1:{port}", f"localhost:{port}"}
 
-    def _signed_in(self):
+    def _session_token(self):
+        app = self.server
         try:
             cookie = SimpleCookie()
             cookie.load(self.headers.get("Cookie", ""))
-            morsel = cookie.get(self.server.cookie_name)
-            return bool(
-                morsel
-                and secrets.compare_digest(morsel.value.encode(), self.server.cookie.encode())
-            )
+            morsel = cookie.get(app.cookie_name)
+            if morsel:
+                if app.is_lan:
+                    return app.session_token(morsel.value)
+                if secrets.compare_digest(morsel.value.encode(), app.cookie.encode()):
+                    return app.token
         except CookieError, UnicodeError:
-            return False
+            pass
+        return None
 
-    def _file(self, path, download=False):
-        extra = {}
+    def _file(self, path, download=False, **extra):
         if download:
             extra["Content-Disposition"] = "attachment; filename*=UTF-8''" + quote(
                 path.name, safe=""
@@ -138,38 +140,39 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(
                 dict(service="aruba2930f-local", version=VERSION, instance=app.instance)
             )
-        if path.startswith("/start/"):
-            valid = (
-                app.consume(path[7:].encode())
-                if app.is_lan
-                else secrets.compare_digest(path[7:].encode(), app.launch.encode())
-            )
-            if not valid:
+        if not app.is_lan and path.startswith("/start/"):
+            if not secrets.compare_digest(path[7:].encode(), app.launch.encode()):
                 return self._fail(
-                    403,
-                    "LAN 초대 링크가 만료되었거나 이미 사용됐습니다. 호스트에서 새 링크를 발급하세요."
-                    if app.is_lan
-                    else "실행 링크가 만료되었습니다. Start-Local-Web.cmd를 다시 여세요.",
+                    403, "실행 링크가 만료되었습니다. Start-Local-Web.cmd를 다시 여세요."
                 )
             self._headers(
                 303,
                 "text/plain",
                 **{
                     "Location": "/",
-                    "Set-Cookie": f"{app.cookie_name}={app.cookie}; HttpOnly; SameSite=Strict; Path=/"
-                    + ("; Secure" if app.is_lan else ""),
+                    "Set-Cookie": f"{app.cookie_name}={app.cookie}; HttpOnly; SameSite=Strict; Path=/",
                 },
             )
             return
-        if not self._signed_in():
+        session_token = self._session_token()
+        extra = {}
+        if not session_token:
             if app.is_lan:
-                return self._fail(403, "호스트의 LAN 공유에서 발급한 초대 링크로 접속하세요.")
-            if path == "/":
+                if (
+                    self.path != "/"
+                    or self.headers.get("Sec-Fetch-Mode", "navigate") != "navigate"
+                    or self.headers.get("Sec-Fetch-Dest", "document") != "document"
+                ):
+                    return self._fail(403, "브라우저 주소창에서 네트워크 공유 주소를 여세요.")
+                cookie = f"{app.cookie_name}={app.new_cookie()}; Secure; HttpOnly; SameSite=Strict; Path=/"
+                extra["Set-Cookie"] = cookie
+            elif path == "/":
                 page = """<!doctype html><html lang=ko><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Aruba 2930F 로컬 접속</title><main style="max-width:42rem;margin:12vh auto;padding:2rem;font:1.15rem/1.8 system-ui"><h1>2930F 로컬 스위치 관리</h1><p>이 브라우저에서 관리 화면을 처음 열 때는 배포 폴더의 <strong>Start-Local-Web.cmd</strong>를 실행하세요. 기본 브라우저에서 이 PC의 관리 화면이 열립니다.</p></main></html>""".encode()
                 self._headers(200, "text/html; charset=utf-8", len(page))
                 self.wfile.write(page)
                 return
-            return self._fail(403, "Start-Local-Web.cmd로 관리 화면을 여세요.")
+            else:
+                return self._fail(403, "Start-Local-Web.cmd로 관리 화면을 여세요.")
         try:
             if path in STATIC:
                 if (
@@ -178,11 +181,11 @@ class Handler(BaseHTTPRequestHandler):
                     and self.headers.get("Sec-Fetch-Dest") == "document"
                 ):
                     app.browser_opening()
-                self._file(ROOT / "static" / STATIC[path])
+                self._file(ROOT / "static" / STATIC[path], **extra)
             elif path == "/api/bootstrap":
                 self._json(
                     dict(
-                        token=app.token,
+                        token=session_token,
                         version=VERSION,
                         instance=app.instance,
                         lanClient=app.is_lan,
@@ -211,16 +214,17 @@ class Handler(BaseHTTPRequestHandler):
         app = self.server
         origin = self.headers.get("Origin")
         token = self.headers.get("X-Local-Token", "")
+        session_token = self._session_token()
         if (
             not self._trusted_host()
-            or not self._signed_in()
+            or not session_token
             or self.headers.get("Sec-Fetch-Site") == "cross-site"
             or (
                 origin is not None
                 and origin
                 != ("https://" if app.is_lan else "http://") + self.headers.get("Host", "")
             )
-            or not secrets.compare_digest(token.encode(), app.token.encode())
+            or not secrets.compare_digest(token.encode(), session_token.encode())
         ):
             return self._fail(403, "로컬 브라우저 세션을 다시 여세요.")
         if self.headers.get_content_type() != "application/json":
@@ -250,8 +254,6 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     return self._fail(409, "LAN 주소와 TCP 포트 18766 사용 여부를 확인하세요.")
                 self._json(result)
-            elif path == "/api/sharing/renew":
-                self._json(app.sharing.renew())
             elif path == "/api/sharing/stop":
                 app.sharing.close()
                 self._json({"active": False})

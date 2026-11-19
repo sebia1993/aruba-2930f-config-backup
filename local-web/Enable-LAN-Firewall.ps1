@@ -5,7 +5,7 @@ param([switch]$Remove)
 $ErrorActionPreference = 'Stop'
 $ruleName = 'Aruba2930F.LocalWeb.LAN'
 $ruleGroup = 'Aruba 2930F Local Web'
-$ruleTitle = 'Aruba 2930F Local Web - invited HTTPS access'
+$ruleTitle = 'Aruba 2930F Local Web - network sharing'
 $listenPort = 18766
 
 function Assert-Administrator {

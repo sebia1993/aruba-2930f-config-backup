@@ -1,4 +1,4 @@
-"""Exercise the local owner and invited browser through separate HTTP(S) listeners."""
+"""Exercise the owner switch and direct browser access through both HTTP(S) listeners."""
 
 import hashlib
 import json
@@ -51,22 +51,19 @@ class LanSharingTests(unittest.TestCase):
         }
         self.remote_auth = {}
 
-    def request(self, path, *, remote=False, body=None, headers=None):
-        http = (
+    def request(self, path, *, remote=False, plain=False, body=None, headers=None, method=None):
+        if remote:
             # Bind the client outside the selected adapter's 127.0.0.0/30 prefix.
-            HTTPSConnection(
-                "127.0.0.1",
-                self.port,
-                context=self.client_tls,
-                timeout=3,
-                source_address=("127.0.0.4", 0),
-            )
-            if remote
-            else HTTPConnection("127.0.0.1", self.host.server_port, timeout=3)
-        )
+            options = {"source_address": ("127.0.0.4", 0), "timeout": 3}
+            if plain:
+                http = HTTPConnection("127.0.0.1", self.port, **options)
+            else:
+                http = HTTPSConnection("127.0.0.1", self.port, context=self.client_tls, **options)
+        else:
+            http = HTTPConnection("127.0.0.1", self.host.server_port, timeout=3)
         with closing(http):
             http.request(
-                "POST" if body is not None else "GET",
+                method or ("POST" if body is not None else "GET"),
                 path,
                 body if body is None or isinstance(body, bytes) else json.dumps(body),
                 {"Content-Type": "application/json", **(headers or {})},
@@ -82,8 +79,13 @@ class LanSharingTests(unittest.TestCase):
             "/api/sharing/enable", body={"address": "127.0.0.1"}, headers=self.local_auth
         )
         self.assertEqual(status, 200)
-        self.port = urlsplit(view["url"]).port
-        self.origin = view["url"]
+        endpoint = urlsplit(view["url"])
+        self.assertEqual((endpoint.scheme, endpoint.hostname), ("https", "127.0.0.1"))
+        self.assertIn(endpoint.path, ("", "/"))
+        self.assertFalse(endpoint.query or endpoint.fragment)
+        self.assertNotIn("invitation", view.keys())
+        self.port = endpoint.port
+        self.origin = "https://" + endpoint.netloc
         # Enrol the self-signed leaf only after matching the fingerprint from the host UI.
         pem = ssl.get_server_certificate(("127.0.0.1", self.port), timeout=3)
         digest = hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest()
@@ -91,12 +93,10 @@ class LanSharingTests(unittest.TestCase):
         client = ssl.create_default_context(cadata=pem)
         client.minimum_version = ssl.TLSVersion.TLSv1_2
         self.client_tls = client
-        return urlsplit(view["invitation"]).path
 
-    def sign_in(self, invite):
-        status, headers, _ = self.request(invite, remote=True)
-        self.assertEqual(status, 303)
-        self.assertEqual(headers["Location"], "/")
+    def sign_in(self):
+        status, headers, _ = self.request("/", remote=True)
+        self.assertEqual(status, 200)
         cookies = SimpleCookie(headers["Set-Cookie"])
         (cookie,) = cookies.values()
         self.assertTrue(cookie.key.startswith("__Host-"))
@@ -111,14 +111,13 @@ class LanSharingTests(unittest.TestCase):
         self.remote_auth = dict(auth, Origin=self.origin)
         self.remote_auth["X-Local-Token"] = data["token"]
 
-    def test_cross_subnet_client_needs_an_invitation_to_read_workspace_and_run_jobs(self):
-        invite = self.enable()
-        for path in ("/", "/matrix", "/api/bootstrap", "/api/workspace"):
+    def test_cross_subnet_client_can_open_the_address_and_read_workspace_and_run_jobs(self):
+        self.enable()
+        for path in ("/matrix", "/api/bootstrap", "/api/workspace", "/start/obsolete"):
             with self.subTest(path=path):
                 self.assertEqual(self.request(path, remote=True)[0], 403)
                 self.assertEqual(self.request(path, remote=True, headers=self.local_auth)[0], 403)
-        self.sign_in(invite)
-        self.assertEqual(self.request(invite, remote=True)[0], 403)
+        self.sign_in()
         self.assertEqual(self.request("/api/bootstrap", headers=self.remote_auth)[0], 403)
         self.assertEqual(self.request("/", remote=True, headers=self.remote_auth)[0], 200)
 
@@ -142,12 +141,49 @@ class LanSharingTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(view["groups"][0]["interfaces"], ["1", "2"])
 
+    def test_distinct_browsers_have_isolated_cookies_and_csrf_tokens(self):
+        self.enable()
+        self.sign_in()
+        first = self.remote_auth
+        self.sign_in()
+        self.assertNotEqual(first["Cookie"], self.remote_auth["Cookie"])
+        self.assertNotEqual(first["X-Local-Token"], self.remote_auth["X-Local-Token"])
+        mixed = {**self.remote_auth, "X-Local-Token": first["X-Local-Token"]}
+        self.assertEqual(self.request("/api/jobs", remote=True, body={}, headers=mixed)[0], 403)
+        for auth in (first, self.remote_auth):
+            self.assertEqual(self.request("/api/bootstrap", remote=True, headers=auth)[0], 200)
+
+    def test_plain_http_only_redirects_the_root_to_the_selected_https_address(self):
+        self.enable()
+        for method in ("GET", "HEAD"):
+            status, headers, payload = self.request("/", method=method, remote=True, plain=True)
+            self.assertIn(status, (301, 302, 307, 308))
+            self.assertEqual(headers["Location"], self.origin + "/")
+            self.assertIsNone(headers.get("Set-Cookie"))
+            self.assertEqual(payload, b"")
+        for path, method, headers in (
+            ("/", "GET", {"Host": "example.invalid"}),
+            ("/", "POST", {}),
+            ("/api/bootstrap", "GET", {}),
+            ("/api/jobs", "POST", {}),
+        ):
+            with self.subTest(path=path, method=method, headers=headers):
+                status, response, payload = self.request(
+                    path, method=method, remote=True, plain=True, headers=headers
+                )
+                self.assertGreaterEqual(status, 400)
+                self.assertIsNone(response.get("Set-Cookie"))
+                self.assertIsNone(response.get("Location"))
+                self.assertEqual(payload, b"")
+
     def test_lan_boundaries_and_host_only_operations(self):
-        self.sign_in(self.enable())
+        self.enable()
+        self.sign_in()
         for changed in (
             {"Host": "localhost:" + str(self.port)},
             {"Origin": "http://127.0.0.1:" + str(self.port)},
             {"Origin": "https://example.invalid"},
+            {"Sec-Fetch-Site": "cross-site"},
             {"X-Local-Token": self.host.token},
         ):
             status, _, _ = self.request(
@@ -161,7 +197,6 @@ class LanSharingTests(unittest.TestCase):
             self.request("/api/sharing", remote=True, headers=self.remote_auth)[0], 404
         )
         for path in (
-            "/api/sharing/renew",
             "/api/sharing/enable",
             "/api/sharing/stop",
             "/api/open-folder",
@@ -191,20 +226,15 @@ class LanSharingTests(unittest.TestCase):
         self.assertFalse(self.host.jobs.closing)
         self.assertEqual(self.host.jobs.history(), [])
 
-    def test_renew_expiry_and_reopening_invalidates_old_invites_and_sessions(self):
-        first = self.enable()
-        status, _, second = self.request("/api/sharing/renew", body={}, headers=self.local_auth)
-        self.assertEqual(status, 200)
-        self.assertEqual(self.request(first, remote=True)[0], 403)
-        self.host.sharing.listener.expires = time.monotonic() - 1
-        self.assertEqual(self.request(urlsplit(second["invitation"]).path, remote=True)[0], 403)
-        self.assertIsNone(self.request("/api/sharing", headers=self.local_auth)[2]["invitation"])
-        status, _, third = self.request("/api/sharing/renew", body={}, headers=self.local_auth)
-        self.assertEqual(status, 200)
-        self.sign_in(urlsplit(third["invitation"]).path)
+    def test_sharing_starts_off_and_reopening_the_same_address_invalidates_sessions(self):
+        self.assertFalse(self.request("/api/sharing", headers=self.local_auth)[2]["active"])
+        self.assertIsNone(self.host.sharing.listener)
+        self.assertEqual(self.request("/api/bootstrap")[0], 403)
+        self.assertEqual(self.request("/start/" + self.host.launch)[0], 303)
+        self.enable()
+        self.sign_in()
         old_auth = self.remote_auth
-        status, _, saved = self.request("/api/sharing/renew", body={}, headers=self.local_auth)
-        self.assertEqual(status, 200)
+        self.host.sharing.port = self.port
         self.assertEqual(
             self.request("/api/sharing/stop", body={}, headers=self.local_auth)[2],
             {"active": False},
@@ -215,13 +245,14 @@ class LanSharingTests(unittest.TestCase):
             socket.create_connection(("127.0.0.1", self.port), timeout=1),
         ):
             self.fail("A stopped listener accepted a connection")
-        fresh = self.enable()
-        self.assertEqual(self.request(urlsplit(saved["invitation"]).path, remote=True)[0], 403)
+        self.enable()
         self.assertEqual(self.request("/api/bootstrap", remote=True, headers=old_auth)[0], 403)
-        self.sign_in(fresh)
+        self.sign_in()
+        self.assertNotEqual(old_auth["Cookie"], self.remote_auth["Cookie"])
 
     def test_remote_presence_releases_host_owner_when_sharing_stops(self):
-        self.sign_in(self.enable())
+        self.enable()
+        self.sign_in()
         with closing(
             HTTPSConnection("127.0.0.1", self.port, context=self.client_tls, timeout=3)
         ) as http:
@@ -244,3 +275,47 @@ class LanSharingTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertFalse(self.host._browsers)
         self.assertIsNotNone(self.host._close_after)
+
+    def test_stopping_closes_pending_peers_and_allows_an_active_job_to_finish_locally(self):
+        self.enable()
+        self.sign_in()
+        started, resume = threading.Event(), threading.Event()
+        dispatch = self.host.jobs.operations.dispatch
+
+        def hold_job(action, body, cancel):
+            started.set()
+            self.assertTrue(resume.wait(5))
+            return dispatch(action, body, cancel)
+
+        with (
+            socket.create_connection(("127.0.0.1", self.port), timeout=2) as pending_peer,
+            patch.object(self.host.jobs.operations, "dispatch", hold_job),
+        ):
+            try:
+                payload = {"action": "targets.apply", "body": {"targets": "192.0.2.3:2222 1-2"}}
+                status, _, job = self.request(
+                    "/api/jobs", remote=True, body=payload, headers=self.remote_auth
+                )
+                self.assertEqual(status, 202)
+                self.assertTrue(started.wait(2))
+                self.assertEqual(
+                    self.request("/api/sharing/stop", body={}, headers=self.local_auth)[0], 200
+                )
+                self.assertEqual(pending_peer.recv(1), b"")
+                status, _, bootstrap = self.request("/api/bootstrap", headers=self.local_auth)
+                self.assertEqual(status, 200)
+                self.assertEqual(bootstrap["busyJob"], job["id"])
+            finally:
+                resume.set()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            status, _, detail = self.request("/api/jobs/" + job["id"], headers=self.local_auth)
+            self.assertEqual(status, 200)
+            if detail["state"] != "running":
+                break
+            time.sleep(0.01)
+        self.assertEqual(detail["state"], "done")
+        self.assertEqual(
+            self.request("/api/workspace", headers=self.local_auth)[2]["groups"][0]["interfaces"],
+            ["1", "2"],
+        )
