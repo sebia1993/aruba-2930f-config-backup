@@ -153,6 +153,13 @@ class Controls:
     def invalidate(self) -> None:
         self._approval = None
 
+    def awaiting_confirmation(self) -> bool:
+        approval = self._approval
+        return (
+            approval is not None
+            and self._clock() - approval.issued < PortControlService.SNAPSHOT_MAX_AGE_SECONDS
+        )
+
     def dispatch(self, action: str, body: dict, cancel: Event) -> dict:
         if action == "control.history":
             return {"rows": self._history()}

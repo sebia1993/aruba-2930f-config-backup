@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.10.0"
+VERSION = "1.11.0"
 STATIC = {
     "/": "index.html",
     "/logs": "logs.html",
@@ -46,6 +46,7 @@ STATIC = {
             "backup-tools.css",
             "control-tools.js",
             "cable-tools.js",
+            "monitoring.js",
         )
     },
 }
@@ -192,6 +193,7 @@ class Handler(BaseHTTPRequestHandler):
                         lanClient=app.is_lan,
                         session=app.jobs.operations.session_summary(),
                         busyJob=app.jobs.active,
+                        monitor=app.jobs.monitor_status(),
                     )
                 )
             elif path == "/api/sharing" and not app.is_lan:
@@ -200,6 +202,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"items": app.jobs.history()})
             elif path == "/api/workspace":
                 self._json(app.jobs.workspace())
+            elif path == "/api/monitor":
+                self._json(app.jobs.monitor_status())
             elif re.fullmatch("/api/jobs/" + KEY, path):
                 raw_cursor = parse_qs(urlsplit(self.path).query).get("after", ["0"])[0]
                 after = int(raw_cursor) if re.fullmatch(r"[0-9]{1,9}", raw_cursor) else 0
@@ -260,6 +264,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"active": False})
             elif path == "/api/jobs":
                 self._json({"id": app.jobs.submit(data.get("action"), data.get("body"))}, 202)
+            elif path == "/api/monitor/start":
+                try:
+                    status = app.jobs.start_monitor(data)
+                except ValueError as exc:
+                    return self._fail(400, str(exc))
+                self._json(status)
+            elif path == "/api/monitor/stop":
+                self._json(app.jobs.stop_monitor(data.get("monitorId")))
             elif re.fullmatch("/api/jobs/" + KEY + "/cancel", path):
                 self._json(app.jobs.cancel(path.split("/")[3]))
             elif path == "/api/open-folder":
@@ -337,8 +349,14 @@ class LocalServer(ThreadingHTTPServer):
 
     def service_actions(self):
         with self._browser_lock:
-            if self._stopping or self._close_after is None or time.monotonic() < self._close_after:
+            if self._stopping:
                 return
+            if self._close_after is None:
+                self.jobs.tick_monitor()
+                return
+            if time.monotonic() < self._close_after:
+                return
+            self.jobs.stop_monitor()
             try:
                 self.jobs.claim_shutdown()
             except Busy:

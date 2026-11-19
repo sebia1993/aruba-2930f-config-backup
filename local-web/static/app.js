@@ -68,6 +68,7 @@ function sync() {
   $('shutdown').disabled = ui.busy || !ui.token;
   updateControlTarget();
   window.cableTools?.sync();
+  window.powerMonitoring?.sync();
 }
 async function api(path, data) {
   const options = {credentials:'same-origin', cache:'no-store'};
@@ -124,6 +125,7 @@ async function poll(id) {
 async function run(action, body, receive) {
   if (ui.busy || !ui.token) return;
   ui.busy = true;
+  window.powerMonitoring?.foregroundStarted();
   $('stopJob').disabled = false;
   sync();
   const quick = action === 'control.quick-execute' ? body : null;
@@ -170,6 +172,7 @@ async function run(action, body, receive) {
     ui.busy = false;
     sync();
     window.portTools?.onJob?.(action,'idle');
+    window.powerMonitoring?.wake();
   }
 }
 $('stopJob').onclick = async () => {
@@ -343,9 +346,9 @@ function selectObservedBatch() {
   $('controlMode').value='batch'; $('controlMode').onchange();
   renderPorts();
 }
-function postMatrix(keepView=false) {
+function postMatrix(keepView=false,periodic=false) {
   const viewer=monitor(), id=ui.liveId;
-  if (viewer && id) viewer.loadLive(id,ui.rows,()=>ui.liveId===id,window.portTools.unobservedTargets(),keepView);
+  if (viewer && id) viewer.loadLive(id,ui.rows,()=>ui.liveId===id,window.portTools.unobservedTargets(),keepView,periodic);
 }
 window.addEventListener('message',e=>{
   if (e.origin !== location.origin || !e.data) return;
@@ -714,15 +717,18 @@ function renderPorts() {
   updatePortActions();
   window.portTools?.renderMatrix();
 }
-function receivePorts(result,keepView=false,refreshedKeys) {
+function receivePorts(result,keepView=false,refreshedKeys,periodic=false) {
   if (!Array.isArray(result.rows)) return;
+  const selectedKey=periodic && ui.tileRow?.key;
   ui.tileRow=null;
   ui.rows = window.portTools.reconcileRows(result.rows,refreshedKeys);
   const available = new Set(ui.rows.filter(row=>row.status === 'ok' && !row.controlUsed && !row.refreshInvalidated).map(portKey));
   ui.selected = new Set([...ui.selected].filter(key=>available.has(key)));
   if (ui.rows.length && !ui.rows.some(row=>row.status==='refresh_pending')) {
     ui.liveId=++observationSequence;
-    postMatrix(keepView);
+    postMatrix(keepView,periodic);
+    const selected=monitor()?.selected();
+    if (selectedKey && selected?.key===selectedKey) ui.tileRow=selected;
   } else expireLiveMatrix(keepView);
   renderPorts();
 }
@@ -1011,9 +1017,11 @@ async function start() {
     ui.token = bootstrap.token;
     import('/static/browser-presence.js').then(module=>module.watchBrowserTab(bootstrap)).catch(()=>{});
     ui.session = bootstrap.session || {active:false};
+    ui.bootMonitor=bootstrap.monitor;
+    window.powerMonitoring?.connect(ui.bootMonitor);
     $('version').textContent = 'v' + String(bootstrap.version || '').replace(/^v/,'');
     let resumed;
-    if (bootstrap.busyJob) {
+    if (bootstrap.busyJob && bootstrap.busyJob!==bootstrap.monitor?.jobId) {
       ui.busy = true; ui.jobId = bootstrap.busyJob; sync();
       setJobProgress({});
       notify('진행 중인 작업을 기다리고 있습니다.');
@@ -1058,6 +1066,8 @@ async function start() {
     if (resumed && (hasUncertainControl(resumed.result) || resumed.result.blocked?.length))
       notify(resumed.result.message || '포트 제어 결과를 확인하세요.',true);
     route();
+    ui.appReady=true;
+    window.powerMonitoring?.ready();
   } catch (error) { notify(error.message,true); }
   finally { sync(); }
 }

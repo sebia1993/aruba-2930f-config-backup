@@ -12,8 +12,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from localweb.jobs import Busy, Jobs
+from localweb.monitoring import PortMonitoring
 
-from aruba2930f_backup.models import Credentials
+from aruba2930f_backup.models import CollectionFailure, Credentials, ErrorCode
 from aruba2930f_backup.poe_query_models import PoEQueryResult, QueryStatus
 from aruba2930f_backup.port_control import PortControlService, PortOperationResult, PortSnapshot
 
@@ -171,6 +172,224 @@ class JobTests(unittest.TestCase):
         self.assertEqual(job["state"], "done")
         self.assertEqual(job["result"]["groups"], self.jobs.workspace()["groups"])
         return self.jobs.workspace()["query"]
+
+    def test_monitor_interval_and_targets_checked_before_first_ssh_read(self):
+        body = {"targets": "192.0.2.5:2222 1-3"}
+        with self.assertRaises(ValueError):
+            self.jobs.start_monitor(body)
+        self.jobs.operations.credentials = Credentials("reader", "test")
+        with patch.object(self.jobs.operations.query_service, "collect") as collect:
+            for invalid in (0, 61, True, 1.0, "1", None):
+                with self.subTest(interval=invalid), self.assertRaises(ValueError):
+                    self.jobs.start_monitor({**body, "intervalMinutes": invalid})
+            for invalid in ("", "bad", "192.0.2.5 2-1"):
+                with self.subTest(targets=invalid), self.assertRaises(ValueError):
+                    self.jobs.start_monitor({"targets": invalid})
+            collect.assert_not_called()
+        self.assertFalse(self.jobs.monitor_status()["active"])
+
+    def test_monitor_schedule_is_anchored_to_start_and_skips_overruns(self):
+        with patch("localweb.monitoring.time.monotonic", return_value=100.0) as clock:
+            plan = PortMonitoring("job", (), "", 1, job="job")
+            # A 20-second first read leaves 40 seconds before the next round.
+            clock.return_value = 120.0
+            plan.finished("job", {"rows": [{"status": "ok", "watts": 8}]}, "", "first", None)
+            self.assertEqual(plan.due, 160)
+            self.assertIsNotNone(plan.next_at)
+            clock.return_value = 160.2
+            plan.advance_to_next_slot()
+            self.assertEqual(plan.due, 220)
+            # A long read crosses the next two slots, leaving just one future deadline.
+            clock.return_value = 295.0
+            plan.finished("next", {}, "SSH timeout", "second", None)
+            self.assertEqual(plan.due, 340)
+            self.assertFalse(plan.suspended)
+
+    def test_monitor_shared_start_serial_reads_and_exact_endpoints(self):
+        self.jobs.operations.credentials = Credentials("reader", "test")
+        body = {"targets": "192.0.2.5:2222 1-3\n192.0.2.5:2223 2", "intervalMinutes": 60}
+        started, finish = threading.Event(), threading.Event()
+        scopes = []
+
+        def read(groups, credentials, **kwargs):
+            scopes.append([(g.target.endpoint, g.interfaces) for g in groups])
+            started.set()
+            self.assertTrue(finish.wait(3))
+            return [r for g in groups for r in self.collect_ports((g,), credentials, **kwargs)]
+
+        with patch.object(self.jobs.operations.query_service, "collect", read):
+            status = self.jobs.start_monitor(body)
+            try:
+                self.assertTrue(started.wait(3))
+                self.assertEqual(status["jobId"], self.jobs.start_monitor(body)["jobId"])
+                self.assertEqual(status["portCount"], 4)
+                self.assertEqual(status["intervalMinutes"], 60)
+                self.assertIsNone(status["nextAt"])
+                with self.assertRaises(Busy):
+                    self.jobs.start_monitor({**body, "intervalMinutes": 1})
+                with self.assertRaises(Busy):
+                    self.jobs.submit("control.quick", {})
+                self.jobs.tick_monitor()
+            finally:
+                finish.set()
+            self.assertEqual(self.finished(status["jobId"])["state"], "done")
+            self.assertFalse(self.jobs.history())
+            status = self.jobs.monitor_status()
+            self.assertTrue(status["lastSuccess"])
+            self.assertTrue(status["nextAt"])
+            self.assertEqual(status["lastJobId"], status["monitorId"])
+            until = self.jobs.monitor.due
+            self.assertGreater(until - time.monotonic(), 3598)
+            with patch("localweb.jobs.time.monotonic", return_value=until - 1):
+                self.jobs.tick_monitor()
+            self.assertIsNone(self.jobs.monitor_status()["jobId"])
+            with (
+                patch("localweb.jobs.time.monotonic", return_value=until),
+                patch.object(self.jobs.controls, "awaiting_confirmation", return_value=True),
+            ):
+                self.jobs.tick_monitor()
+            self.assertIsNone(self.jobs.monitor_status()["jobId"])
+            self.assertGreater(self.jobs.monitor.due, until)
+            self.jobs.monitor.due = 0
+            self.jobs.tick_monitor()
+            key = self.jobs.monitor_status()["jobId"] or self.jobs.monitor_status()["lastJobId"]
+            self.assertEqual(self.finished(key)["action"], "ports.refresh")
+        self.assertEqual(len(scopes), 2)
+        self.assertEqual(scopes[0], scopes[1])
+        self.assertFalse(self.jobs.stop_monitor(status["monitorId"])["active"])
+        self.jobs.tick_monitor()
+        self.assertIsNone(self.jobs.active)
+        self.assertFalse(Jobs(self.root).monitor_status()["active"])
+
+    def test_failed_monitor_round_keeps_last_good_display_value_until_recovery(self):
+        self.jobs.operations.credentials = Credentials("reader", "test")
+        body = {"targets": "192.0.2.5:2222 1-3"}
+        with patch.object(self.jobs.operations.query_service, "collect", self.collect_ports):
+            status = self.jobs.start_monitor(body)
+            self.finished(status["jobId"])
+        self.assertEqual(self.jobs.monitor_status()["intervalMinutes"], 5)
+        for collect in (lambda *a, **k: (), lambda *a, **k: (), self.collect_ports):
+            with patch.object(self.jobs.operations.query_service, "collect", collect):
+                self.jobs.monitor.due = 0
+                self.jobs.tick_monitor()
+                key = self.jobs.monitor_status()["jobId"] or self.jobs.monitor_status()["lastJobId"]
+                self.finished(key)
+            row = self.jobs.workspace()["query"]["rows"][1]
+            if row["status"] == "ok":
+                self.assertEqual(row["watts"], 2)
+                self.assertEqual(row["previousObservation"]["watts"], 2)
+                self.assertNotIn("lastSuccessfulObservation", row)
+                self.assertFalse(self.jobs.monitor_status()["error"])
+            else:
+                self.assertEqual(row["eligible_operations"], [])
+                self.assertTrue(row["controlUsed"])
+                self.assertIsNone(row["watts"])
+                self.assertEqual(row["lastSuccessfulObservation"]["watts"], 2)
+                self.assertTrue(self.jobs.monitor_status()["error"])
+        self.finished(self.jobs.submit("session.close", {}))
+        self.assertFalse(self.jobs.monitor_status()["active"])
+
+    def test_monitor_manual_query_scope_change_and_auto_shutdown(self):
+        self.jobs.operations.credentials = Credentials("reader", "test")
+        body = {"targets": "192.0.2.5 1-3"}
+        with patch.object(self.jobs.operations.query_service, "collect", self.collect_ports):
+            status = self.jobs.start_monitor(body)
+            self.finished(status["jobId"])
+            self.finished(self.jobs.submit("ports.query", dict(body)))
+            self.assertTrue(self.jobs.monitor_status()["active"])
+            self.finished(self.jobs.submit("ports.query", {"targets": "192.0.2.5 2"}))
+            self.assertFalse(self.jobs.monitor_status()["active"])
+            status = self.jobs.start_monitor(body)
+            self.finished(status["jobId"])
+            self.assertTrue(self.jobs.stop_monitor("obsolete-monitor-id")["active"])
+        self.jobs.claim_shutdown()
+        self.assertFalse(self.jobs.monitor_status()["active"])
+
+    def test_stop_monitor_cancels_an_active_read_without_rearming(self):
+        self.jobs.operations.credentials = Credentials("reader", "test")
+        started = threading.Event()
+
+        def read(groups, credentials, *, cancel_event, **kwargs):
+            started.set()
+            self.assertTrue(cancel_event.wait(3))
+            return ()
+
+        with patch.object(self.jobs.operations.query_service, "collect", read):
+            status = self.jobs.start_monitor({"targets": "192.0.2.5 1", "intervalMinutes": 1})
+            self.assertTrue(started.wait(3))
+            self.assertFalse(self.jobs.stop_monitor(status["monitorId"])["active"])
+            self.assertEqual(self.finished(status["jobId"])["state"], "cancelled")
+        self.jobs.tick_monitor()
+        self.assertFalse(self.jobs.monitor_status()["active"])
+        self.assertIsNone(self.jobs.active)
+
+    def test_explicit_auth_failure_suspends_reads_but_keeps_last_good_observation(self):
+        self.jobs.operations.credentials = Credentials("reader", "test")
+        body = {"targets": "192.0.2.5:2222 1-3", "intervalMinutes": 1}
+        with patch.object(self.jobs.operations.query_service, "collect", self.collect_ports):
+            initial = self.jobs.start_monitor(body)
+            self.finished(initial["jobId"])
+
+        def rejected(groups, credentials, **kwargs):
+            return [
+                PoEQueryResult(g, p, QueryStatus.FAILED, error_code=ErrorCode.AUTH_FAILED)
+                for g in groups
+                for p in g.interfaces
+            ]
+
+        for fail in (rejected, CollectionFailure(ErrorCode.AUTH_FAILED, "거부됨")):
+            with patch.object(
+                self.jobs.operations.query_service, "collect", side_effect=fail
+            ) as collect:
+                if callable(fail):
+                    self.jobs.monitor.due = 0
+                    self.jobs.tick_monitor()
+                    running = self.jobs.monitor_status()
+                else:
+                    running = self.jobs.start_monitor(body)
+                self.finished(running["jobId"] or running["lastJobId"])
+                paused = self.jobs.monitor_status()
+                self.assertTrue(paused["active"])
+                self.assertTrue(paused["suspended"])
+                self.assertIsNone(paused["nextAt"])
+                self.assertIn("SSH 인증 거부", paused["error"])
+                if callable(fail):
+                    self.assertIn("192.0.2.5:2222", paused["error"])
+                    row = self.jobs.workspace()["query"]["rows"][1]
+                    self.assertIsNone(row["watts"])
+                    self.assertEqual(row["lastSuccessfulObservation"]["watts"], 2)
+                self.jobs.monitor.due = 0
+                self.jobs.tick_monitor()
+                self.assertIsNone(self.jobs.active)
+                collect.assert_called_once()
+                self.assertEqual(self.jobs.start_monitor(body)["monitorId"], paused["monitorId"])
+                self.jobs.stop_monitor(paused["monitorId"])
+
+    def test_busy_foreground_skips_round_and_never_cancels_foreground(self):
+        self.jobs.operations.credentials = Credentials("reader", "test")
+        with patch.object(self.jobs.operations.query_service, "collect", self.collect_ports):
+            status = self.jobs.start_monitor({"targets": "192.0.2.5 1", "intervalMinutes": 1})
+            self.finished(status["jobId"])
+        started, finish = threading.Event(), threading.Event()
+
+        def foreground(action, body, cancel):
+            started.set()
+            self.assertTrue(finish.wait(3))
+            self.assertFalse(cancel.is_set())
+            return {}
+
+        with patch.object(self.jobs.controls, "dispatch", foreground):
+            key = self.jobs.submit("control.apply", {})
+            try:
+                self.assertTrue(started.wait(3))
+                self.jobs.monitor.due = time.monotonic() - 0.5
+                self.jobs.tick_monitor()
+                self.assertEqual(self.jobs.active, key)
+                self.assertGreater(self.jobs.monitor.due, time.monotonic() + 58)
+                self.assertFalse(self.jobs.stop_monitor()["active"])
+            finally:
+                finish.set()
+            self.assertEqual(self.finished(key)["state"], "done")
 
     def test_port_comparison_uses_only_the_previous_sample_of_the_exact_endpoint(self):
         first = self.initial_query()["rows"]

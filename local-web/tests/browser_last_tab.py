@@ -9,7 +9,7 @@ from threading import Event
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
-from browser_qa import run_browser_case
+from browser_qa import enter_ssh_credentials, run_browser_case
 from playwright.sync_api import Error, expect
 from verify_http_ssh import Http
 
@@ -148,6 +148,37 @@ def active_backup(page, url, switch, _second, _shots, backup_folder):
     assert switch.commands.count("show running-config") == 1
 
 
+def monitoring_with_frozen_tab(page, url, switch, _second, _shots, backup_folder):
+    page.goto(url)
+    page.locator('nav a[href="#ports"]').click()
+    page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1")
+    page.locator("#monitorInterval").fill("1")
+    page.locator("#monitorToggle").click()
+    enter_ssh_credentials(page, switch)
+    tile = page.frame_locator("#matrixViewer").locator("#matrix [data-port-key]")
+    expect(tile).to_be_visible(timeout=90000)
+    command = "show lldp info remote-device 1"
+    assert command in switch.commands
+
+    # With the browser frozen, only the server can initiate the next scheduled read.
+    read_again = Event()
+    respond = switch._respond
+
+    def observe_lldp(channel, request):
+        result = respond(channel, request)
+        if request == command:
+            read_again.set()
+        return result
+
+    session = page.context.new_cdp_session(page)
+    with patch.object(switch, "_respond", observe_lldp):
+        session.send("Page.setWebLifecycleState", {"state": "frozen"})
+        assert read_again.wait(125), "No scheduled read while the only tab was frozen"
+    session.send("Page.setWebLifecycleState", {"state": "active"})
+    page.close()
+    wait_for_exit(backup_folder.parent, timeout=45)
+
+
 def early_close(page, url, _first, _second, _shots, backup_folder):
     # Stop before any page script can attach. The authenticated top-level navigation still arms cleanup.
     context = page.context.browser.new_context(java_script_enabled=False)
@@ -159,6 +190,6 @@ def early_close(page, url, _first, _second, _shots, backup_folder):
 
 
 if __name__ == "__main__":
-    for scenario in (tabs_and_windows, active_backup, early_close):
+    for scenario in (tabs_and_windows, active_backup, early_close, monitoring_with_frozen_tab):
         run_browser_case(scenario)
         print(f"PASS last-tab server lifecycle: {scenario.__name__}", flush=True)
