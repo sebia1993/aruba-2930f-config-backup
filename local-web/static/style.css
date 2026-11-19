@@ -30,7 +30,14 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .navgroup { padding: 24px 21px 8px; font-size: 10px; color: var(--muted); letter-spacing: 1.4px; font-weight: 700; }
 nav { padding: 0 10px; display: grid; gap: 5px; }
 nav a { display: flex; align-items: center; gap: 12px; min-height: 43px; padding: 8px 11px; border: 1px solid transparent; border-radius: 9px; color: var(--muted); text-decoration: none; font-weight: 650; font-size: 13px; white-space: nowrap; }
-nav a span { text-align: center; width: 19px; line-height: 1; font-size: 19px; }
+nav a > span[aria-hidden] { text-align: center; width: 19px; line-height: 1; font-size: 19px; }
+nav .port-nav { display: grid; grid-template-columns: 19px 1fr; row-gap: 3px; }
+.port-nav small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-weight: 400; }
+.port-nav-icon {
+  width: 16px; height: 16px; justify-self: center; background: currentColor;
+  /* Original 16 px topology icon, using its alpha channel for both themes. */
+  mask: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAAdElEQVR42pWQyxGAIAxEn46F0ZnpLFBZPBgg4KDjXjL57mbhFwTDkFU7YQiCkdYDwHjjmIbUqV5IlgT1go6Fre2eHiEDhUyOA3angaz3/P8ZgxZ92CNYV3MncaNWlGBM1C9oNW5vohJlECn+V7NHJz8+LXNcnzExJlnU2skAAAAASUVORK5CYII=") center / contain no-repeat;
+}
 nav a:hover { background: var(--surface2); color: var(--ink); }
 nav a[aria-current=page] { color: var(--ink); background: var(--active); border-color: var(--line); box-shadow: inset 3px 0 var(--teal); }
 .sidefoot { margin-top: auto; padding: 17px; border-top: 1px solid var(--stroke); display: grid; gap: 5px; font-size: 11px; color: var(--muted); }
@@ -149,6 +156,8 @@ dialog::backdrop { background: #030c17bc; }
 .cable-reading .cable-fault { color: var(--bad); }
 @media(max-width: 850px) {
   .shell { grid-template-columns: 165px minmax(0,1fr); }
+  nav { grid-template-columns: minmax(0,1fr); }
+  nav a { gap: 7px; padding-inline: 6px; white-space: normal; }
   .brand { gap: 7px; padding: 20px 10px; } .brandmark { width: 32px; height: 32px; }
   .brand b { font-size: 13px; } .brand small { font-size: 8px; } .formgrid { grid-template-columns: 1fr 1fr; }
 }
@@ -157,7 +166,9 @@ dialog::backdrop { background: #030c17bc; }
   .brand,.navgroup,.crumb-path { display: none; }
   nav { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 2px; padding: 3px 4px; border-bottom: 1px solid var(--stroke); }
   nav a { min-width: 0; min-height: 44px; flex-direction: column; justify-content: center; gap: 2px; padding: 2px 0; border-radius: 6px; font-size: 11px; line-height: 1.35; text-align: center; white-space: normal; word-break: keep-all; overflow-wrap: anywhere; }
-  nav a span { font-size: 16px; }
+  nav a > span[aria-hidden] { font-size: 16px; }
+  nav .port-nav { display: flex; }
+  .port-nav small { display: none; }
   [data-page=cable] button,#cableEdit { min-height: 44px; }
   #cableEdit { display: inline-flex; align-items: center; }
   nav a[aria-current=page] { color: var(--teal); box-shadow: inset 0 -2px var(--teal); }

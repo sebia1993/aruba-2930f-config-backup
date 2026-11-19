@@ -293,7 +293,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
         report.click()
     assert report_event.value.path().read_bytes()[:2] == b"PK"
     nav("ports")
-    expect(page.get_by_role("link", name="관제·제어", exact=True)).to_have_count(1)
+    expect(page.get_by_role("link", name="포트·PoE 관리", exact=True)).to_have_count(1)
     expect(page.locator('nav a[href="#csv"]')).to_have_count(0)
     matrix_frame = page.frame_locator("#matrixViewer")
     expect(matrix_frame.locator("#sourceBar")).to_be_visible()

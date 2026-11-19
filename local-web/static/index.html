@@ -23,7 +23,10 @@
     <div class="navgroup">워크스페이스</div>
     <nav aria-label="주 메뉴">
       <a href="#logs" aria-current="page"><span aria-hidden="true">▦</span>AP 로그 관제</a>
-      <a href="#ports"><span aria-hidden="true">⇄</span>관제·제어</a>
+      <a href="#ports" class="port-nav" aria-label="포트·PoE 관리">
+        <i class="port-nav-icon" aria-hidden="true"></i><span>포트·PoE 관리</span>
+        <small lang="en">Port &amp; PoE Management</small>
+      </a>
       <a href="#cable"><span aria-hidden="true">⌁</span>케이블 테스트</a>
       <a href="#backup"><span aria-hidden="true">▤</span>스위치 컨피그 백업</a>
     </nav>
@@ -54,10 +57,10 @@
       </details>
       <iframe id="logViewer" class="viewer" title="AP 포트 이벤트 상태 · 로그 파일과 붙여넣기" src="/logs?embedded=1"></iframe>
     </section>
-    <section data-page="ports" aria-label="관제·제어" hidden>
+    <section data-page="ports" aria-label="포트·PoE 관리" hidden>
       <div class="port-toolbar">
       <div class="port-heading">
-        <h1>관제·제어</h1>
+        <h1>포트·PoE 관리</h1>
         <div class="bar port-workspace-bar" role="group" aria-label="관제 결과 보기">
           <button type="button" id="portMonitorTab" aria-pressed="true" aria-controls="portMonitor">관제</button>
           <button type="button" id="portChanges" aria-pressed="false" aria-controls="portMonitor" disabled>변화만 보기</button>
@@ -110,7 +113,7 @@
     <section data-page="cable" aria-labelledby="cableHeading" hidden>
       <div class="heading"><div><h1 id="cableHeading">케이블 테스트</h1><p>구리 포트의 케이블 페어별 상태와 거리를 확인합니다.</p></div></div>
       <article class="panel" aria-labelledby="cableTargetHeading">
-        <header><h2 id="cableTargetHeading">진단 대상</h2><a id="cableEdit" href="#ports">관제·제어에서 변경</a></header>
+        <header><h2 id="cableTargetHeading">진단 대상</h2><a id="cableEdit" href="#ports">포트·PoE 관리에서 변경</a></header>
         <div class="panelbody">
           <div><p id="cableScope" class="hint"></p><pre id="cableTargets" class="cable-targets"></pre></div>
           <div class="bar"><button type="button" id="cableShow" data-job disabled>저장 결과 조회</button><button type="button" id="cableTest" data-job class="primary" disabled>테스트 실행</button></div>

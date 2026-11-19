@@ -410,7 +410,8 @@ function route() {
   }
   for (const node of all('[data-page]')) node.hidden = node.dataset.page !== name;
   mobileServerInfo.open = false;
-  $('crumb').textContent = admin ? $('connectionHeading').textContent : link.lastChild.textContent;
+  const page = document.querySelector('[data-page]:not([hidden])');
+  $('crumb').textContent = page.getAttribute('aria-label') || page.querySelector('h1').textContent;
   if (name === 'ports' && !$('matrixViewer').hasAttribute('src')) $('matrixViewer').src = $('matrixViewer').dataset.src;
   if (dialog.open) dialog.close();
   if (queryCredentials.open) queryCredentials.close();
