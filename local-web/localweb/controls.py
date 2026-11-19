@@ -24,7 +24,6 @@ from aruba2930f_backup.batch_port_control import (
     validate_batch_target,
 )
 from aruba2930f_backup.models import Credentials, DeviceTarget
-from aruba2930f_backup.poe_power import LLDPStatus
 from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from aruba2930f_backup.port_control import (
     PortAction,
@@ -127,11 +126,7 @@ def _needs_read(row: PoEQueryResult | None, action: PortAction, *, direct: bool)
         return True
     if action is PortAction.POE_ON:
         return row.snapshot.poe_enabled is True
-    return (
-        (direct and row.snapshot.poe_enabled is False)
-        or not row.lldp
-        or row.lldp.status is not LLDPStatus.OK
-    )
+    return direct and row.snapshot.poe_enabled is False
 
 
 class Controls:

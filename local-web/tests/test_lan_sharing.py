@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
-from contextlib import closing, suppress
+from contextlib import closing
 from http.client import HTTPConnection, HTTPSConnection
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -53,7 +53,14 @@ class LanSharingTests(unittest.TestCase):
 
     def request(self, path, *, remote=False, body=None, headers=None):
         http = (
-            HTTPSConnection("127.0.0.1", self.port, context=self.client_tls, timeout=3)
+            # Bind the client outside the selected adapter's 127.0.0.0/30 prefix.
+            HTTPSConnection(
+                "127.0.0.1",
+                self.port,
+                context=self.client_tls,
+                timeout=3,
+                source_address=("127.0.0.4", 0),
+            )
             if remote
             else HTTPConnection("127.0.0.1", self.host.server_port, timeout=3)
         )
@@ -104,7 +111,7 @@ class LanSharingTests(unittest.TestCase):
         self.remote_auth = dict(auth, Origin=self.origin)
         self.remote_auth["X-Local-Token"] = data["token"]
 
-    def test_only_invited_browser_can_read_port_workspace_and_run_jobs(self):
+    def test_cross_subnet_client_needs_an_invitation_to_read_workspace_and_run_jobs(self):
         invite = self.enable()
         for path in ("/", "/matrix", "/api/bootstrap", "/api/workspace"):
             with self.subTest(path=path):
@@ -137,15 +144,6 @@ class LanSharingTests(unittest.TestCase):
 
     def test_lan_boundaries_and_host_only_operations(self):
         self.sign_in(self.enable())
-        # 127.0.0.4 is still on this PC but outside the selected 127.0.0.0/30.
-        # An excluded peer must be disconnected before it sends a TLS handshake.
-        with (
-            socket.create_connection(
-                ("127.0.0.1", self.port), timeout=3, source_address=("127.0.0.4", 0)
-            ) as peer,
-            suppress(ConnectionResetError, ConnectionAbortedError),
-        ):
-            self.assertEqual(peer.recv(1), b"")
         for changed in (
             {"Host": "localhost:" + str(self.port)},
             {"Origin": "http://127.0.0.1:" + str(self.port)},

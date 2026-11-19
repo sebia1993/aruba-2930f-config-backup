@@ -1,6 +1,5 @@
-"""Serve authenticated HTTPS on one selected subnet alongside the local launcher."""
+"""Serve authenticated HTTPS on a selected interface alongside the local launcher."""
 
-import ipaddress
 import secrets
 import socket
 import threading
@@ -19,8 +18,7 @@ class LanListener(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 64
 
-    def __init__(self, owner, address, prefix, port, context, fingerprint):
-        self.network = ipaddress.IPv4Network((address, prefix), strict=False)
+    def __init__(self, owner, address, port, context, fingerprint):
         self.context = context
         self.fingerprint = fingerprint
         self.jobs = owner.jobs
@@ -36,9 +34,6 @@ class LanListener(ThreadingHTTPServer):
         self.cookie = secrets.token_urlsafe(32)
         self.cookie_name = "__Host-ArubaLAN" + secrets.token_hex(6)
         super().__init__((address, port), owner.RequestHandlerClass)
-
-    def verify_request(self, request, client_address):
-        return ipaddress.IPv4Address(client_address[0]) in self.network
 
     @property
     def authority(self):
@@ -67,7 +62,6 @@ class LanListener(ThreadingHTTPServer):
             return {
                 "active": True,
                 "address": self.server_address[0],
-                "network": str(self.network),
                 "fingerprint": self.fingerprint,
                 "url": "https://" + self.authority,
                 "invitation": f"https://{self.authority}/start/{self.invite}" if valid else None,
@@ -124,13 +118,10 @@ class Sharing:
         with self.guard:
             if self.listener:
                 raise ValueError("먼저 현재 LAN 공유를 종료하세요.")
-            nic = next((i for i in discover_interfaces() if i["address"] == address), None)
-            if not nic:
+            if not any(nic["address"] == address for nic in discover_interfaces()):
                 raise ValueError("이 PC에 연결된 네트워크 주소를 선택하세요.")
             context, fingerprint = tls_context(self.directory, address)
-            listener = LanListener(
-                self.owner, address, nic["prefix"], self.port, context, fingerprint
-            )
+            listener = LanListener(self.owner, address, self.port, context, fingerprint)
             listener.issue()
             try:
                 threading.Thread(

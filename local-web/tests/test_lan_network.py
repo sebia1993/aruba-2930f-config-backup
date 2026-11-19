@@ -51,6 +51,8 @@ class NetworkOptionsTests(unittest.TestCase):
                 {"address": "192.0.2.42", "prefix": 24},
                 {"address": "198.51.100.2", "prefix": 24},
                 {"address": "192.0.2.222", "prefix": 31},
+                {"address": "198.51.100.3", "prefix": 1},
+                {"address": "203.0.113.1", "prefix": 32},
             ],
         )
 
@@ -58,7 +60,7 @@ class NetworkOptionsTests(unittest.TestCase):
     def test_system_addresses_are_real_ipv4_interfaces(self):
         for interface in discover_interfaces():
             self.assertFalse(IPv4Address(interface["address"]).is_loopback)
-            self.assertIn(interface["prefix"], range(8, 32))
+            self.assertIn(interface["prefix"], range(33))
 
 
 class TLSIdentityTests(unittest.TestCase):

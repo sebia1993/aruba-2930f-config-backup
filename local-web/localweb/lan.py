@@ -55,8 +55,6 @@ def _network_options(address_rows, route_rows):
             continue
         mask_bytes = struct.pack("=I", mask)
         prefix = int.from_bytes(mask_bytes, "big").bit_count()
-        if not 8 <= prefix <= 31:
-            continue
         network = IPv4Network((ip, prefix), strict=False)
         if network.netmask.packed != mask_bytes:
             continue

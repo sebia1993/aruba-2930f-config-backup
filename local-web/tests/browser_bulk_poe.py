@@ -1,4 +1,4 @@
-"""Exercise range selection and lost PoE ON acknowledgements using loopback SSH only."""
+"""Exercise scoped PoE OFF and lost PoE ON acknowledgements using loopback SSH only."""
 
 from threading import Event
 from unittest.mock import patch
@@ -16,6 +16,8 @@ class RangeSwitch(MonitorFixture):
         self.auth_at_disconnect = 0
         self.stale_port = None
         self.linked = set()
+        self.no_neighbor = {"2"}
+        self.draws = {"1": 0, "2": 0}
 
     def _respond(self, channel, command):
         port = command.split()[-1]
@@ -32,15 +34,24 @@ class RangeSwitch(MonitorFixture):
             if port == self.stale_port:
                 enabled = False
                 self.stale_port = None
+            watts = self.draws[port] if enabled else 0
+            state = "Delivering" if watts else ("Searching" if enabled else "Disabled")
             lines = [
                 f"Status and Configuration Information for port {port}",
                 "Power Enable : " + ("Yes" if enabled else "No"),
-                "PoE Port Status : Searching" if enabled else "PoE Port Status : Disabled",
-                "PD Power Draw : 0.0 W",
+                f"PoE Port Status : {state}",
+                f"PD Power Draw : {watts} W",
             ]
-        elif command == "show lldp info remote-device 2":
+        elif command.startswith("show lldp info remote-device ") and port in self.no_neighbor:
             lines = []
         elif command == "configure terminal":
+            lines = []
+            prompt = self.prompt[:-1] + "(config)#"
+        elif command in (
+            "no interface 1 power-over-ethernet",
+            "no interface 2 power-over-ethernet",
+        ):
+            self.power[command.split()[2]] = False
             lines = []
             prompt = self.prompt[:-1] + "(config)#"
         elif command in ("interface 1 power-over-ethernet", "interface 2 power-over-ethernet"):
@@ -73,7 +84,10 @@ def cancel_before_off(page, switch, address):
             assert resume.wait(30), "Test did not resume the SSH status read"
         return respond(channel, command)
 
-    page.locator("#selectEligible").click()
+    page.locator("#clearSelection").click()
+    page.frame_locator("#matrixViewer").locator(
+        f'#tbody tr[data-port-key="{address}/1"] input'
+    ).check()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     start = len(switch.commands)
     with (
@@ -97,6 +111,61 @@ def cancel_before_off(page, switch, address):
     expect(checkbox).to_be_enabled()
     expect(checkbox).to_be_checked()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+
+
+def assert_port_off(page, switch, address, port, before, since):
+    expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
+    expect_power_result(
+        page, address, f"{before} W", "0 W", port=port, delta=f"\N{MINUS SIGN}{before} W"
+    )
+    commands = switch.commands[since:]
+    change = f"no interface {port} power-over-ethernet"
+    writes = [cmd for cmd in commands if cmd.startswith(("interface ", "no interface "))]
+    assert writes == [change], writes
+    assert commands[commands.index(change) + 1 :].count(f"show power-over-ethernet {port}") >= 2
+    assert not switch.power[port]
+
+
+def exercise_port_off(page, switch, address):
+    # Port 2 has no LLDP neighbor and is physically down while drawing power.
+    switch.linked.add("1")
+    switch.draws = {"1": 5, "2": 7}
+    page.locator("#queryPorts").click()
+    expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
+    table = page.frame_locator("#matrixViewer").locator("#tbody")
+    first = table.locator(f'tr[data-port-key="{address}/1"] input')
+    second = table.locator(f'tr[data-port-key="{address}/2"] input')
+    page.locator("#operation").select_option("disable")
+    page.locator("#selectEligible").click()
+    expect(first).to_be_checked()
+    expect(second).not_to_be_checked()
+
+    page.locator("#operation").select_option("poe_off")
+    cancel_before_off(page, switch, address)
+    page.locator("#selectEligible").click()
+    expect(page.locator("#selectedCount")).to_have_text("선택 2개")
+    first.uncheck()
+    expect(second).to_be_checked()
+    since = len(switch.commands)
+    with click_quick_poe(page, "poe_off", [(address, "2")]):
+        assert_port_off(page, switch, address, "2", 7, since)
+    assert switch.power["1"]
+
+    # The other port now loses its neighbor and link too. Exercise the reviewed path.
+    switch.no_neighbor.add("1")
+    switch.linked.clear()
+    page.locator("#queryPorts").click()
+    expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
+    page.locator("#clearSelection").click()
+    first.check()
+    expect(second).not_to_be_checked()
+    since = len(switch.commands)
+    page.locator("#preview").click()
+    expect(page.locator("#review")).to_be_visible(timeout=90000)
+    assert switch.power["1"] and "configure terminal" not in switch.commands[since:]
+    page.locator("#reviewBody input").fill(page.locator("#reviewBody code").inner_text())
+    page.get_by_role("button", name="승인하고 명령 실행").click()
+    assert_port_off(page, switch, address, "1", 5, since)
 
 
 def run_range(page, url, switch, second, shots, output):
@@ -168,26 +237,7 @@ def run_range(page, url, switch, second, shots, output):
             after_second_write = switch.commands.index("interface 2 power-over-ethernet", start) + 1
             assert switch.commands[after_second_write:].count("show power-over-ethernet 2") >= 2
             assert writes == ["interface 1 power-over-ethernet", "interface 2 power-over-ethernet"]
-            # Both ports have PoE ON, but only port 1 has a live AP-535.
-            switch.linked.add("1")
-            page.locator("#queryPorts").click()
-            expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
-            page.locator("#operation").select_option("poe_off")
-            page.locator("#selectEligible").click()
-            expect(page.locator("#selectedCount")).to_have_text("선택 1개")
-            row = page.frame_locator("#matrixViewer").locator(
-                f'#tbody tr[data-port-key="{address}/1"]'
-            )
-            expect(row.get_by_role("checkbox")).to_be_checked()
-            page.get_by_role("button", name="범위 전체 선택", exact=True).click()
-            baseline = len(switch.commands)
-            with click_quick_poe(page, "poe_off", targets):
-                blocked = page.locator("#quickResult tbody tr")
-                expect(blocked).to_have_count(1, timeout=90000)
-                expect(blocked).to_contain_text("Link Up")
-            assert "configure terminal" not in switch.commands[baseline:]
-            assert switch.power == {"1": True, "2": True}
-            cancel_before_off(page, switch, address)
+            exercise_port_off(page, switch, address)
 
     page.locator("#shutdown").click()
     page.locator("#reviewBody").get_by_role("button", name="서버 종료").click()
@@ -197,5 +247,6 @@ def run_range(page, url, switch, second, shots, output):
 if __name__ == "__main__":
     run_browser_case(run_range, switch_factory=RangeSwitch)
     print(
-        "PASS bulk PoE ON with lost SSH acknowledgement: read-only confirmation, no replay, changed-key halt"
+        "PASS quick and reviewed PoE OFF without link or LLDP, selected-port power refresh, "
+        "and bulk PoE ON with lost acknowledgement, no replay and changed-key halt"
     )

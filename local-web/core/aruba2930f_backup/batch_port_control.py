@@ -170,34 +170,27 @@ def validate_batch_target(
         or row.status not in (QueryStatus.OK, QueryStatus.UNSUPPORTED)
     ):
         raise BatchControlError("완료된 포트 상태가 없는 행은 일괄 제어할 수 없습니다.")
+    if (snapshot.target, snapshot.interface) != (row.group.target, row.interface):
+        raise BatchControlError("조회한 장비와 포트가 선택 대상과 다릅니다. 다시 조회하세요.")
     if action.is_poe and snapshot.poe_enabled is None:
         raise BatchControlError("PoE 미지원·확인 불가 포트에는 전원 제어를 실행할 수 없습니다.")
-    # An LLDP neighbor can remain cached after physical disconnection.
-    # The link check is necessary but does not prove LLDP advertisement freshness.
-    if (
-        action in (PortAction.POE_OFF, PortAction.DISABLE)
-        and snapshot.link_status.casefold() != "up"
-    ):
-        raise BatchControlError("일괄 PoE OFF/포트 Down은 물리 링크가 Link Up인 포트만 허용합니다.")
     neighbors = (
         row.lldp.neighbors if row.lldp is not None and row.lldp.status is LLDPStatus.OK else ()
     )
     confirmed = len(neighbors) == 1 and neighbors[0].model == "AP-535"
-    if (
-        action in (PortAction.POE_OFF, PortAction.DISABLE)
-        and confirmed
-        and (not neighbors[0].chassis_id or not neighbors[0].port_id)
-    ):
-        raise BatchControlError(
-            "AP-535의 LLDP Chassis ID와 Port ID를 확인해야 일괄 차단할 수 있습니다."
-        )
-    if action in (PortAction.POE_OFF, PortAction.DISABLE) and not (
-        confirmed or allow_unverified_ap
-    ):
-        raise BatchControlError(
-            "일괄 전원 OFF/포트 Down은 LLDP에서 AP-535로 확인된 포트만 허용합니다. "
-            "미확인 포트는 기존 단일 포트 제어에서 개별 확인하세요."
-        )
+    if action is PortAction.DISABLE:
+        # A cached LLDP entry can survive a physical disconnect.
+        if snapshot.link_status.casefold() != "up":
+            raise BatchControlError("일괄 포트 Down은 물리 링크가 Link Up인 포트만 허용합니다.")
+        if confirmed and (not neighbors[0].chassis_id or not neighbors[0].port_id):
+            raise BatchControlError(
+                "일괄 포트 Down에는 AP-535의 LLDP Chassis ID와 Port ID가 필요합니다."
+            )
+        if not confirmed and not allow_unverified_ap:
+            raise BatchControlError(
+                "일괄 포트 Down은 LLDP에서 AP-535로 확인된 포트만 허용합니다. "
+                "미확인 포트는 단일 포트 제어에서 개별 확인하세요."
+            )
     return BatchTarget(
         snapshot.target,
         snapshot.interface,
@@ -225,9 +218,8 @@ def create_batch_plan(
 ) -> BatchPlan:
     """Bind a concrete, already-observed endpoint/port list to one fixed action.
 
-    OFF and Down require a single manufacturer-identified AP-535 by default.
-    An explicit per-job/manual override may be considered in a later release;
-    it is not enabled from the normal batch GUI to avoid uplink mass outages.
+    Administrative Down requires a live AP-535 neighbor by default. PoE OFF
+    operates on the selected switch port's verified power setting.
     """
     if not isinstance(action, PortAction):
         raise BatchControlError("지원하지 않는 포트 제어 동작입니다.")
@@ -489,10 +481,9 @@ class BatchPortController:
             # The pending intent is persisted BEFORE the single-port service
             # is allowed to send any mutation. Crash recovery never replays it.
             journal.append(index, "intent", action=action.value)
-            # A fresh, same-session LLDP identity check happens inside apply,
-            # immediately before OFF/Down. A stale AP model alone is not enough.
+            # Administrative Down checks the pinned neighbor immediately before the command.
             emit_stage("apply")
-            if action in (PortAction.POE_OFF, PortAction.DISABLE) and item.confirmed_ap535:
+            if action is PortAction.DISABLE and item.confirmed_ap535:
                 result = controller.apply(
                     snapshot,
                     action,

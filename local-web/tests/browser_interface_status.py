@@ -55,9 +55,8 @@ def assert_live_readings(page, switch, expected, *, poe_failed=None):
         checkbox = table_row.get_by_role("checkbox")
         if port == poe_failed:
             expect(checkbox).to_be_disabled()
-        if port == poe_failed or link != "Up":
             expect(checkbox).not_to_be_checked()
-        elif port != "10":
+        else:
             expect(checkbox).to_be_checked()
         table_row.locator("button.row-select").click()
         expect(matrix_view.locator("#detail")).to_contain_text(f"인터페이스 {port}")

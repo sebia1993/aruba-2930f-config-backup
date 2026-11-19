@@ -720,7 +720,7 @@ $('controlMode').onchange = () => {
     const detail = ui.rows.find(row=>portKey(row) === window.portTools?.currentKey());
     if (detail) { $('singleIP').value = endpoint(detail); $('singlePort').value = detail.interface; }
   }
-  $('controlHint').textContent = single ? '직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.' : '일괄 전원 OFF와 포트 비활성화는 LLDP로 AP-535가 확인된 포트에서 사용할 수 있습니다.';
+  $('controlHint').textContent = single ? '직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.' : 'PoE OFF는 AP 모델이나 링크 상태와 관계없이 전원을 끕니다. 일괄 포트 비활성화에는 링크 Up과 LLDP에서 확인한 AP-535가 필요합니다.';
   updateControlTarget();
 };
 function controlAfterText(row) {
