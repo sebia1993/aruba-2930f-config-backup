@@ -116,10 +116,6 @@ jobs:
         working-directory: local-web
         shell: pwsh
         run: |
-          $viewer = Join-Path $env:RUNNER_TEMP 'Aruba2930F_Switch_Log_Web.html'
-          python tools/export_log_viewer.py $viewer
-          if ($LASTEXITCODE -ne 0) { throw 'Standalone web viewer export failed.' }
-
           $output = Join-Path $env:RUNNER_TEMP 'local-web-release'
           python tools/build_release.py --output $output
           if ($LASTEXITCODE -ne 0) { throw 'Local web package build failed.' }

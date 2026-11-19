@@ -49,7 +49,7 @@ nav a[aria-current=page] { color: var(--ink); background: var(--active); border-
 .sidefoot b { color: var(--teal); }
 .sidefoot i { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: currentColor; }
 main { min-width: 0; }
-.topbar,.tools,.bar,.formrow,.heading,.panel>header,.status,.dialog-head,.filelinks { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.topbar,.tools,.bar,.heading,.panel>header,.status,.dialog-head,.filelinks { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .topbar { background: var(--sidebar); min-height: 65px; padding: 10px clamp(12px,2vw,28px); border-bottom: 1px solid var(--stroke); justify-content: space-between; font-size: 12px; }
 .crumb { color: var(--muted); }
 .crumb-path { margin-right: 5px; }
@@ -64,9 +64,7 @@ button.danger { color: var(--bad); border-color: currentColor; }
 .theme-toggle svg { flex: none; color: var(--teal); }
 .textbtn { justify-self: start; padding: 0; border: 0; background: transparent; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; font-size: 11px; }
 [data-page] { max-width: 1940px; margin: auto; padding: 26px clamp(14px,2vw,30px); }
-[data-page=logs] { max-width: none; padding: 0; }
 .viewer { display: block; width: 100%; height: calc(100vh - 65px); min-height: 500px; border: 0; background: var(--bg); }
-#logViewer { height: calc(100vh - 122px); }
 .heading { align-items: end; justify-content: space-between; margin-bottom: 20px; }
 .eyebrow { font-size: 10px; font-weight: 800; letter-spacing: 1.9px; color: var(--teal); }
 h1 { font-size: clamp(24px,2vw,30px); line-height: 1.25; margin: 5px 0 7px; letter-spacing: -.75px; }
@@ -76,14 +74,13 @@ h2 { font-size: 15px; font-weight: 730; margin: 0; }
 .panel>header,.dialog-head { justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--stroke); }
 .panel>header>span,summary span { color: var(--muted); font-size: 11px; font-weight: 600; }
 .panelbody { padding: 16px 18px; display: grid; gap: 14px; min-width: 0; }
-.bar,.formrow { align-items: end; }
+.bar { align-items: end; }
 label { display: grid; gap: 5px; font-size: 12px; font-weight: 650; color: var(--muted); min-width: 0; }
 input:not([type=checkbox]),textarea,select { width: 100%; min-height: 38px; padding: 7px 10px; background: var(--field); color: var(--ink); border: 1px solid var(--line); border-radius: 7px; }
 textarea { resize: vertical; }
 input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); }
 input[type=number] { max-width: 100px; }
 .formgrid { display: grid; gap: 12px; grid-template-columns: repeat(3,minmax(0,1fr)); }
-.grow { flex: 1 1 220px; }
 .filelinks a { font-size: 12px; align-self: center; }
 .filelinks a { text-decoration: none; overflow-wrap: anywhere; }
 .filelinks { gap: 6px; }
@@ -103,10 +100,8 @@ input[type=number] { max-width: 100px; }
 @keyframes job-wait { to { background-position: 42px 0; } }
 @media (prefers-reduced-motion: reduce) { #jobProgress:indeterminate { animation: none; } }
 .status[data-level=error] { border-color: var(--bad); color: var(--bad); }
-.live-source { margin: 10px clamp(14px,2vw,30px) 0; padding: 8px 13px; background: var(--surface); border: 1px solid var(--stroke); border-radius: 8px; }
 summary { cursor: pointer; font-size: 13px; font-weight: 650; }
 summary span { margin-left: 8px; }
-.live-source form { margin: 12px 0 4px; }
 .output { margin-top: 8px; }
 .control-power { display: grid; gap: 2px; }
 .control-power strong { font-variant-numeric: tabular-nums; }
@@ -169,7 +164,7 @@ dialog::backdrop { background: #030c17bc; }
 @media(max-width: 650px), (max-width: 950px) and (max-height: 500px) {
   .shell { display: block; } .sidebar { position: static; height: auto; overflow: visible; border: 0; }
   .brand,.navgroup,.crumb-path { display: none; }
-  nav { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 2px; padding: 3px 4px; border-bottom: 1px solid var(--stroke); }
+  nav { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 2px; padding: 3px 4px; border-bottom: 1px solid var(--stroke); }
   nav a { min-width: 0; min-height: 44px; flex-direction: column; justify-content: center; gap: 2px; padding: 2px 0; border-radius: 6px; font-size: 11px; line-height: 1.35; text-align: center; white-space: normal; word-break: keep-all; overflow-wrap: anywhere; }
   nav a > span[aria-hidden] { font-size: 16px; }
   nav .port-nav { display: flex; }
@@ -191,7 +186,7 @@ dialog::backdrop { background: #030c17bc; }
   #mobileServerInfo[open] summary::after { transform: rotate(180deg); }
   #mobileServerInfo .sidefoot { position: absolute; z-index: 10; right: 0; top: 100%; min-width: 9rem; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); }
   #mobileServerInfo .textbtn { min-height: 44px; font-size: 12px; }
-  .tools,.formrow,.bar { gap: 7px; }
+  .tools,.bar { gap: 7px; }
   .panelbody,.panel>header { padding: 12px; }
   .formgrid { grid-template-columns: 1fr; }
   input:not([type=checkbox]),textarea,select { font-size: 16px; }
@@ -200,7 +195,7 @@ dialog::backdrop { background: #030c17bc; }
   dialog :is(button,select,input:not([type=checkbox])) { min-height: 44px; }
   #reviewBody { min-width: 0; padding: 12px; }
   .status span,.entry > *,.filelinks { min-width: 0; overflow-wrap: anywhere; }
-  .viewer,#logViewer { height: calc(100dvh - 146px); min-height: 250px; }
+  .viewer { height: calc(100dvh - 146px); min-height: 250px; }
 }
 @media(max-width: 650px) {
   .result-table table,.result-table tbody { display: block; }
@@ -219,7 +214,6 @@ dialog::backdrop { background: #030c17bc; }
   nav { padding-block: 4px; }
   .topbar { justify-content: end; min-height: 53px; }
   .topbar .crumb { display: none; }
-  #logViewer { height: calc(100dvh - 103px); }
 }
 
 .key-list { display:grid;gap:6px;max-height: min(45vh,440px);overflow:auto;margin:10px 0 }

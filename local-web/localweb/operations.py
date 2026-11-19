@@ -31,7 +31,6 @@ from aruba2930f_backup.models import (
 from aruba2930f_backup.poe_query import PoEQueryService
 from aruba2930f_backup.poe_query_models import (
     MAX_INTERFACES_PER_TARGET,
-    MAX_TARGETS,
     PoEQueryResult,
     PoETarget,
     QueryStatus,
@@ -56,7 +55,7 @@ from aruba2930f_backup.storage import (
     device_config_path,
     write_config_atomic,
 )
-from aruba2930f_backup.validation import require_valid_prompt, validate_device_identity
+from aruba2930f_backup.validation import validate_device_identity
 
 from .backup_destination import copy_backup_files, selected_directory
 from .backup_history import backup_history
@@ -65,7 +64,6 @@ from .cable import CableSession, diagnose_ports
 from .port_tools import group_targets, matrix_observation, preview_targets, target_table
 
 POWER_SETTLE_SECONDS = 3
-MAX_LOG_BATCH_BYTES = 8 * 1024 * 1024
 
 
 def _target_text(body: dict) -> str:
@@ -86,7 +84,7 @@ class TargetInputError(ValueError):
     """All error lines are generated here, without echoing input values."""
 
 
-def _devices(body: dict, *, backup_targets=False) -> tuple[DeviceTarget, ...]:
+def _backup_targets(body: dict) -> tuple[DeviceTarget, ...]:
     default_port = _bounded_integer(body, "ssh_port", 22, 65535)
     _target_text(body)  # Enforce the shared input length before parsing the original line numbers.
     targets, errors = {}, []
@@ -99,7 +97,7 @@ def _devices(body: dict, *, backup_targets=False) -> tuple[DeviceTarget, ...]:
         except ValueError:
             errors.append(f"{number}행 · 올바른 IPv4 주소와 SSH 포트를 입력하세요.")
             continue
-        if target in targets and backup_targets:
+        if target in targets:
             errors.append(
                 f"{number}행 · {targets[target]}행과 스위치 주소 및 SSH 포트가 중복됩니다."
             )
@@ -107,8 +105,6 @@ def _devices(body: dict, *, backup_targets=False) -> tuple[DeviceTarget, ...]:
             targets[target] = number
     if errors:
         raise TargetInputError("\n".join(errors))
-    if not backup_targets and len(targets) > MAX_TARGETS:
-        raise ValueError("한 번에 최대 300개 스위치를 선택할 수 있습니다.")
     return tuple(targets)
 
 
@@ -298,7 +294,7 @@ class Operations:
         if action == "hostkey.inspect":
             self._review.clear()
             self.collector.begin_run()
-            targets = _devices(body, backup_targets=True)
+            targets = _backup_targets(body)
             self._start_progress("호스트 키 조회 중", len(targets))
             checks = self.collector.probe_host_keys(
                 targets, options=CollectionOptions(max_attempts=1), cancel_event=cancel
@@ -405,8 +401,8 @@ class Operations:
             )
             return diagnose_ports(
                 groups,
-                lambda target: self._prepared_switch(
-                    target, self.credentials, options, cancel, cable=True, privileged=testing
+                lambda target: self._cable_session(
+                    target, self.credentials, options, cancel, privileged=testing
                 ),
                 testing,
                 cancel,
@@ -414,8 +410,6 @@ class Operations:
             )
         if action == "backup.run":
             return self._backup(body, self.credentials, cancel)
-        if action == "logs.query":
-            return self._logs(body, self.credentials, cancel)
         raise ValueError("지원하지 않는 작업입니다.")
 
     def _query(self, groups, credentials, cancel, *, refresh: bool) -> dict:
@@ -709,7 +703,7 @@ class Operations:
         return rows
 
     def _backup(self, body: dict, credentials: Credentials, cancel: threading.Event) -> dict:
-        targets = _devices(body, backup_targets=True)
+        targets = _backup_targets(body)
         mode = FilenameMode(body.get("filename_mode", "hostname_ip"))
         destination = selected_directory(body.get("output_directory"))
         options = CollectionOptions(
@@ -905,9 +899,7 @@ class Operations:
         }
 
     @contextmanager
-    def _prepared_switch(
-        self, target, credentials, options, cancel, *, cable=False, privileged=False
-    ):
+    def _cable_session(self, target, credentials, options, cancel, *, privileged):
         session = None
         try:
             _abort_if_cancelled(cancel)
@@ -925,10 +917,7 @@ class Operations:
                 self.host_key_store.approve([check])
             self.host_key_store.require_trusted(observation)
             _abort_if_cancelled(cancel)
-            if cable:
-                session = CableSession(target, credentials, options, self.host_key_store)
-            else:
-                session = self.collector.session_factory.create(target, credentials, options)
+            session = CableSession(target, credentials, options, self.host_key_store)
             session.connect()
             _abort_if_cancelled(cancel)
             if credentials.enable_secret or (privileged and not session.get_prompt().endswith("#")):
@@ -953,50 +942,3 @@ class Operations:
             if session is not None:
                 with suppress(Exception):
                     session.close()
-
-    def _logs(self, body: dict, credentials: Credentials, cancel: threading.Event) -> dict:
-        targets = _devices(body)
-        options = CollectionOptions(
-            max_attempts=1, command_timeout_seconds=30, max_output_bytes=1024 * 1024
-        )
-        rows = []
-        remaining = MAX_LOG_BATCH_BYTES
-        self._start_progress("스위치 이벤트 로그 조회 중", len(targets))
-        for target in targets:
-            row = {
-                "endpoint": target.endpoint,
-                "hostname": "",
-                "status": "failed",
-                "text": "",
-                "message": "",
-            }
-            try:
-                _abort_if_cancelled(cancel)
-                if not remaining:
-                    raise CollectionFailure(
-                        ErrorCode.OUTPUT_LIMIT_EXCEEDED,
-                        "작업당 로그 용량 8 MiB에 도달했습니다. 이 스위치만 선택해 다시 조회하세요.",
-                    )
-                with self._prepared_switch(target, credentials, options, cancel) as session:
-                    hostname = require_valid_prompt(session.get_prompt())
-                    text = session.send_show("show logging", cancel_event=cancel)
-                _abort_if_cancelled(cancel)
-                size = len(text.encode("utf-8"))
-                if size > remaining:
-                    remaining = 0
-                    raise CollectionFailure(
-                        ErrorCode.OUTPUT_LIMIT_EXCEEDED,
-                        "전체 로그가 8 MiB를 넘습니다. 이 스위치만 선택해 다시 조회하세요.",
-                    )
-                remaining -= size
-                row.update(hostname=hostname or "", status="success", text=text)
-            except CollectionFailure as exc:
-                row.update(
-                    status="cancelled" if exc.code is ErrorCode.CANCELLED else "failed",
-                    message=exc.safe_message,
-                )
-            except Exception:
-                row["message"] = "스위치 이벤트 로그를 읽지 못했습니다."
-            rows.append(row)
-            self._progress("스위치 이벤트 로그 조회 중", finished=True)
-        return {"logs": rows}

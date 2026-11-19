@@ -33,13 +33,13 @@ def check_fingerprint(host, port, fingerprint):
 def check_phone_navigation(peer):
     nav = peer.get_by_role("navigation", name="주 메뉴")
     links = nav.get_by_role("link")
-    expect(links).to_have_count(4)
+    expect(links).to_have_count(3)
     expect(peer.locator('nav a[href="#history"], [data-page="history"]')).to_have_count(0)
     # A locator tap alone would silently scroll horizontally to a clipped menu item.
     for width, height, route in (
         (320, 568, "backup"),
         (320, 568, "cable"),
-        (360, 800, "logs"),
+        (360, 800, "ports"),
         (844, 390, "backup"),
         (390, 844, "ports"),
     ):
@@ -164,7 +164,7 @@ def exercise(page, url, switch, _second_switch, shots, _backup):
         # A scheme-less address that starts as HTTP and an explicit HTTPS address both work.
         assert peer.goto("http://" + endpoint.netloc).status == 200
         expect(peer.locator("nav")).to_be_visible()
-        assert peer.url.rstrip("/") == base
+        expect(peer).to_have_url(base + "/#ports")
         assert (
             peer.evaluate("fetch('/api/bootstrap').then(r=>r.json()).then(v=>v.lanClient)") is True
         )

@@ -38,7 +38,6 @@ ACTIONS = frozenset(
         "backup.history",
         "backup.pick-directory",
         "history.open-folder",
-        "logs.query",
         "control.preview",
         "control.apply",
         "control.history",
@@ -54,7 +53,6 @@ PERSIST = {
     "cable.test",
     "profiles.export",
     "backup.run",
-    "logs.query",
     "control.quick",
     "control.quick-execute",
     "control.apply",
@@ -429,7 +427,7 @@ class Jobs:
                 labels = {"done": "완료", "failed": "실패", "cancelled": "취소됨"}
                 summary = labels[state]
                 if result:
-                    rows = result.get("results", result.get("rows", result.get("logs", [])))
+                    rows = result.get("results", result.get("rows", []))
                     if action == "control.quick-execute":
                         summary += (
                             f" · 선택 {result['selected']}개 · 건너뜀 {len(result['skipped'])}개"

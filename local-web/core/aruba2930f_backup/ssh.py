@@ -66,7 +66,6 @@ _ALLOWED_SHOW_COMMANDS = frozenset(
         "show modules",
         "show system information",
         "show running-config",
-        "show logging",
     }
 )
 
