@@ -274,12 +274,18 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#singleIP")).to_be_hidden()
     expect(page.locator("#queryPorts")).to_be_enabled()
     subtitle = ports_menu.get_by_text("Port & PoE Management", exact=True)
-    for width, height in WORKSPACE_SIZES:
+    # Tablet portrait uses the narrower sidebar with both menu labels visible.
+    for width, height in (*WORKSPACE_SIZES, (651, 940), (850, 940)):
         resize_workspace(page, width, height)
+        assert ports_menu.evaluate("""link => {
+            const menu = link.closest('nav').getBoundingClientRect();
+            const box = link.getBoundingClientRect();
+            return box.left >= menu.left - 1 && box.right <= menu.right + 1;
+        }"""), f"Port menu overflow at {width}px"
         expect(ports_menu).to_have_accessible_name("포트·PoE 관리")
         expect(ports_menu.get_by_text("포트·PoE 관리", exact=True)).to_be_visible()
         expect(ports_menu.locator(".port-nav-icon")).to_be_visible()
-        if width >= 1280:
+        if width >= 651:
             expect(subtitle).to_be_visible()
         for selector in ("#queryTargets", "#queryPorts", "#controlHeading"):
             hit_point(page.locator(selector))
