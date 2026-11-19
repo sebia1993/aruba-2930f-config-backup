@@ -110,7 +110,8 @@ def verify_rejected_draft_and_failed_read(page, view, addresses, first, second):
     expect(rows).to_have_count(1)
     expect(rows.get_by_role("checkbox")).to_be_disabled()
     expect(page.locator("#selectedCount")).to_have_text("선택 0개")
-    expect(page.locator("#quickOn")).to_be_disabled()
+    page.locator("#quickOn").click()
+    expect(page.locator("#statusText")).to_contain_text("포트를 체크하세요")
     assert len(first.commands) == baseline[0]
     assert len(second.commands) > baseline[1]
     assert "configure terminal" not in second.commands[baseline[1] :]
