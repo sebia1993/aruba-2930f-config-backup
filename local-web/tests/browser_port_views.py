@@ -1,5 +1,6 @@
 """Verify full-query, view-switch and control scope behavior in a real browser on loopback."""
 
+import re
 import sys
 
 from browser_power_matrix import PowerMatrixSwitch
@@ -9,6 +10,7 @@ from playwright.sync_api import expect
 
 HEADINGS = ["포트 번호", "전력 판정", "실측 W", "LLDP AP 이름"]
 SIZES = ((1366, 768), (390, 844), (320, 568))
+LONG_AP = "engineering-floor-3-east-wing-access-point-0002"
 
 
 def assert_presentation(page, frame, presentation):
@@ -36,6 +38,7 @@ def assert_table_fits(page, frame):
 
 
 def exercise(page, url, switch, second, shots, _backup):
+    switch.ap_names["2"] = LONG_AP
     addresses = [f"127.0.0.1:{fixture.port}" for fixture in (switch, second)]
     first_key, other_key = addresses[0] + "/3", addresses[1] + "/1"
     page.goto(url)
@@ -59,6 +62,29 @@ def exercise(page, url, switch, second, shots, _backup):
     other_tile = frame.locator(f'#matrix [data-port-key="{other_key}"]')
     first_row = frame.locator(f'#tbody tr[data-port-key="{first_key}"]')
     other_row = frame.locator(f'#tbody tr[data-port-key="{other_key}"]')
+    first_group = frame.get_by_role("group", name=re.compile(re.escape(addresses[0])))
+    for port, name in (
+        ("1", "matrix-ap-1"),
+        ("2", LONG_AP),
+        ("3", "matrix-ap-3"),
+        ("5", "matrix-ap-5"),
+    ):
+        tile = first_group.locator(f'[data-port-key="{addresses[0]}/{port}"]')
+        expect(tile.locator(".tile-ap-name")).to_be_visible()
+        expect(tile.locator(".tile-ap-name")).to_have_text(name)
+        expect(tile).to_have_accessible_name(re.compile(re.escape(name)))
+    expect(first_group.locator('[data-port-key$="/4"] .tile-ap-name')).to_have_count(0)
+    expect(other_tile.locator(".tile-ap-name")).to_have_text("fixture-ap")
+    long_tile = first_group.locator('[data-port-key$="/2"]')
+    resize_workspace(page, 320, 568)
+    if page.context.browser.browser_type.name == "webkit":
+        long_tile.tap()
+    else:
+        long_tile.focus()
+        long_tile.press("Enter")
+    expect(frame.locator("#detail .ap-name")).to_contain_text(LONG_AP)
+    long_tile.click()
+    expect(long_tile).to_have_attribute("aria-pressed", "false")
     first_tile.click()
     expect(first_row.locator("input")).to_be_checked()
 
@@ -176,20 +202,20 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
     assert_presentation(page, frame, "matrix")
     expect(tiles).to_have_count(6)
-    check_paged_select_all(page, frame, switch, second, addresses)
+    check_paged_select_all(page, frame, switch, second, addresses, shots)
     assert all("configure terminal" not in fixture.commands for fixture in (switch, second))
     page.locator("#shutdown").click()
     page.locator("#reviewBody").get_by_role("button", name="서버 종료").click()
     expect(page.locator("#statusText")).to_contain_text("종료했습니다.")
 
 
-def check_paged_select_all(page, frame, switch, second, addresses):
-    switch.draws.update({str(port): 8 for port in range(6, 25)})
+def check_paged_select_all(page, frame, switch, second, addresses, shots):
+    switch.draws.update({str(port): 8 for port in range(6, 49)})
     page.locator("#editQueryTargets").click()
-    page.locator("#queryTargets").fill(f"{addresses[0]} 1-24\n{addresses[1]} 1")
+    page.locator("#queryTargets").fill(f"{addresses[0]} 1-48\n{addresses[1]} 1")
     page.locator("#queryPorts").click()
     tiles = frame.locator("#matrix [data-port-key]")
-    expect(tiles).to_have_count(25, timeout=90000)
+    expect(tiles).to_have_count(49, timeout=120000)
     expect(page.locator("#queryPorts")).to_be_enabled()
     baseline = [len(peer.commands) for peer in (switch, second)]
     toggle = page.locator("#matrixSelectAll")
@@ -199,6 +225,29 @@ def check_paged_select_all(page, frame, switch, second, addresses):
     other = frame.locator(f'#matrix [data-port-key="{addresses[1]}/1"]')
     first = frame.locator(f'#matrix [data-port-key="{addresses[0]}/1"]')
 
+    group = frame.get_by_role("group", name=re.compile(re.escape(addresses[0])))
+    for width, height in SIZES:
+        resize_workspace(page, width, height)
+        rows = group.locator("[data-port-key]").evaluate_all(
+            """tiles => {
+                const rows = new Map();
+                for (const tile of tiles) {
+                    rows.set(tile.offsetTop, (rows.get(tile.offsetTop) || 0) + 1);
+                }
+                return [...rows.values()];
+            }"""
+        )
+        columns = max(rows)
+        assert sum(rows) == 48 and columns >= (6 if width > 400 else 2), (width, rows)
+        assert group.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+        assert frame.locator("html").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+        if shots:
+            print(
+                f"48-port matrix at {width} px: up to {columns} columns, {len(rows)} rows, no horizontal overflow",
+                flush=True,
+            )
+            page.screenshot(path=shots / f"port-ap-name-48-{width}.png")
+    resize_workspace(page, 1366, 768)
     # Port 1 on the second endpoint must survive an all/none round trip on the first.
     other.click()
     device.select_option(addresses[0])
@@ -216,13 +265,15 @@ def check_paged_select_all(page, frame, switch, second, addresses):
     else:
         toggle.focus()
         toggle.press("Enter")
-    expect(eligible).to_have_count(24)
-    expect(count).to_have_text("선택 25개")
+    expect(eligible).to_have_count(48)
+    expect(count).to_have_text("선택 49개")
     expect(toggle).to_have_accessible_name("전체 선택 해제")
     frame.locator("#nextPage").click()
-    expect(rows).to_have_count(6)
-    expect(frame.locator("#tbody input:checked")).to_have_count(6)
-    last = frame.locator(f'#tbody tr[data-port-key="{addresses[0]}/24"] input')
+    expect(rows).to_have_count(18)
+    frame.locator("#nextPage").click()
+    expect(rows).to_have_count(12)
+    expect(frame.locator("#tbody input:checked")).to_have_count(12)
+    last = frame.locator(f'#tbody tr[data-port-key="{addresses[0]}/48"] input')
     last.uncheck()
     expect(toggle).to_have_accessible_name("전체 선택")
     last.check()

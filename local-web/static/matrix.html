@@ -251,6 +251,9 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .embedded[data-theme=light] .port-tile.unpowered{color:#000}
 .embedded[data-theme=light] .port-tile.normal{color:#fff}
 .embedded .port-tile.unclassified{color:var(--ink)}
+.embedded .port-tile:has(.tile-ap-name){display:inline-block;height:auto;min-height:var(--cell-size);max-width:min(100%,8.5rem);padding:3px 6px}
+.embedded .tile-ap-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600;line-height:1.25}
+.embedded .port-tile:has(.tile-ap-name):hover{transform:none}
 .port-failure-mark{display:inline-grid;place-items:center;width:1.05rem;height:1.05rem;flex:none;border-radius:50%;background:#172331;color:#fff;border:1px solid #fff;font:bold 12px/1 sans-serif}
 .port-tile[data-read-failed=true]{display:inline-flex;align-items:center;justify-content:center;gap:3px}
 #mReadFailed{display:inline-flex;align-items:center;gap:4px;min-height:32px;white-space:nowrap;color:var(--ink)}
@@ -336,6 +339,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   .embedded #overviewRoot>#shortFilterToggle{min-height:44px}
   .embedded .port-grid{gap:5px}
   .embedded .port-tile{min-width:max(44px,var(--cell-size));min-height:max(44px,var(--cell-size));font-size:14px}
+  .embedded .port-tile:has(.tile-ap-name){min-height:max(44px,var(--cell-size))}
   .embedded .port-tile:hover{transform:none}
   .embedded .siteheading b,.embedded .port-identity{min-width:0;overflow-wrap:anywhere}
   .embedded #overviewRoot .filterbar :is(.search,select,.btn),
@@ -691,8 +695,18 @@ window.PortViews = (() => {
   }
   const refreshNotice='현재 상태 재조회 필요';
   function needsRefresh(row) { return liveSelectionId() && row.queryStatus==='ok' && excludedPorts.has(row.key); }
+  function matrixApName(row) {
+    return needsRefresh(row) ? '' : window.PowerMatrix.accessPointName(row.raw);
+  }
   function labelTile(tile,row) {
-    const parts=[row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status],row.apName];
+    const ap=embedded ? matrixApName(row) : row.apName;
+    if (embedded) {
+      const caption=tile.querySelector('.tile-ap-name');
+      if (ap && !caption) tile.append(node('span',ap,'tile-ap-name'));
+      else if (!ap) caption?.remove();
+      else if (caption.textContent!==ap) caption.textContent=ap;
+    }
+    const parts=[row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status],ap];
     if (row.readFailure) parts.push('조회 실패');
     if (row.comparison?.changed) parts.push('직전 조회에서 변화');
     if (row.lastGood) parts.push('갱신 지연 · 마지막 측정 '+timeText(row.lastGood.observed));
@@ -946,7 +960,8 @@ window.PortViews = (() => {
       const selection=node('div',null,'port-reading');
       badges.append(node('strong',watts(row),'observed-watts'));
       selection.append(identity,badges);
-      badges.append(node('span','LLDP AP · '+(row.apName || (row.lldp==='ok'?'이름 없음':'미수집')),'ap-name'));
+      const ap=state.presentation==='matrix' ? matrixApName(row) : row.apName;
+      badges.append(node('span','LLDP AP · '+(ap || (row.lldp==='ok'?'이름 없음':'미수집')),'ap-name'));
       addRefreshNotice(selection,row);
       facts=node('details',null,'port-facts');
       facts.open=!!factsOpen;

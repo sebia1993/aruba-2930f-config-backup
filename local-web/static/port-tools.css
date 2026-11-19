@@ -158,6 +158,10 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 .matrix-tile.focused-port{outline:1px dashed var(--focus);outline-offset:1px}
 .matrix-tile[aria-pressed=true]{box-shadow:inset 0 0 0 2px var(--teal)}
 .matrix-tile[aria-pressed=true]::after{content:'✓';margin-inline-start:2px}
+.matrix-tiles .matrix-tile:has(.tile-ap-name){position:relative;max-width:min(100%,8.5rem);padding:3px 6px}
+.matrix-tiles .tile-ap-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600;line-height:1.25}
+.matrix-tile[aria-pressed=true]:has(.tile-ap-name)::after{position:absolute;top:1px;right:2px;font-size:10px}
+#matrixDetails>span{min-width:0;overflow-wrap:anywhere}
 #matrixDetails {display:flex;align-items:center;flex-wrap:wrap;gap:6px 18px;margin-top:.75rem;padding:.65rem .85rem;background:var(--surface2);border-radius:6px}
 #matrixDetails small {flex-basis:100%}
 #matrixPager {margin-top:.6rem}
