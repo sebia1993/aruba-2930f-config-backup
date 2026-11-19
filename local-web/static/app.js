@@ -145,15 +145,21 @@ $('stopJob').onclick = async () => {
 };
 $('dismissStatus').onclick = () => notify('');
 
+const themeToggle = $('themeToggle');
 function theme(value) {
   document.documentElement.dataset.theme = value;
-  for (const node of all('[data-theme-choice]')) node.setAttribute('aria-pressed', String(value === node.dataset.themeChoice));
+  const switchToLight = value === 'dark';
+  const label = switchToLight ? '라이트' : '다크';
+  themeToggle.querySelector('use').setAttribute('href', switchToLight ? '#i-sun' : '#i-moon');
+  themeToggle.querySelector('span').textContent = label;
+  themeToggle.title = label + ' 모드로 전환';
+  themeToggle.setAttribute('aria-label', themeToggle.title);
   for (const frame of all('iframe')) {
     frame.contentWindow?.postMessage({type:'aruba-theme',theme:value}, location.origin);
   }
 }
-for (const node of all('[data-theme-choice]')) node.onclick = () => {
-  const value = node.dataset.themeChoice;
+themeToggle.onclick = () => {
+  const value = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   theme(value);
   try { localStorage.setItem('aruba2930f.portMatrix.theme',value); } catch {}
 };

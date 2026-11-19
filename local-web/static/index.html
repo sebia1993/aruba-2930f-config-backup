@@ -29,9 +29,18 @@
     <div class="sidefoot"><b><i></i>로컬 웹 서버</b><span id="version">버전 읽는 중</span><button id="shutdown" type="button" class="textbtn">서버 종료</button></div>
   </aside>
   <main>
-    <header class="topbar"><div class="crumb">네트워크 운영 <span>›</span> <b id="crumb">AP 로그 관제</b></div><div class="tools">
-      <div class="theme" aria-label="화면 테마" role="group"><button data-theme-choice="light" aria-pressed="false">라이트</button><button data-theme-choice="dark" aria-pressed="true">다크</button></div>
-    </div></header>
+    <header class="topbar"><div class="crumb">네트워크 운영 <span>›</span> <b id="crumb">AP 로그 관제</b></div>
+      <button type="button" id="themeToggle" class="theme-toggle" aria-label="라이트 모드로 전환" title="라이트 모드로 전환">
+        <svg aria-hidden="true" focusable="false" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <defs>
+            <g id="i-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.5 1.5m11.2 11.2 1.5 1.5M2 12h2m16 0h2M4.9 19.1l1.5-1.5M17.6 6.4l1.5-1.5"/></g>
+            <path id="i-moon" d="M20.8 15.5A8.6 8.6 0 0 1 8.5 3.2 8.7 8.7 0 1 0 20.8 15.5Z"/>
+          </defs>
+          <use href="#i-sun"/>
+        </svg>
+        <span>라이트</span>
+      </button>
+    </header>
     <div id="statusBar" class="status" hidden><span id="statusText" role="status"></span><button id="stopJob" type="button" hidden>작업 취소</button><button id="dismissStatus" aria-label="메시지 닫기" hidden>닫기</button></div>
     <section data-page="home" hidden>
       <div class="heading"><div><h1>작업 현황</h1><p>백업과 포트 작업의 최근 실행 결과를 확인합니다.</p></div></div>
