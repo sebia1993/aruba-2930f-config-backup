@@ -145,6 +145,7 @@ class SinglePortController(Protocol):
         *,
         confirmation: str,
         expected_lldp_identity: tuple[str, str] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> PortOperationResult: ...
 
 
@@ -291,8 +292,8 @@ class _BatchJournal:
             ) from exc
 
 
-def journal_states(path: Path) -> dict[int, str]:
-    """Read durable states without resuming or replaying an uncertain write."""
+def journal_results(path: Path) -> dict[int, tuple[str, str]]:
+    """Read each port's last durable status and result message."""
     if path.stat().st_size > 2 * 1024 * 1024:
         raise BatchControlError("작업 이력 파일이 예상보다 큽니다.")
     events: list[dict[str, object]] = []
@@ -309,20 +310,29 @@ def journal_states(path: Path) -> dict[int, str]:
     entries = events[0].get("items")
     if not isinstance(entries, list):
         raise BatchControlError("작업 대상 기록이 올바르지 않습니다.")
-    state = {index: "queued" for index in range(len(entries))}
+    state = {index: ("queued", "") for index in range(len(entries))}
     for event in events[1:]:
         index = event.get("index")
         name = event.get("event")
         if type(index) is not int or index not in state or not isinstance(name, str):
             raise BatchControlError("작업 이력에 올바르지 않은 상태가 있습니다.")
         if name == "intent":
-            state[index] = "result_unknown"  # May have reached the switch.
+            state[index] = ("result_unknown", "")  # May have reached the switch.
         elif name == "result":
             value = event.get("status")
-            state[index] = value if isinstance(value, str) else "result_unknown"
+            message = event.get("message")
+            state[index] = (
+                value if isinstance(value, str) else "result_unknown",
+                message if isinstance(message, str) else "",
+            )
         elif name == "preflight":
-            state[index] = "preflight"
+            state[index] = ("preflight", "")
     return state
+
+
+def journal_states(path: Path) -> dict[int, str]:
+    """Read durable states without resuming or replaying an uncertain write."""
+    return {index: status for index, (status, _) in journal_results(path).items()}
 
 
 class BatchPortController:
@@ -370,14 +380,12 @@ class BatchPortController:
         ):
             raise BatchControlError("승인한 작업 이력의 대상 순서와 일치하지 않습니다.")
         outcomes: list[BatchResult] = []
-        halt = False
+        pause_reason = ""
         for index, item in enumerate(plan.targets):
             if cancel.is_set():
                 result = BatchResult(item, BatchStatus.CANCELLED, "실행 전 사용자가 중지했습니다.")
-            elif halt:
-                result = BatchResult(
-                    item, BatchStatus.PAUSED, "이전 작업의 결과가 불확실하여 중단했습니다."
-                )
+            elif pause_reason:
+                result = BatchResult(item, BatchStatus.PAUSED, pause_reason)
             elif index and index % self._chunk_size == 0:
                 can_continue = (
                     continue_after_chunk(index, len(plan.targets))
@@ -385,10 +393,10 @@ class BatchPortController:
                     else False
                 )
                 if not can_continue or cancel.is_set():
-                    halt = True
-                    result = BatchResult(
-                        item, BatchStatus.PAUSED, "다음 작업 묶음이 승인되지 않았습니다."
+                    pause_reason = (
+                        "다음 작업 묶음이 승인되지 않아 이 포트에 변경 명령을 전송하지 않았습니다."
                     )
+                    result = BatchResult(item, BatchStatus.PAUSED, pause_reason)
                 else:
                     result = self._execute_one(
                         journal_offset + index,
@@ -410,7 +418,10 @@ class BatchPortController:
                     on_stage,
                 )
             if result.status is BatchStatus.UNVERIFIED:
-                halt = True
+                pause_reason = (
+                    f"{item.target.endpoint} 포트 {item.interface}의 변경 결과를 확인하지 못해 "
+                    "이 포트에 변경 명령을 전송하지 않았습니다."
+                )
             journal.append(
                 journal_offset + index, "result", status=result.status.value, message=result.message
             )
@@ -487,10 +498,15 @@ class BatchPortController:
                     credentials,
                     confirmation=snapshot.confirmation_text,
                     expected_lldp_identity=(item.expected_chassis_id, item.expected_remote_port_id),
+                    cancel_event=cancel,
                 )
             else:
                 result = controller.apply(
-                    snapshot, action, credentials, confirmation=snapshot.confirmation_text
+                    snapshot,
+                    action,
+                    credentials,
+                    confirmation=snapshot.confirmation_text,
+                    cancel_event=cancel,
                 )
             if result.status == "verified":
                 state = BatchStatus.VERIFIED

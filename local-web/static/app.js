@@ -117,7 +117,11 @@ async function run(action, body, receive) {
     sync();
     const {result,cancelled} = await poll(ui.jobId);
     if (receive) receive(result, cancelled);
-    notify(jobNames[action] + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'));
+    if (action === 'control.apply' && result.results?.some(row=>row.status === 'unverified')) {
+      notify(result.message,true);
+    } else {
+      notify(jobNames[action] + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'));
+    }
   } catch (error) {
     notify(error.message, true);
   } finally {
@@ -710,6 +714,11 @@ $('controlMode').onchange = () => {
   }
   $('controlHint').textContent = single ? '직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.' : '일괄 전원 OFF와 포트 Down은 LLDP로 AP-535가 확인된 포트에서 사용할 수 있습니다.';
 };
+function controlAfterText(row) {
+  if (row.after) return [row.after.detail,row.after.poeStatus].filter(Boolean).join(' · ');
+  if (['paused','cancelled','preflight_failed'].includes(row.status)) return '변경 명령 미전송';
+  return '재조회 필요';
+}
 function renderPlan(plan) {
   const title = operationNames[plan.operation] || plan.operation;
   const targets = simpleTable([['스위치',x=>x.hostname || x.ip],['IP',x=>x.sshPort && x.sshPort !== 22 ? x.ip + ':' + x.sshPort : x.ip],['포트','port'],['현재 상태','detail',true],['전송할 명령','command',true]],plan.targets || []);
@@ -721,7 +730,7 @@ function renderPlan(plan) {
     run('control.apply',{planId:plan.planId,confirmation:plan.quick ? plan.confirmationText : input.value},r => {
       const results = r.results || [], box = $('controlResult');
       box.hidden = false;
-      box.append(elem('p',r.message || title + ' 실행 결과'),simpleTable([['스위치','ip'],['포트','port'],['결과',x=>stateNames[x.status] || x.status],['상세','message',true],['변경 후 상태',x=>x.after ? [x.after.detail,x.after.poeStatus].filter(Boolean).join(' · ') : '재조회 필요',true]],results));
+      box.append(elem('p',r.message || title + ' 실행 결과'),simpleTable([['스위치',x=>x.sshPort && x.sshPort !== 22 ? x.ip + ':' + x.sshPort : x.ip],['포트','port'],['결과',x=>stateNames[x.status] || x.status],['상세','message',true],['변경 후 상태',controlAfterText,true]],results));
       window.controlTools?.finishProgress();
       for (const changed of results) {
         for (const row of ui.rows) if (row.ip === changed.ip && Number(row.ssh_port || 22) === Number(changed.sshPort || 22) && String(row.interface) === String(changed.port)) {
@@ -797,7 +806,7 @@ $('backupHistory').onclick = () => run('backup.history',{output_directory: $('ba
 $('controlHistory').onclick = () => run('control.history',{},r => {
   $('controlHistoryTable').replaceChildren(simpleTable([
     ['시각',x=>dateText(x.time)],['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['호스트','hostname'],
-    ['작업',x=>operationNames[x.operation] || x.operation],['결과',x=>stateNames[x.status] || x.status],['출처','source'],
+    ['작업',x=>operationNames[x.operation] || x.operation],['결과',x=>stateNames[x.status] || x.status],['상세','message',true],['출처','source'],
     ['폴더', x=>window.backupTools?.historyButton(x)]
   ],r.rows || [],'기록된 포트 제어 명령이 없습니다.'));
   window.controlTools?.explainUnknown(r.rows || []);

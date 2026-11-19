@@ -20,7 +20,7 @@ from aruba2930f_backup.batch_port_control import (
     BatchPortController,
     BatchStatus,
     create_batch_plan,
-    journal_states,
+    journal_results,
     validate_batch_target,
 )
 from aruba2930f_backup.models import Credentials, DeviceTarget
@@ -422,7 +422,11 @@ class Controls:
             snapshot = approval.snapshot
             try:
                 result = approval.service.apply(
-                    snapshot, approval.action, approval.credentials, confirmation=approval.text
+                    snapshot,
+                    approval.action,
+                    approval.credentials,
+                    confirmation=approval.text,
+                    cancel_event=cancel,
                 )
             finally:
                 self._forget_rows({(snapshot.target, snapshot.interface)})
@@ -500,6 +504,21 @@ class Controls:
             r.status in (BatchStatus.UNVERIFIED, BatchStatus.CANCELLED, BatchStatus.PAUSED)
             for r in outcome.results
         )
+        uncertain = next(
+            (r.target for r in outcome.results if r.status is BatchStatus.UNVERIFIED), None
+        )
+        pause_message = "다음 묶음 실행 전 중단되어 이 포트에 변경 명령을 전송하지 않았습니다."
+        if uncertain:
+            location = f"{uncertain.target.endpoint} 포트 {uncertain.interface}"
+            response["message"] = f"{location}의 변경 결과를 확인하지 못했습니다."
+            pause_message = (
+                f"{location}의 변경 결과를 확인하지 못해 이 포트에 변경 명령을 전송하지 않았습니다."
+            )
+            unsent = len(rest) + sum(
+                r.status in (BatchStatus.CANCELLED, BatchStatus.PAUSED) for r in outcome.results
+            )
+            if unsent:
+                response["message"] += f" 뒤의 {unsent}개 포트에는 변경 명령을 전송하지 않았습니다."
         if rest and not halted:
             pending = self._batch_approval(
                 replace(batch, targets=rest), approval.credentials, self.operations.last_results
@@ -511,10 +530,9 @@ class Controls:
         elif rest:
             state = BatchStatus.CANCELLED if cancel.is_set() else BatchStatus.PAUSED
             for index in range(approval.offset + len(chunk), approval.offset + len(batch.targets)):
-                journal.append(
-                    index, "result", status=state.value, message="다음 묶음 실행 전 중단되었습니다."
-                )
-            response["message"] += f" 남은 {len(rest)}개 포트의 실행을 중단했습니다."
+                journal.append(index, "result", status=state.value, message=pause_message)
+            if not uncertain:
+                response["message"] += f" 남은 {len(rest)}개 포트의 실행을 중단했습니다."
         return response
 
     def _forget_rows(self, keys: set[tuple[DeviceTarget, str]]) -> None:
@@ -552,8 +570,8 @@ class Controls:
             if batch is None:
                 batch = record.get("event") == "plan"
             if batch:
-                states = journal_states(path)
-                if len(states) > MAX_BATCH_ACTIONS:
+                results = journal_results(path)
+                if len(results) > MAX_BATCH_ACTIONS:
                     raise ValueError("작업 이력의 포트 수가 범위를 벗어났습니다.")
                 return [
                     self._history_row(
@@ -562,8 +580,9 @@ class Controls:
                         item["interface"],
                         item.get("hostname", ""),
                         record["action"],
-                        states[index],
+                        results[index][0],
                         name,
+                        results[index][1],
                     )
                     for index, item in enumerate(record["items"])
                 ]
@@ -579,11 +598,12 @@ class Controls:
                     record["action"],
                     "result_unknown" if status == "pending" else status,
                     name,
+                    record.get("message", ""),
                 )
             ]
 
     @staticmethod
-    def _history_row(time_value, endpoint, interface, host, action, status, file) -> dict:
+    def _history_row(time_value, endpoint, interface, host, action, status, file, message) -> dict:
         ip, _, ssh_port = endpoint.rpartition(":")
         return {
             "time": time_value,
@@ -594,4 +614,5 @@ class Controls:
             "operation": action,
             "status": status,
             "source": file,
+            "message": message if isinstance(message, str) else "",
         }

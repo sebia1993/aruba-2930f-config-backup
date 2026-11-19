@@ -219,7 +219,19 @@ class WebControlTests(unittest.TestCase):
         )
         result = self.apply(self.preview(tuple(str(i) for i in range(1, 13))))
         self.assertNotIn("nextPlan", result)
-        self.assertEqual([r["status"] for r in result["results"]], ["unverified"] + ["paused"] * 9)
+        rows = result["results"]
+        self.assertEqual([r["status"] for r in rows], ["unverified"] + ["paused"] * 9)
+        self.assertIn(self.target.endpoint, result["message"])
+        self.assertIn("결과 불확실", rows[0]["message"])
+        self.assertIn(self.target.endpoint, rows[1]["message"])
+        self.assertIn("전송하지 않았습니다", rows[1]["message"])
+        history = self.controls.dispatch("control.history", {}, self.cancel)["rows"]
+        self.assertEqual(len(history), 12)
+        for entry in history:
+            if entry["port"] == "1":
+                self.assertEqual(entry["message"], rows[0]["message"])
+            else:
+                self.assertEqual(entry["status"], "paused")
         self.service.apply.assert_called_once()
 
     def test_manual_path_cannot_accept_multiple_ports_and_syntax_is_strict(self):
