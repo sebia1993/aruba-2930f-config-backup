@@ -646,7 +646,10 @@ function updateControlTarget() {
     target.textContent='실시간으로 다시 조회한 대상 · '+$('singleIP').value+' / 포트 '+$('singlePort').value;
   } else if ($('controlMode').value==='batch' && ui.selected.size) {
     const keys=Array.from(ui.selected);
-    const ports=keys.slice(0,3).map(key=>key.replace('|',' / 포트 '));
+    const ports=keys.slice(0,3).map(key=>{
+      const [address,port]=key.split('|');
+      return address+' / 포트 '+port;
+    });
     target.textContent=ports.join(' · ')+(keys.length>3?' 외 '+(keys.length-3)+'개':'');
   } else target.textContent='';
   target.hidden=!target.textContent;

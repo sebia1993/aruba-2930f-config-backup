@@ -1,9 +1,43 @@
 """Exercise matrix selection, filtered bulk controls and exact SSH endpoints on loopback."""
 
 import re
+from threading import Event
+from unittest.mock import patch
 
 from browser_qa import run_browser_case
 from playwright.sync_api import expect
+
+
+def change_target_while_previewing(page, switch, address):
+    reading, resume = Event(), Event()
+    respond = switch._respond
+
+    def pause_power_read(channel, command):
+        if command == "show power-over-ethernet 1":
+            reading.set()
+            assert resume.wait(30), "Test did not release the port read"
+        return respond(channel, command)
+
+    page.locator("#controlMode").select_option("single")
+    page.locator("#singleIP").fill(address)
+    port = page.locator("#singlePort")
+    port.fill("1")
+    start = len(switch.commands)
+    with patch.object(switch, "_respond", pause_power_read):
+        try:
+            page.locator("#preview").click()
+            assert reading.wait(30), "Single-port preview did not reach PoE read"
+            port.fill("2")
+        finally:
+            resume.set()
+        expect(page.locator("#controlResult")).to_contain_text(
+            "현재 선택으로 다시 검토", timeout=60000
+        )
+    expect(page.locator("#review")).to_be_hidden()
+    expect(port).to_have_value("2")
+    commands = switch.commands[start:]
+    assert "show power-over-ethernet 1" in commands and "configure terminal" not in commands
+    assert switch.poe_enabled
 
 
 def exercise(page, url, switch, second, shots, _backup):
@@ -33,6 +67,8 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#controlPanel")).to_be_visible()
     checkboxes = csv_view.locator("#tbody input[data-control-key]")
     expect(checkboxes).to_have_count(2)
+
+    change_target_while_previewing(page, switch, addresses[0])
 
     # The two ports have the same IP, interface, hostname and AP name; only SSH ports differ.
     csv_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]').click()
