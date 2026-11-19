@@ -49,7 +49,7 @@ if (typeof window === 'undefined') {
 }
 
 export async function watchBrowserTab(bootstrap) {
-  if (window !== window.top || location.protocol !== 'http:') return;
+  if (window !== window.top || !['http:', 'https:'].includes(location.protocol)) return;
   if (!bootstrap) {
     const response = await fetch('/api/bootstrap', {credentials:'same-origin', cache:'no-store'});
     if (!response.ok) return;

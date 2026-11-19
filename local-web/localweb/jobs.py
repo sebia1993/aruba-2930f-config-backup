@@ -25,7 +25,6 @@ ACTIONS = frozenset(
         "hostkey.forget",
         "ports.query",
         "ports.refresh",
-        "ports.export",
         "targets.preview",
         "targets.apply",
         "profiles.import",
@@ -47,7 +46,6 @@ ACTIONS = frozenset(
 PERSIST = {
     "ports.query",
     "ports.refresh",
-    "ports.export",
     "profiles.export",
     "backup.run",
     "logs.query",
@@ -55,7 +53,7 @@ PERSIST = {
     "control.quick-execute",
     "control.apply",
 }
-EXTENSIONS = {".jsonl", ".json", ".txt", ".xlsx", ".csv"}
+EXTENSIONS = {".jsonl", ".json", ".txt", ".xlsx"}
 MAX_RESULTS = 8
 
 
@@ -164,8 +162,20 @@ class Jobs:
     def history(self):
         with closing(sqlite3.connect(self.db)) as db:
             db.row_factory = sqlite3.Row
-            rows = db.execute("SELECT * FROM jobs ORDER BY rowid DESC LIMIT 200")
-            return [dict(dict(row), files=json.loads(row["files"])) for row in rows]
+            rows = db.execute(
+                "SELECT * FROM jobs WHERE action != 'ports.export' ORDER BY rowid DESC LIMIT 200"
+            )
+            return [
+                dict(
+                    dict(row),
+                    files=[
+                        item
+                        for item in json.loads(row["files"])
+                        if Path(item["name"]).suffix.lower() in EXTENSIONS
+                    ],
+                )
+                for row in rows
+            ]
 
     def workspace(self):
         with self.lock:
@@ -187,7 +197,7 @@ class Jobs:
                 )
                 for row in view["rows"]
             ]
-            return {"groups": groups, "query": {"rows": rows, "files": view.get("files", [])}}
+            return {"groups": groups, "query": {"rows": rows}}
 
     def _output(self, relative):
         if not isinstance(relative, str) or Path(relative).is_absolute():
@@ -261,15 +271,7 @@ class Jobs:
         try:
             if result is not None:
                 for item in result.get("files", []):
-                    try:
-                        path = self._output(item["id"])
-                    except OSError, ValueError:
-                        if "powerRefresh" not in result:
-                            raise
-                        result["powerRefresh"]["message"] = (
-                            "전력 조회 결과 CSV를 등록하지 못했습니다."
-                        )
-                        continue
+                    path = self._output(item["id"])
                     handle = secrets.token_hex(16)
                     folder = result.get("output_directory") if action == "backup.run" else None
                     registrations.append((handle, str(path.relative_to(self.directory)), folder))
@@ -338,7 +340,7 @@ class Jobs:
                                 (r["ip"], int(r["ssh_port"]), r["interface"]): r
                                 for r in [*previous, *invalid]
                             }
-                            self.port_view = {"rows": list(rows.values()), "files": []}
+                            self.port_view = {"rows": list(rows.values())}
                 elif (
                     action in {"session.open", "session.close", "targets.apply", "hostkey.forget"}
                     and state == "done"

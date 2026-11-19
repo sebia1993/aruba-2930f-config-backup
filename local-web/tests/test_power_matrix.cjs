@@ -58,30 +58,7 @@ test('a measured positive draw with conflicting, insufficient or unconfirmed sup
     {poe_status: 'Searching'}, {poe_status: 'Fault'}, {poe_status: ''},
     {poe_enabled: 'no'}, {poe_enabled: false}, {assessment_status: 'warning'},
     {requested_watts: '25', allocated_watts: '24.9'},
-    {power_evidence: JSON.stringify({issues: ['충돌']})},
+    {power_evidence: {issues: ['충돌']}},
     {assessment_status: 'unknown', assessment_reason: 'PoE와 LLDP 전원 협상 근거가 서로 다릅니다.'},
   ]) assert.equal(classify({...row, ...fields}).state, 'limited');
-});
-
-test('native observation and CSV columns yield identical results, including older final exports', () => {
-  const csvRow = {...row, complete: 'yes', watts: '1.2', poe_enabled: 'yes', lldp_neighbors: JSON.stringify([ap])};
-  assert.deepEqual(classify(csvRow), classify(row));
-  delete csvRow.complete;
-  assert.equal(classify(csvRow).state, 'normal');
-  delete csvRow.lldp_neighbors;
-  assert.equal(classify(csvRow).state, 'limited');
-});
-
-test('old exports accept a single identifiable AP name without overriding explicit LLDP results', () => {
-  const legacy = {status: 'ok', watts: '3', poe_status: 'Delivering'};
-  for (const name of ['층_AP_2', 'AP001', 'AP-01']) {
-    assert.equal(classify({...legacy, ap_names: name}).apName, name);
-    assert.equal(classify({...legacy, lldp_neighbors: [{system_name: name}]}).apName, name);
-  }
-  for (const name of ['laptop', 'switch-ap-uplink', 'AP-1 | AP-2', '00:01:02:03:04:05']) {
-    assert.equal(classify({...legacy, ap_names: name}).state, 'limited');
-  }
-  for (const contradiction of [{lldp_status: 'failed'}, {lldp_neighbors: ''}, {lldp_neighbors: []}]) {
-    assert.equal(classify({...legacy, ap_names: 'AP-02', ...contradiction}).state, 'limited');
-  }
 });

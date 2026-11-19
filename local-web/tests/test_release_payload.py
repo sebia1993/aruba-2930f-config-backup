@@ -8,7 +8,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from tools.build_release import DEMO_MARKERS, check_payload, write_runtime
-from tools.export_log_viewer import MATRIX_SOURCE, render
+from tools.export_log_viewer import render
 
 
 class ReleasePayloadTests(unittest.TestCase):
@@ -20,7 +20,9 @@ class ReleasePayloadTests(unittest.TestCase):
 
     def test_finished_zip_rejects_retired_code_and_unexpected_datasets(self):
         for name, content in (
-            ("static/csv.html", b"<script>" + DEMO_MARKERS[0] + b"</script>"),
+            ("static/matrix.html", b"<script>" + DEMO_MARKERS[0] + b"</script>"),
+            ("static/csv.html", b""),
+            ("core/aruba2930f_backup/poe_query_report.py", b""),
             ("static/logs.html", b"const " + DEMO_MARKERS[-2] + b" = 0;"),
             ("static/demo-data.js", b"const rows = [];"),
             ("core/mock_devices.py", b"rows = []"),
@@ -45,11 +47,9 @@ class ReleasePayloadTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, name):
                     check_payload(self.zip)
 
-    def test_standalone_matrix_includes_the_same_power_classifier(self):
-        page = render(matrix=True)
-        classifier = MATRIX_SOURCE.with_name("power-matrix.js").read_text(encoding="utf-8")
-        self.assertIn(classifier.encode("utf-8"), page)
-        self.assertNotIn(b'src="power-matrix.js"', page)
+    def test_standalone_log_view_still_starts_empty(self):
+        page = render()
+        self.assertIn(b'<tbody id="rows"></tbody>', page)
         self.assertNotIn(b"/static/embed.js", page)
 
     def test_vendor_test_data_removed_licenses_rules_and_wheel_hashes_preserved(self):

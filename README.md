@@ -5,7 +5,7 @@
 
 ## 브라우저에서 사용하는 로컬 웹
 
-Windows x64용 로컬 웹 ZIP을 풀고 **Start-Local-Web.cmd**를 열면 기본 브라우저에서 AP 로그를 확인할 수 있습니다. **관제·비교·제어**에서 조회할 스위치와 포트를 입력하고 **포트 조회**를 누르세요. 실시간 조회 결과와 저장한 CSV는 같은 관제 표에서 확인합니다. 우선 확인과 변화 비교를 바로 열 수 있고, 관제 표에서 선택한 실시간 포트의 PoE와 관리 상태를 변경할 수 있습니다. SSH 계정은 장비에 접속하는 첫 작업에서 입력합니다. [로컬 웹 사용 안내](local-web/README.md) · [웹 v1.4.8 다운로드](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/web-v1.4.8)
+Windows x64용 ZIP을 풀고 **Start-Local-Web.cmd**를 실행하세요. **관제·제어**에서 스위치와 포트를 실시간으로 조회하고, 전력과 LLDP 상태를 확인하거나 선택한 포트의 PoE를 변경할 수 있습니다. 다른 PC에서는 호스트의 **LAN 공유**에서 발급한 HTTPS 초대 링크로 접속하세요. [로컬 웹 사용 안내](local-web/README.md) · [웹 v1.5.0 다운로드](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/web-v1.5.0)
 
 ## Windows 데스크톱 프로그램
 

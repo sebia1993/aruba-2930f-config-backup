@@ -89,7 +89,7 @@ def query_with_inline_credentials(page, switch):
     page.locator("#queryPassword").fill(switch.password)
     page.locator("#queryPassword").press("Enter")
 
-    expect(page.frame_locator("#csvViewer").locator("#tbody")).to_contain_text(
+    expect(page.frame_locator("#matrixViewer").locator("#tbody")).to_contain_text(
         "8.1 W", timeout=45000
     )
     expect(page.locator("#queryPassword")).to_have_value("")
@@ -125,13 +125,7 @@ def exercise(page, switch):
     expect(page.locator(".matrix-tile")).to_have_count(1)
     expect(page.locator(".matrix-tile")).to_have_attribute("data-state", "unclassified")
     expect(page.locator(".matrix-tile")).to_have_attribute("data-phase", "pending")
-    with page.expect_file_chooser() as picker:
-        page.locator("#portCompareTab").click()
-    picker.value.set_files(
-        {"name": "invalid.csv", "mimeType": "text/csv", "buffer": b"other,columns\na,b"}
-    )
-    expect(page.locator("#statusText")).to_contain_text("invalid.csv")
-    expect(page.locator("#csvViewer")).to_be_hidden()
+    expect(page.locator("#matrixViewer")).to_be_hidden()
     expect(page.locator(".matrix-tile")).to_be_visible()
     page.locator("#matrixSize").select_option("large")
     expect(page.locator("#matrixGroups")).to_have_attribute("data-zoom", "large")
@@ -184,15 +178,15 @@ def exercise(page, switch):
     page.locator("#targetOptions > summary").click()
     expect(page.locator("#queryTargets")).to_be_editable()
     query_with_inline_credentials(page, switch)
-    csv_view = page.frame_locator("#csvViewer")
-    tile = csv_view.locator("#matrix [data-port-key]")
+    matrix_view = page.frame_locator("#matrixViewer")
+    tile = matrix_view.locator("#matrix [data-port-key]")
     expect(tile).to_have_attribute("data-state", "normal")
     tile.click()
-    detail = csv_view.locator("#detail")
+    detail = matrix_view.locator("#detail")
     for fact in ("8.1 W", "System Name", "JL255A", "WC.16.11.0025"):
         expect(detail).to_contain_text(fact)
     page.locator("#portReviewTab").click()
-    expect(csv_view.locator("#extraView .dr-list button")).to_have_count(0)
+    expect(matrix_view.locator("#extraView .dr-list button")).to_have_count(0)
     page.locator("#portMonitorTab").click()
     tile.click()
     page.locator("#refreshPorts").click()

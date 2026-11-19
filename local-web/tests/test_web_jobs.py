@@ -1,10 +1,12 @@
 """Local job persistence, serialization, and the download registry."""
 
-import csv
+import json
+import sqlite3
 import tempfile
 import threading
 import time
 import unittest
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -69,6 +71,36 @@ class JobTests(unittest.TestCase):
             reopened.submit("control.quick-execute", dict(request))
         self.assertEqual(len(reopened.history()), 1)
         self.assertIn("건너뜀 1개", reopened.history()[0]["summary"])
+
+    def test_prior_downloads_hide_retired_csv_and_preserve_original_files(self):
+        folder = self.root / "outputs"
+        folder.mkdir()
+        prior = folder / "saved.CsV"
+        prior.write_bytes(b"operator content")
+        report = folder / "saved.txt"
+        report.write_bytes(b"log content")
+        attachments = [{"id": "old", "name": prior.name}, {"id": "log", "name": report.name}]
+        with closing(sqlite3.connect(self.jobs.db)) as db, db:
+            for item in attachments:
+                db.execute(
+                    "INSERT INTO downloads(id,path) VALUES(?,?)",
+                    (item["id"], "outputs/" + item["name"]),
+                )
+            for action in ("ports.query", "ports.export"):
+                db.execute(
+                    "INSERT INTO jobs VALUES(?,?, 'done', '', '', '', ?)",
+                    (action, action, json.dumps(attachments)),
+                )
+        reopened = Jobs(self.root)
+        (job,) = reopened.history()
+        self.assertEqual(job["action"], "ports.query")
+        self.assertEqual(job["files"], [attachments[1]])
+        self.assertTrue(reopened.download("log").samefile(report))
+        with self.assertRaises(ValueError):
+            reopened.download("old")
+        with self.assertRaises(ValueError):
+            reopened.submit("ports.export", {})
+        self.assertEqual(prior.read_bytes(), b"operator content")
 
     def test_direct_quick_requires_unique_well_formed_id(self):
         for invalid in (None, "", "z" * 32, 99):
@@ -158,8 +190,8 @@ class JobTests(unittest.TestCase):
         groups = self.jobs.workspace()["groups"]
         self.assertEqual([(g["ip"], g["interfaces"]) for g in groups], [("192.0.2.9", ["4"])])
 
-    def test_failed_refresh_keeps_other_rows_and_cannot_restore_stale_control_or_csv(self):
-        for failure in ("collection", "cancel", "export"):
+    def test_failed_refresh_keeps_other_rows_and_cannot_restore_stale_control(self):
+        for failure in ("collection", "cancel"):
             with self.subTest(failure=failure):
                 initial = self.initial_query()
                 expected1, _, expected3 = initial["rows"]
@@ -167,21 +199,16 @@ class JobTests(unittest.TestCase):
                 def collect(*args, failure=failure, **kwargs):
                     if failure == "cancel":
                         kwargs["cancel_event"].set()
-                    if failure == "export":
-                        return self.collect_ports(*args, **kwargs)
                     raise OSError("read failed")
 
                 ops = self.jobs.operations
-                with (
-                    patch.object(ops.query_service, "collect", collect),
-                    patch.object(ops, "_export_query", side_effect=OSError("output unavailable")),
-                ):
+                with patch.object(ops.query_service, "collect", collect):
                     job = self.finished(
                         self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2222 2"})
                     )
                 self.assertEqual(job["state"], "cancelled" if failure == "cancel" else "failed")
                 view = self.jobs.workspace()["query"]
-                self.assertEqual(view["files"], [])
+                self.assertNotIn("files", view)
                 first, invalid, third = view["rows"]
                 self.assertEqual((first, third), (expected1, expected3))
                 self.assertEqual(
@@ -191,15 +218,9 @@ class JobTests(unittest.TestCase):
                 self.assertTrue(invalid["controlUsed"] and invalid["refreshInvalidated"])
                 self.assertEqual(invalid["eligible_operations"], [])
                 self.assertIsNone(ops.last_results[1].snapshot)
-                manual = self.finished(self.jobs.submit("ports.export", {}))
-                with self.jobs.download(manual["result"]["files"][0]["id"]).open(
-                    encoding="utf-8-sig", newline=""
-                ) as stream:
-                    saved = list(csv.DictReader(stream))
-                self.assertEqual([row["watts"] for row in saved], ["1.0", "", "3.0"])
-                self.assertEqual(self.jobs.workspace()["query"]["files"], [])
+                self.assertEqual([row["watts"] for row in view["rows"]], [1.0, None, 3.0])
 
-    def test_reviewed_poe_restores_new_matrix_when_csv_download_registration_fails(self):
+    def test_reviewed_poe_refreshes_matrix_without_creating_downloads(self):
         self.initial_query()
         ops = self.jobs.operations
         snap = ops.last_results[1].snapshot
@@ -222,7 +243,7 @@ class JobTests(unittest.TestCase):
 
             with (
                 patch.object(ops.query_service, "collect", read_power),
-                patch.object(self.jobs, "_output", side_effect=OSError("CSV no longer available")),
+                patch.object(self.jobs, "_output") as register,
             ):
                 job = self.finished(
                     self.jobs.submit(
@@ -234,14 +255,14 @@ class JobTests(unittest.TestCase):
         result = job["result"]
         self.assertEqual(result["results"][0]["status"], "verified")
         self.assertEqual(result["powerRefresh"]["readings"][0]["watts"], 0.0)
-        self.assertIn("CSV", result["powerRefresh"]["message"])
-        self.assertEqual(result["files"], [])
+        register.assert_not_called()
+        self.assertNotIn("files", result)
         restored = self.jobs.workspace()["query"]
-        self.assertEqual([r["watts"] for r in restored["rows"]], ["1.0", "0", "3.0"])
-        self.assertEqual(restored["files"], [])
+        self.assertEqual([r["watts"] for r in restored["rows"]], [1.0, 0, 3.0])
+        self.assertNotIn("files", restored)
         service.apply.assert_called_once()
 
-    def test_partial_return_generates_current_csv_and_only_missing_port_loses_authority(self):
+    def test_partial_return_updates_live_matrix_and_only_missing_port_loses_authority(self):
         old = self.initial_query()
 
         def partial(groups, *args, **kwargs):
@@ -255,21 +276,17 @@ class JobTests(unittest.TestCase):
             )
         self.assertEqual(job["state"], "done")
         view = self.jobs.workspace()["query"]
-        self.assertNotEqual(view["files"], old["files"])
+        self.assertNotIn("files", view)
         self.assertEqual(view["rows"][0], old["rows"][0])
         self.assertFalse(view["rows"][1]["controlUsed"])
         self.assertTrue(view["rows"][2]["refreshInvalidated"])
         self.assertIsNone(ops.last_results[2].snapshot)
-        with self.jobs.download(view["files"][0]["id"]).open(
-            encoding="utf-8-sig", newline=""
-        ) as stream:
-            saved = list(csv.DictReader(stream))
-        self.assertEqual([row["watts"] for row in saved], ["1.0", "2.0", ""])
-        self.assertEqual(saved[2]["status"], "failed")
+        self.assertEqual([row["watts"] for row in view["rows"]], [1.0, 2.0, None])
+        self.assertEqual(view["rows"][2]["status"], "failed")
         with patch.object(ops.query_service, "collect", self.collect_ports):
             self.finished(self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2222 3"}))
         restored = self.jobs.workspace()["query"]["rows"][2]
-        self.assertEqual(restored["watts"], "3.0")
+        self.assertEqual(restored["watts"], 3.0)
         self.assertFalse(restored["controlUsed"] or restored.get("refreshInvalidated"))
 
     def test_cancel_before_collection_invalidates_only_the_registered_requested_port(self):
@@ -291,7 +308,7 @@ class JobTests(unittest.TestCase):
         collect.assert_not_called()
         self.assertEqual(result["state"], "cancelled")
         view = self.jobs.workspace()["query"]
-        self.assertEqual(view["files"], [])
+        self.assertNotIn("files", view)
         self.assertEqual(view["rows"][0], initial["rows"][0])
         self.assertEqual(view["rows"][1]["status"], "cancelled")
         self.assertIsNone(view["rows"][1]["watts"])

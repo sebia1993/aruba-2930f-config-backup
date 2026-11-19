@@ -1,5 +1,5 @@
 (() => {
-  if (window === window.top && location.protocol === "http:") {
+  if (window === window.top && ["http:", "https:"].includes(location.protocol)) {
     import('/static/browser-presence.js').then(module=>module.watchBrowserTab()).catch(()=>{});
     return;
   }

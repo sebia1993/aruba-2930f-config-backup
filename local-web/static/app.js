@@ -5,13 +5,13 @@ const all = (selector, parent = document) => [...parent.querySelectorAll(selecto
 const operationNames = {poe_on: 'PoE 전원 ON', poe_off: 'PoE 전원 OFF', enable: '포트 활성화 (Enable)', disable: '포트 비활성화 (Disable)'};
 const jobNames = {
   'session.open': '접속 계정 적용', 'session.close': '세션 해제', 'hostkey.inspect': '호스트 키 조회',
-  'hostkey.approve': '호스트 키 승인', 'hostkey.list':'등록된 키 조회', 'hostkey.forget':'등록된 키 삭제', 'ports.query': '포트 조회', 'ports.refresh':'선택 범위 재조회', 'ports.export': '조회 CSV 저장',
+  'hostkey.approve': '호스트 키 승인', 'hostkey.list':'등록된 키 조회', 'hostkey.forget':'등록된 키 삭제', 'ports.query': '포트 조회', 'ports.refresh':'선택 범위 재조회',
   'profiles.export': '대상 프로필 저장', 'profiles.import': '대상 프로필 열기', 'logs.query': '스위치 로그 수집',
   'backup.run': '구성 백업', 'backup.history':'백업 보고서 조회', 'control.preview': '포트 제어 검토', 'control.apply': '포트 명령 실행', 'control.history': '포트별 기록 조회'
 };
 const states = {queued: '대기', running: '진행 중', done: '완료', failed: '실패', cancelled: '취소', interrupted:'서버 종료로 중단'};
 const stateNames = {ok:'성공',success:'성공',failed:'실패',cancelled:'취소',unsupported:'미지원',unknown:'미등록',changed:'키 변경',trusted:'등록됨',rejected:'거부',retry_exhausted:'접속 재시도 소진',verified:'검증 완료',unchanged:'이미 요청 상태',preflight_failed:'사전 검증 실패',unverified:'검증 미완료',paused:'일시 중지',skipped:'건너뜀',blocked:'실행 차단',result_unknown:'결과 미기록'};
-const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), logs:[], chosenLog:null, logLoaded:false, csvLoaded:false, matrixFile:null, pendingMatrix:null, inventoryRequested:false, inspectedRow:null };
+const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), logs:[], chosenLog:null, logLoaded:false, liveId:null, inspectedRow:null };
 const dialog = $('review');
 const queryCredentials = $('queryCredentials');
 Object.assign(jobNames, {'targets.preview':'대상 목록 검토','targets.apply':'대상 목록 적용','control.inspect':'단일 포트 상태 조회','control.quick':'빠른 제어 검토','control.quick-execute':'빠른 PoE 제어','control.import-history':'작업 기록 열기','backup.pick-directory':'저장 폴더 선택','history.open-folder':'이력 위치 열기'});
@@ -177,31 +177,18 @@ function postLog(log) {
   if (log && ui.logLoaded) $('logViewer').contentWindow.postMessage({type:'aruba-switch-log', source:log.hostname ? log.hostname + ' (' + log.endpoint + ')' : log.endpoint, text:log.text}, location.origin);
 }
 function monitor() {
-  return $('csvViewer').contentWindow?.PortMonitor;
+  return $('matrixViewer').contentWindow?.PortMonitor;
 }
-let portNavigationRevision=0;
-function capturePortIntent() {
-  const navigation=portNavigationRevision, files=monitor()?.userRevision() || 0;
-  return ()=>navigation===portNavigationRevision && files===(monitor()?.userRevision() || 0);
-}
-function historicalSource() {
-  const source=monitor()?.source();
-  return source?.hasData && (!source.liveId || source.liveId!==ui.matrixFile);
-}
+let observationSequence=0;
 function displayingInventory() {
-  const source=monitor()?.source();
-  return !ui.matrixFile && !!window.portTools?.hasInventory() &&
-    (ui.inventoryRequested || !source?.hasData || source.expiredLive);
-}
-function historicalControlOnly() {
-  return historicalSource() && !displayingInventory();
+  return !ui.liveId && !!window.portTools?.hasInventory();
 }
 function currentInspection() {
   return ui.inspectedRow && ui.inspectedRow===monitor()?.selected();
 }
 function controlContextMatches(inspected) {
   return !$('portMonitor').closest('[data-page]').hidden &&
-    (inspected ? ui.inspectedRow===inspected && currentInspection() : !ui.inspectedRow && !historicalControlOnly());
+    (inspected ? ui.inspectedRow===inspected && currentInspection() : !ui.inspectedRow);
 }
 function controlChoice() {
   const mode=$('controlMode').value;
@@ -221,39 +208,25 @@ function clearInspection() {
   $('controlMode').onchange();
   updatePortActions();
 }
-const monitorTabs = {overview:'portMonitorTab', review:'portReviewTab', compare:'portCompareTab'};
+const monitorTabs = {overview:'portMonitorTab', review:'portReviewTab'};
 function updatePortActions() {
   const source=monitor()?.source();
   const inventory=displayingInventory();
   const view=inventory ? 'overview' : source?.view || 'overview';
   const inspected=!!currentInspection() && !inventory;
-  const blocked=historicalControlOnly();
-  $('csvViewer').hidden=inventory;
+  $('matrixViewer').hidden=inventory;
   $('portMonitor').classList.toggle('has-data',!!source?.hasData);
   for (const [name,id] of Object.entries(monitorTabs)) $(id).setAttribute('aria-pressed',String(view===name));
   $('portReviewTab').disabled=!source?.hasData || inventory;
-  $('portCompareTab').disabled=!ui.csvLoaded;
-  $('openPortCsv').disabled=!ui.csvLoaded;
-  const savedAndRegistered=!ui.matrixFile && !!window.portTools?.hasInventory() && source?.hasData && !source.expiredLive;
-  const restoreLive=!!ui.matrixFile && source?.liveId!==ui.matrixFile;
-  $('showMatrix').hidden=!restoreLive && !savedAndRegistered;
-  $('showMatrix').textContent=restoreLive ? '최근 실시간 조회 보기' : inventory ? '열어 둔 CSV 보기' : '등록 포트 보기';
-  $('liveResultsBar').hidden=!ui.matrixFile && !savedAndRegistered;
-  $('controlPanel').hidden=!!blocked && !inspected;
-  $('controlSourceHint').hidden=!$('controlPanel').hidden;
   $('controlMode').disabled=inspected;
   $('singleIP').readOnly=$('singlePort').readOnly=inspected;
   window.portTools?.showInventory(inventory);
-  $('liveScope').hidden=!(inventory || (source?.liveId===ui.matrixFile && !!ui.matrixFile && view==='overview' && !inspected));
+  $('liveScope').hidden=!(inventory || (source?.liveId===ui.liveId && !!ui.liveId && view==='overview' && !inspected));
   updateControlTarget();
 }
 for (const [view,id] of Object.entries(monitorTabs)) {
   $(id).onclick=()=>{
-    const viewer=monitor();
-    if (view!=='overview' || viewer?.source().view!=='overview') portNavigationRevision++;
-    if (view==='overview' && ui.matrixFile && !viewer?.source().hasData) queueMatrix(ui.matrixFile,capturePortIntent());
-    else if (view==='compare' && displayingInventory()) viewer?.openCsv();
-    else if (view!=='overview' || !displayingInventory()) viewer?.navigate(view);
+    if (!displayingInventory()) monitor()?.navigate(view);
     updatePortActions();
   };
 }
@@ -277,10 +250,6 @@ function focusControls() {
   $('controlHeading').focus({preventScroll:true});
   $('controlHeading').scrollIntoView({block:'nearest'});
 }
-$('openPortCsv').onclick=()=>{
-  portNavigationRevision++;
-  monitor()?.openCsv();
-};
 function selectObservedPort(message) {
   if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
   const row=monitor()?.selected();
@@ -290,10 +259,11 @@ function selectObservedPort(message) {
     return;
   }
   const source=monitor().source();
-  const record=source.liveId && source.liveId===ui.matrixFile && ui.rows.find(
+  if (!ui.liveId || source.liveId!==ui.liveId) return;
+  const record=ui.rows.find(
     item=>item.ip===row.ip && Number(item.ssh_port || 22)===row.sshPort && String(item.interface)===row.port
   );
-  if (record && record.status==='ok' && !record.controlUsed) {
+  if (record && record.status==='ok' && !record.controlUsed && !record.refreshInvalidated) {
     clearInspection();
     ui.selected=new Set([portKey(record)]);
     $('controlMode').value='batch'; $('controlMode').onchange();
@@ -313,7 +283,7 @@ function selectObservedPort(message) {
 function selectObservedBatch(openControls) {
   if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
   const batch=monitor()?.batch();
-  if (!batch?.liveId || batch.liveId!==ui.matrixFile || !Array.isArray(batch.rows)) return;
+  if (!batch?.liveId || batch.liveId!==ui.liveId || !Array.isArray(batch.rows)) return;
   const available=new Set(ui.rows.filter(row=>row.status==='ok' && !row.controlUsed && !row.refreshInvalidated).map(portKey));
   const keys=batch.rows.map(row=>portKey({ip:row.ip,ssh_port:row.sshPort,interface:row.port}));
   if (keys.some(key=>!available.has(key))) { syncMonitorChecks(); return; }
@@ -324,34 +294,24 @@ function selectObservedBatch(openControls) {
   renderPorts();
   if (openControls && keys.length) focusControls();
 }
-function queueMatrix(id,canDisplay,keepLiveView=false) {
-  ui.pendingMatrix={id,canDisplay,keepLiveView};
-  postMatrix();
-}
-function postMatrix() {
-  if (!ui.pendingMatrix || !ui.csvLoaded) return;
-  const {id,canDisplay,keepLiveView}=ui.pendingMatrix;
-  ui.pendingMatrix=null;
-  const stillCurrent=()=>id===ui.matrixFile && canDisplay();
-  if (stillCurrent()) monitor().loadLive(id,ui.rows,stillCurrent,window.portTools.unobservedTargets(),keepLiveView);
+function postMatrix(keepView=false) {
+  const viewer=monitor(), id=ui.liveId;
+  if (viewer && id) viewer.loadLive(id,ui.rows,()=>ui.liveId===id,window.portTools.unobservedTargets(),keepView);
 }
 window.addEventListener('message',e=>{
   if (e.origin !== location.origin || !e.data) return;
   if (e.source === $('logViewer').contentWindow && e.data.type === 'aruba-log-loaded' && e.data.ok === false)
     notify('로그 수집 후 분석 결과: ' + e.data.message,true);
-  if (e.source === $('csvViewer').contentWindow) {
+  if (e.source === $('matrixViewer').contentWindow) {
     if (e.data.type==='aruba-observed-port') selectObservedPort(e.data);
     if (e.data.type==='aruba-observed-batch' || e.data.type==='aruba-port-checks')
       selectObservedBatch(e.data.type==='aruba-observed-batch');
     if (e.data.type==='aruba-port-context' && ui.inspectedRow && !currentInspection()) {
       clearInspection();
     }
-    if (e.data.type==='aruba-port-file-error' && $('csvViewer').hidden) notify(e.data.message,true);
     if (e.data.type==='aruba-port-view') updatePortActions();
     if (e.data.type==='aruba-port-source') {
-      if (!monitor()?.source().expiredLive) ui.inventoryRequested=false;
       if (!currentInspection()) clearInspection();
-      if (historicalControlOnly()) ui.selected.clear();
       renderPorts();
     }
   }
@@ -359,25 +319,22 @@ window.addEventListener('message',e=>{
 let noticeObserver;
 function fitEmptyViewer(frame) {
   noticeObserver?.disconnect();
-  const notices=['sourceBar','fileError','fileWarnings'].map(id=>frame.contentDocument.getElementById(id));
+  const sourceBar=frame.contentDocument.getElementById('sourceBar');
+  if (!sourceBar) return;
   noticeObserver=new ResizeObserver(()=>{
     if (!frame.clientWidth || monitor()?.source().hasData) return;
-    const bottom=Math.max(...notices.map(node=>node.getBoundingClientRect().bottom));
-    frame.style.setProperty('--empty-view-height',Math.ceil(bottom+18)+'px');
+    frame.style.setProperty('--empty-view-height',Math.ceil(sourceBar.getBoundingClientRect().bottom+18)+'px');
   });
-  notices.forEach(node=>noticeObserver.observe(node));
+  noticeObserver.observe(sourceBar);
 }
 for (const frame of all('iframe')) frame.addEventListener('load', () => {
   frame.contentWindow.postMessage({type:'aruba-theme',theme:document.documentElement.dataset.theme}, location.origin);
   if (frame.id === 'logViewer') { ui.logLoaded = true; postLog(ui.chosenLog); }
-  if (frame.id === 'csvViewer' && frame.contentWindow.location.pathname === '/csv') { ui.csvLoaded = true; fitEmptyViewer(frame); updatePortActions(); postMatrix(); }
+  if (frame.id === 'matrixViewer' && frame.contentWindow.location.pathname === '/matrix') { fitEmptyViewer(frame); postMatrix(); updatePortActions(); }
 });
 // A cached viewer may finish loading before the deferred script attaches its handler.
 if ($('logViewer').contentDocument?.readyState === 'complete' && $('logViewer').contentWindow.location.pathname === '/logs') ui.logLoaded = true;
 function route() {
-  if (location.hash==='#csv') {
-    history.replaceState(null,'','#ports');
-  }
   const key = location.hash.slice(1);
   const admin = key === 'connect';
   const links = all('nav a');
@@ -388,7 +345,7 @@ function route() {
   }
   for (const node of all('[data-page]')) node.hidden = node.dataset.page !== name;
   $('crumb').textContent = admin ? $('connectionHeading').textContent : link.lastChild.textContent;
-  if (name === 'ports' && !$('csvViewer').hasAttribute('src')) $('csvViewer').src = $('csvViewer').dataset.src;
+  if (name === 'ports' && !$('matrixViewer').hasAttribute('src')) $('matrixViewer').src = $('matrixViewer').dataset.src;
   if (name === 'history' && ui.token) loadHistory();
   if (name === 'home' && ui.token) loadHome();
   if (dialog.open) dialog.close();
@@ -425,6 +382,7 @@ function filelinks(files) {
   return group;
 }
 function openFolder(file) {
+  if (location.protocol==='https:') return document.createDocumentFragment();
   return button('결과 폴더 열기', async () => {
     try { await api('/api/open-folder',{fileId:file.id}); }
     catch (e) { notify(e.message,true); }
@@ -480,7 +438,7 @@ async function applySshAccount(username, password, enableSecret) {
   let applied = false;
   await run('session.open',credentials,(result,cancelled) => {
     if (!result.connected) return;
-    if (ui.session.active || ui.rows.length || ui.matrixFile || ui.inspectedRow) clearPorts();
+    if (ui.session.active || ui.rows.length || ui.liveId || ui.inspectedRow) clearPorts();
     ui.session = {active:true, username:user};
     applied = !cancelled;
   });
@@ -628,10 +586,8 @@ const portKey = row => endpoint(row) + '|' + row.interface;
 const targetFromRow = row => ({ip:row.ip,sshPort:Number(row.ssh_port || 22),port:String(row.interface)});
 const controlPortKey = target => portKey({ip:target.ip,ssh_port:target.sshPort,interface:target.port});
 function expireLiveMatrix() {
-  ui.matrixFile=null; ui.pendingMatrix=null; clearInspection();
-  $('queryFiles').replaceChildren();
+  ui.liveId=null; clearInspection();
   monitor()?.invalidateLive();
-  $('showMatrix').hidden=true; $('liveResultsBar').hidden=true;
   updatePortActions();
 }
 function clearPorts() {
@@ -664,13 +620,13 @@ function updateControlTarget() {
 }
 function syncMonitorChecks() {
   const viewer=monitor();
-  if (!ui.matrixFile || viewer?.source().liveId!==ui.matrixFile) return;
+  if (!ui.liveId || viewer?.source().liveId!==ui.liveId) return;
   const selected=[], excluded=[];
   for (const row of ui.rows) {
     if (row.status!=='ok' || row.controlUsed || row.refreshInvalidated) excluded.push(targetFromRow(row));
     else if (ui.selected.has(portKey(row))) selected.push(targetFromRow(row));
   }
-  viewer.setControlSelection?.(ui.matrixFile,selected,excluded);
+  viewer.setControlSelection?.(ui.liveId,selected,excluded);
 }
 function renderPorts() {
   $('selectedCount').textContent='선택 '+ui.selected.size+'개';
@@ -678,27 +634,21 @@ function renderPorts() {
   syncMonitorChecks();
   window.portTools?.renderMatrix();
 }
-function receivePorts(result,canDisplay,preferLive=false,refreshedKeys) {
+function receivePorts(result,keepView=false,refreshedKeys) {
   if (!Array.isArray(result.rows)) return;
   ui.rows = window.portTools.reconcileRows(result.rows,refreshedKeys);
-  const available = new Set(ui.rows.filter(row=>row.status === 'ok' && !row.controlUsed).map(portKey));
+  const available = new Set(ui.rows.filter(row=>row.status === 'ok' && !row.controlUsed && !row.refreshInvalidated).map(portKey));
   ui.selected = new Set([...ui.selected].filter(key=>available.has(key)));
-  const files=ui.rows.some(row=>row.status==='refresh_pending') ? [] : result.files || [];
-  $('queryFiles').replaceChildren(filelinks(files));
-  const file=files.find(f=>f.name.toLowerCase().endsWith('.csv'));
-  if (file) {
-    const replaceObservation=canDisplay() && (preferLive || !historicalSource() || monitor()?.source().expiredLive);
-    ui.matrixFile=file.id;
-    $('liveResultsBar').hidden=$('showMatrix').hidden=false;
-    if (replaceObservation) queueMatrix(file.id,canDisplay,!!refreshedKeys);
-  } else if (ui.matrixFile) expireLiveMatrix();
+  if (ui.rows.length && !ui.rows.some(row=>row.status==='refresh_pending')) {
+    ui.liveId=++observationSequence;
+    postMatrix(keepView);
+  } else expireLiveMatrix();
   renderPorts();
 }
 function queryPorts(targets) {
-  const canDisplay=capturePortIntent();
   return run('ports.query',{targets},result=>{
     window.portTools.acceptQuery(result.groups);
-    receivePorts(result,canDisplay,true);
+    receivePorts(result);
   });
 }
 let credentialRequest=null;
@@ -748,22 +698,10 @@ form('queryLoginForm', async () => {
 });
 function refreshTargets(bySwitch) {
   const targets=window.portTools.refreshTargets(bySwitch);
-  const canDisplay=capturePortIntent();
-  if (targets) runSsh('ports.refresh',{targets},result=>receivePorts(result,canDisplay));
+  if (targets) runSsh('ports.refresh',{targets},result=>receivePorts(result,true));
 }
 $('refreshPorts').onclick = () => refreshTargets(false);
 $('refreshSwitch').onclick = () => refreshTargets(true);
-$('showMatrix').onclick = () => {
-  portNavigationRevision++;
-  if (ui.matrixFile) {
-    queueMatrix(ui.matrixFile,capturePortIntent());
-    return;
-  }
-  clearInspection();
-  ui.inventoryRequested=!displayingInventory();
-  ui.selected.clear();
-  renderPorts();
-};
 function selectScope(eligibleOnly) {
   const keys=window.portTools.scopeKeys();
   if (!keys) return;
@@ -800,16 +738,16 @@ function markControlRowsUsed(targets) {
   }
   renderPorts();
 }
-function receiveControlObservations(response,canDisplay) {
+function receiveControlObservations(response) {
   const results=response.results || [], readings=response.powerRefresh?.readings;
   const affected=['poe_on','poe_off'].includes(response.operation)
     ? results.filter(row=>['verified','unchanged','unverified','result_unknown','preflight_failed'].includes(row.status))
     : results;
   if (Array.isArray(readings) && Array.isArray(response.rows)) {
     for (const row of affected) ui.selected.delete(controlPortKey(row));
-    receivePorts(response,canDisplay,false,new Set(readings.map(controlPortKey)));
+    receivePorts(response,true,new Set(readings.map(controlPortKey)));
   } else {
-    if (Array.isArray(response.rows)) receivePorts(response,canDisplay);
+    if (Array.isArray(response.rows)) receivePorts(response,true);
     if (affected.length) markControlRowsUsed(affected);
   }
 }
@@ -880,12 +818,11 @@ function renderPlan(plan, inspected=ui.inspectedRow) {
       notify('제어 대상 또는 작업이 변경되었습니다. 현재 선택으로 다시 검토하세요.',true);
       return;
     }
-    const canDisplay=capturePortIntent();
     run('control.apply',{planId:plan.planId,confirmation:input.value},r => {
-      const continuePlan=canDisplay() && sameChoice();
+      const continuePlan=sameChoice();
       window.controlTools.finishProgress();
       showControlResults(r,title);
-      receiveControlObservations(r,canDisplay);
+      receiveControlObservations(r);
       if (r.nextPlan && continuePlan) renderPlan(r.nextPlan,inspected);
     });
   },'danger');
@@ -961,13 +898,18 @@ $('controlHistory').onclick = () => run('control.history',{},r => {
 let fileDestination = null;
 for (const node of all('[data-import]')) node.onclick = () => {
   fileDestination = node.dataset.import;
-  $('targetFile').accept = fileDestination === 'queryTargets' ? '.txt,.tsv,.csv,.json' : '.txt,.tsv,.csv';
+  $('targetFile').accept = fileDestination === 'queryTargets' ? '.txt,.tsv,.json' : '.txt,.tsv';
   $('targetFile').value = '';
   $('targetFile').click();
 };
 $('targetFile').onchange = async () => {
   const file = $('targetFile').files[0], dest = fileDestination;
   if (!file || !dest) return;
+  const allowed=$('targetFile').accept.split(',');
+  if (!allowed.some(ext=>file.name.toLowerCase().endsWith(ext))) {
+    notify('대상 목록 파일 형식을 확인하세요. 허용 형식: '+allowed.join(', '),true);
+    return;
+  }
   if (file.size > 2 * 1024 * 1024) { notify('2 MB 이하인 대상 목록 파일을 선택하세요.',true); return; }
   try {
     const text = (await file.text()).replace(/^\uFEFF/,'');
@@ -1002,7 +944,6 @@ $('shutdown').onclick = () => confirmDialog('로컬 웹 서버 종료',[elem('p'
   } catch (e) { notify(e.message,true); }
 });
 async function start() {
-  const canDisplay=capturePortIntent();
   sync();
   try {
     const bootstrap = await api('/api/bootstrap');
@@ -1027,7 +968,7 @@ async function start() {
     if (workspace.groups?.length && !$('queryTargets').value.trim()) {
       if (document.readyState === 'loading') await new Promise(resolve=>window.addEventListener('DOMContentLoaded', resolve,{once:true}));
       window.portTools?.restoreInventory?.(workspace.groups);
-      if (workspace.query) receivePorts(workspace.query,canDisplay);
+      if (workspace.query) receivePorts(workspace.query);
     }
     if (resumed?.action === 'control.quick-execute') {
       window.controlTools.showQuickResult(resumed.result,resumed.cancelled,true);

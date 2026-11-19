@@ -91,7 +91,7 @@ def cancel_before_off(page, switch, address):
         expect(page.locator("#stopJob")).to_be_hidden(timeout=90000)
     assert "configure terminal" not in switch.commands[start:]
     assert switch.power["1"]
-    checkbox = page.frame_locator("#csvViewer").locator(
+    checkbox = page.frame_locator("#matrixViewer").locator(
         f'#tbody tr[data-port-key="{address}/1"] input'
     )
     expect(checkbox).to_be_enabled()
@@ -139,7 +139,7 @@ def run_range(page, url, switch, second, shots, output):
         page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1-2")
         page.locator("#queryForm .primary").click()
         expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
-        expect(page.locator("#csvViewer")).to_be_visible()
+        expect(page.locator("#matrixViewer")).to_be_visible()
         page.locator("#selectionScope").select_option("all")
         page.get_by_role("button", name="범위 전체 선택", exact=True).click()
         expect(page.locator("#selectedCount")).to_have_text("선택 2개")
@@ -175,7 +175,7 @@ def run_range(page, url, switch, second, shots, output):
             page.locator("#operation").select_option("poe_off")
             page.locator("#selectEligible").click()
             expect(page.locator("#selectedCount")).to_have_text("선택 1개")
-            row = page.frame_locator("#csvViewer").locator(
+            row = page.frame_locator("#matrixViewer").locator(
                 f'#tbody tr[data-port-key="{address}/1"]'
             )
             expect(row.get_by_role("checkbox")).to_be_checked()

@@ -296,11 +296,11 @@ class WebControlTests(unittest.TestCase):
 
     def test_quick_on_rechecks_already_on_and_does_not_send_redundant_change(self):
         self.query(1)
-        self.state._query = Mock(return_value={"rows": [{"watts": "8.0"}], "files": []})
+        self.state._query = Mock(return_value={"rows": [{"watts": 8.0}]})
         result = self.quick(["1"], "poe_on")
         self.assertEqual([r["port"] for r in result["skipped"]], ["1"])
         self.assertEqual(result["rechecked"], 1)
-        self.assertEqual(result["rows"][0]["watts"], "8.0")
+        self.assertEqual(result["rows"][0]["watts"], 8.0)
         self.assertNotIn("planId", result)
         self.state._query.assert_called_once()
         self.service.apply.assert_not_called()
@@ -310,7 +310,7 @@ class WebControlTests(unittest.TestCase):
             self.assertEqual(groups[0].interfaces, ("1",))
             self.assertTrue(kwargs["refresh"])
             self.query(1)
-            return {"rows": [], "files": []}
+            return {"rows": []}
 
         self.state._query = Mock(side_effect=reread)
         plan = self.quick(["1"])
@@ -376,16 +376,15 @@ class WebControlTests(unittest.TestCase):
             ),
         )
         rows = [
-            {"ip": self.target.ip, "ssh_port": str(self.target.port), "interface": p}
-            for p in ["1", "2"]
+            {"ip": self.target.ip, "ssh_port": self.target.port, "interface": p} for p in ["1", "2"]
         ]
-        self.state._query = Mock(return_value={"rows": rows, "files": []})
+        self.state._query = Mock(return_value={"rows": rows})
         result = self.quick(["1", "2"], direct=True)
         self.assertEqual(result["rechecked"], 1)
         self.assertEqual(self.state._query.call_args.args[0][0].interfaces, ("2",))
         self.assertEqual([r["port"] for r in result["skipped"]], ["2"])
         self.assertEqual([r["port"] for r in result["results"]], ["1"])
-        self.assertEqual(result["rows"][0]["watts"], "0")
+        self.assertEqual(result["rows"][0]["watts"], 0.0)
         self.assertFalse(result["rows"][0].get("controlUsed"))
         self.assertNotIn("controlUsed", result["rows"][1])
         self.service.apply.assert_called_once()
@@ -416,7 +415,7 @@ class WebControlTests(unittest.TestCase):
         self.assertEqual(calls, [[(self.target, ("1", "2"))], [(self.target, ("1",))]])
         self.assertEqual(self.service.apply.call_count, 2)
         self.assertEqual([r["watts"] for r in result["powerRefresh"]["readings"]], [0.0, 0.0])
-        self.assertEqual([r["watts"] for r in result["rows"]], ["0", "0", "8.0"])
+        self.assertEqual([r["watts"] for r in result["rows"]], [0.0, 0.0, 8.0])
         self.assertNotEqual(
             result["results"][0]["before"]["observed"],
             result["powerRefresh"]["readings"][0]["observed"],
@@ -437,7 +436,7 @@ class WebControlTests(unittest.TestCase):
         off = self.quick(["1"], direct=True)
         reading = off["powerRefresh"]["readings"][0]
         self.assertEqual((reading["status"], reading["watts"]), ("unavailable", None))
-        self.assertEqual(off["rows"][0]["watts"], "")
+        self.assertIsNone(off["rows"][0]["watts"])
         self.assertIn("poe_on", off["rows"][0]["eligible_operations"])
         self.service.inspect.side_effect = lambda *args, **kw: self.state.last_results[0].snapshot
         on = self.quick(["1"], "poe_on", direct=True)
@@ -458,7 +457,7 @@ class WebControlTests(unittest.TestCase):
         first, second = result["rows"]
         self.assertTrue(first["controlUsed"] and first["powerObserved"])
         self.assertEqual(first["eligible_operations"], [])
-        self.assertEqual(second["watts"], "8.0")
+        self.assertEqual(second["watts"], 8.0)
         self.assertEqual(self.quick(["1"], "poe_on", direct=True)["blocked"][0]["port"], "1")
         self.service.apply.assert_called_once()
 
@@ -473,8 +472,8 @@ class WebControlTests(unittest.TestCase):
         self.assertIn("poe_on", refreshed["rows"][0]["eligible_operations"])
         self.assertFalse(self.state.unverified_controls)
 
-    def test_error_cancel_and_export_failure_do_not_erase_command_results_or_other_ports(self):
-        for situation in ("read-failure", "cancel", "export"):
+    def test_error_and_cancel_do_not_erase_command_results_or_other_ports(self):
+        for situation in ("read-failure", "cancel"):
             with self.subTest(situation=situation):
                 self.cancel.clear()
                 self.query(2)
@@ -483,25 +482,19 @@ class WebControlTests(unittest.TestCase):
                 def collect(groups, creds, *, situation=situation, **kwargs):
                     if situation == "cancel":
                         self.cancel.set()
-                    if situation != "export":
-                        raise OSError("no reader")
-                    return self.post_read(groups, creds, **kwargs)
+                    raise OSError("no reader")
 
                 self.state.query_service.collect.side_effect = collect
-                with patch("localweb.operations.write_query_csv", side_effect=OSError("no CSV")):
-                    result = self.apply(self.preview(("1",)))
+                result = self.apply(self.preview(("1",)))
                 self.service.apply.assert_called_once()
                 self.assertEqual(result["results"][0]["status"], "verified")
-                self.assertEqual(result["files"], [])
-                self.assertEqual(result["rows"][1]["watts"], "8.0")
+                self.assertNotIn("files", result)
+                self.assertEqual(result["rows"][1]["watts"], 8.0)
                 reading = result["powerRefresh"]["readings"][0]
-                if situation == "export":
-                    self.assertEqual((reading["status"], reading["watts"]), ("measured", 0.0))
-                else:
-                    status = "cancelled" if situation == "cancel" else "unavailable"
-                    self.assertEqual((reading["status"], reading["watts"]), (status, None))
-                    self.assertEqual(result["rows"][0]["watts"], "")
-                    self.assertTrue(result["rows"][0]["refreshInvalidated"])
+                status = "cancelled" if situation == "cancel" else "unavailable"
+                self.assertEqual((reading["status"], reading["watts"]), (status, None))
+                self.assertIsNone(result["rows"][0]["watts"])
+                self.assertTrue(result["rows"][0]["refreshInvalidated"])
 
     def test_manual_non_inventory_port_is_read_by_exact_ssh_endpoint_without_expanding_matrix(self):
         other = DeviceTarget(self.target.ip, 22)

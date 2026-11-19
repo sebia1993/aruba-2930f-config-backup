@@ -1,4 +1,4 @@
-/* Register SSH targets and show the same observed power states as the CSV viewer. */
+/* Register SSH targets and show the same observed power states as the live matrix. */
 (() => {
   const raw = $('queryTargets');
   const jobText = {'targets.preview':'대상 목록 검증', 'targets.apply':'대상 목록 적용'};
@@ -130,7 +130,6 @@
     $('acceptTargets').disabled = true;
     await run('targets.apply',accepted.groups.length ? {targets:accepted.targets} : {rows:[]},r=>{
       groups = stableGroups(r.groups); registeredText = raw.value = r.targets;
-      ui.inventoryRequested=groups.length>0;
       focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
       revealControlsOnDesktop(groups.length>0);
       $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
@@ -180,12 +179,12 @@
     return checked;
   }
   function currentScope() {
-    if (!ui.matrixFile) return null;
+    if (!ui.liveId) return null;
     const scope=monitor()?.scope();
-    return scope?.liveId===ui.matrixFile ? scope : null;
+    return scope?.liveId===ui.liveId ? scope : null;
   }
   function currentKey() {
-    if (!ui.matrixFile) return focused;
+    if (!ui.liveId) return focused;
     const scope=currentScope();
     const current=scope ? scope.current : monitor()?.selected();
     return current ? portKey({ip:current.ip,ssh_port:current.sshPort,interface:current.port}) : '';
@@ -200,7 +199,7 @@
       notify('스위치 필터 또는 포트 상세에서 현재 장비를 선택하세요.',true);
       return null;
     }
-    if (ui.matrixFile) {
+    if (ui.liveId) {
       const available=ui.rows.filter(row=>row.status==='ok' && !row.controlUsed && !row.refreshInvalidated);
       if (range==='filtered') {
         if (!scope) {
@@ -348,10 +347,9 @@
     const lines=[['IP','ssh_port','interfaces','label'],...items.map(g=>[g.ip,g.ssh_port,g.interfaces.join(','),g.label])];
     return lines.map(row=>row.map(quote).join('\t')).join('\n');
   }
-  function replaceQueryInventory(items,text,show) {
+  function replaceQueryInventory(items,text) {
     groups=stableGroups(items); registeredText=text;
     focused=''; page=0; live.clear(); loading.clear(); $('inventorySearch').value='';
-    ui.inventoryRequested=show && groups.length>0;
     clearPorts();
     revealControlsOnDesktop(groups.length>0);
     $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
@@ -360,24 +358,27 @@
   function acceptQuery(items) {
     if (!fullQuery || fullQuery.accepted || !items?.length) return;
     fullQuery.accepted=true;
-    replaceQueryInventory(items,fullQuery.text,fullQuery.canDisplay());
+    replaceQueryInventory(items,fullQuery.text);
   }
   async function recoverQuery() {
     if (!fullQuery) return;
     let workspace;
     try { workspace=await api('/api/workspace'); } catch { /* An interrupted request may have replaced the live inventory. */ }
     if (!Array.isArray(workspace?.groups)) {
-      replaceQueryInventory([], '',false);
+      replaceQueryInventory([], '');
       return;
     }
     const query=workspace.query;
-    if (ui.matrixFile && query?.files?.some(file=>file.id===ui.matrixFile)) return;
     const items=stableGroups(workspace.groups);
     const same=inventoryText(items)===inventoryText(groups);
-    if (same && !query && !ui.rows.length && !ui.matrixFile) return;
+    if (same && !query && !ui.rows.length && !ui.liveId) return;
+    if (same && ui.liveId && query && !fullQuery.accepted) {
+      receivePorts(query,true);
+      return;
+    }
     const text=same ? registeredText : items.length ? inventoryText(items) : '';
-    replaceQueryInventory(items,text,fullQuery.canDisplay());
-    if (query) receivePorts(query,fullQuery.canDisplay);
+    replaceQueryInventory(items,text);
+    if (query) receivePorts(query);
   }
   function onJob(action,state,body) {
     if (action==='ports.query' || action==='ports.refresh') {
@@ -385,7 +386,7 @@
       if (state==='running') {
         progressGroups=null;live.clear();
         if (action==='ports.query') {
-          fullQuery={text:raw.value.trim()===body.targets ? raw.value : body.targets,canDisplay:capturePortIntent(),accepted:false};
+          fullQuery={text:raw.value.trim()===body.targets ? raw.value : body.targets,accepted:false};
         } else if (body?.targets) {
           // Refresh requests are built by refreshTargets from canonical endpoints and port lists.
           loading=new Set(body.targets.split('\n').flatMap(line=>{
@@ -427,7 +428,7 @@
     updatePortActions(); renderMatrix();
   }
   function reconcileRows(rows,refreshed=loading) {
-    // A partial refresh export also contains earlier observations from other ports.
+    // A partial refresh also contains earlier observations from other ports.
     const invalid = new Map(ui.rows.filter(row=>row.refreshInvalidated).map(row=>[portKey(row),row]));
     if (!invalid.size) return rows;
     const reconciled=rows.map(row=>{

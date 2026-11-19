@@ -112,10 +112,10 @@ def change_target_while_previewing(page, switch, address):
     assert switch.poe_enabled
 
 
-def select_measured_port(page, csv_view, changed, available, untouched_switch):
+def select_measured_port(page, matrix_view, changed, available, untouched_switch):
     page.locator("#queryPorts").click()
-    changed_row = csv_view.locator(f'#tbody tr[data-port-key="{changed}/1"] input')
-    other_row = csv_view.locator(f'#tbody tr[data-port-key="{available}/1"] input')
+    changed_row = matrix_view.locator(f'#tbody tr[data-port-key="{changed}/1"] input')
+    other_row = matrix_view.locator(f'#tbody tr[data-port-key="{available}/1"] input')
     expect(changed_row).to_be_enabled(timeout=60000)
     changed_row.check()
     untouched_commands = len(untouched_switch.commands)
@@ -125,13 +125,13 @@ def select_measured_port(page, csv_view, changed, available, untouched_switch):
         expect(result).to_contain_text(changed)
         expect(result).to_contain_text("검증 완료")
     expect_power_result(page, changed, "0 W", "9.7 W", delta="+9.7 W")
-    expect(csv_view.locator(f'#tbody tr[data-port-key="{changed}/1"]')).to_contain_text("9.7 W")
+    expect(matrix_view.locator(f'#tbody tr[data-port-key="{changed}/1"]')).to_contain_text("9.7 W")
     assert len(untouched_switch.commands) == untouched_commands
     expect(changed_row).to_be_enabled()
     expect(other_row).to_be_enabled()
 
-    csv_view.locator(f'#matrix [data-port-key="{changed}/1"]').click()
-    csv_view.locator("#inspectObservedPort").click()
+    matrix_view.locator(f'#matrix [data-port-key="{changed}/1"]').click()
+    matrix_view.locator("#inspectObservedPort").click()
     mode = page.locator("#controlMode")
     expect(mode).to_have_value("batch")
     expect(changed_row).to_be_checked()
@@ -139,9 +139,9 @@ def select_measured_port(page, csv_view, changed, available, untouched_switch):
     expect(page.locator("#controlTarget")).to_contain_text(changed)
 
 
-def leave_failed_port_inspection_for_batch(page, csv_view, failed, available):
-    csv_view.locator(f'#matrix [data-port-key="{failed}/1"]').click()
-    csv_view.locator("#inspectObservedPort").click()
+def leave_failed_port_inspection_for_batch(page, matrix_view, failed, available):
+    matrix_view.locator(f'#matrix [data-port-key="{failed}/1"]').click()
+    matrix_view.locator("#inspectObservedPort").click()
     mode = page.locator("#controlMode")
     expect(mode).to_have_value("single", timeout=60000)
     expect(mode).to_be_disabled()
@@ -149,11 +149,11 @@ def leave_failed_port_inspection_for_batch(page, csv_view, failed, available):
     expect(page.locator("#singlePort")).not_to_be_editable()
     expect(page.locator("#liveScope")).to_be_hidden()
 
-    csv_view.locator(f'#tbody tr[data-port-key="{available}/1"] input').check()
+    matrix_view.locator(f'#tbody tr[data-port-key="{available}/1"] input').check()
     expect(mode).to_have_value("batch")
     expect(mode).to_be_enabled()
     expect(page.locator("#liveScope")).to_be_visible()
-    expect(csv_view.locator("#tbody")).to_be_visible()
+    expect(matrix_view.locator("#tbody")).to_be_visible()
     expect(page.locator("#controlTarget")).to_contain_text(available)
     mode.select_option("single")
     expect(page.locator("#singleIP")).to_be_editable()
@@ -194,19 +194,29 @@ def exercise(page, url, switch, second, shots, _backup):
     page_errors = []
     page.on("pageerror", lambda error: page_errors.append(str(error)))
     page.goto(url)
-    page.get_by_role("link", name="관제·비교·제어", exact=True).click()
+    page.get_by_role("link", name="관제·제어", exact=True).click()
     combined = page.locator("#portMonitorTab")
     expect(combined).to_have_accessible_name("관제")
     workspace = page.locator('[data-page="ports"]')
-    expect(workspace.get_by_role("heading", name="관제·비교·제어", exact=True)).to_have_count(1)
+    expect(workspace.get_by_role("heading", name="관제·제어", exact=True)).to_have_count(1)
     expect(workspace.locator("#portLiveTab")).to_have_count(0)
     expect(workspace.get_by_role("button", name="실시간 조회", exact=True)).to_have_count(0)
     expect(workspace.locator("#queryForm")).to_be_visible()
     expect(workspace.locator("#queryTargets")).to_be_editable()
-    expect(workspace.locator("#targetOptions > summary")).to_be_visible()
-    for name in ("관제", "우선 확인", "변화 비교", "CSV 열기", "포트 조회"):
+    target_options = workspace.locator("#targetOptions > summary")
+    target_options.click()
+    with page.expect_file_chooser() as picker:
+        page.locator("[data-import=queryTargets]").click()
+    picker.value.set_files({"name": "targets.csv", "mimeType": "text/csv", "buffer": b"ip,port"})
+    expect(page.locator("#statusText")).to_contain_text("허용 형식")
+    expect(page.locator("#queryTargets")).to_have_value("")
+    page.locator("#dismissStatus").click()
+    target_options.click()
+    for name in ("관제", "우선 확인", "포트 조회"):
         expect(workspace.get_by_role("button", name=name, exact=True)).to_have_count(1)
     for selector in (
+        "#openPortCsv",
+        "#portCompareTab",
         "#portTable",
         "#rowDetails",
         "#controlRows",
@@ -222,7 +232,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#queryPorts")).to_be_enabled()
     for width, height in WORKSPACE_SIZES:
         resize_workspace(page, width, height)
-        for selector in ("#queryTargets", "#queryPorts", "#openPortCsv", "#controlHeading"):
+        for selector in ("#queryTargets", "#queryPorts", "#controlHeading"):
             hit_point(page.locator(selector))
     resize_workspace(page, 1440, 960)
     panel.locator(":scope > summary").click()
@@ -230,35 +240,34 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#singlePort")).to_be_editable()
     panel.locator(":scope > summary").click()
     expect(page.locator("#singleIP")).to_be_hidden()
-    csv_view = page.frame_locator("#csvViewer")
-    expect(csv_view.locator("#matrix [data-port-key]")).to_have_count(0)
+    matrix_view = page.frame_locator("#matrixViewer")
+    expect(matrix_view.locator("#matrix [data-port-key]")).to_have_count(0)
     addresses = [f"127.0.0.1:{fixture.port}" for fixture in (switch, second)]
     page.locator("#queryTargets").fill("\n".join(f"{address} 1" for address in addresses))
     page.get_by_role("button", name="포트 조회", exact=True).click()
     enter_ssh_credentials(page, switch)
-    tiles = csv_view.locator("#matrix [data-port-key]")
+    tiles = matrix_view.locator("#matrix [data-port-key]")
     expect(tiles).to_have_count(2, timeout=90000)
-    verify_viewport_controls(page, csv_view, addresses[0])
+    verify_viewport_controls(page, matrix_view, addresses[0])
     expect(combined).to_have_attribute("aria-pressed", "true")
     expect(page.locator("#batchControls")).to_be_visible()
-    checkboxes = csv_view.locator("#tbody input[data-control-key]")
+    checkboxes = matrix_view.locator("#tbody input[data-control-key]")
     expect(checkboxes).to_have_count(2)
-    expect(csv_view.locator("#tbody")).to_be_visible()
+    expect(matrix_view.locator("#tbody")).to_be_visible()
     expect(page.locator("#matrixGroups")).to_be_hidden()
-    expect(page.locator("#showMatrix")).to_be_hidden()
     for selector in ("#navReview", "#navCompare", "#navOverview", "#openButton", "#addButton"):
-        expect(csv_view.locator(selector)).to_be_hidden()
+        expect(matrix_view.locator(selector)).to_be_hidden()
     expect(page.locator("#queryForm")).to_be_visible()
-    expect(page.locator("#csvViewer")).to_be_visible()
+    expect(page.locator("#matrixViewer")).to_be_visible()
     expect(page.locator("#queryPorts")).to_be_enabled()
     expect(page.locator("#portReviewTab")).to_be_enabled()
     page.locator("#portReviewTab").click()
-    expect(csv_view.locator("#extraView")).to_be_visible()
+    expect(matrix_view.locator("#extraView")).to_be_visible()
     expect(page.locator("#queryForm")).to_be_visible()
     page.locator("#portMonitorTab").click()
 
     # The device selector distinguishes two switches with the same IP and hostname.
-    csv_view.locator("#device").select_option(addresses[1])
+    matrix_view.locator("#device").select_option(addresses[1])
     expect(checkboxes).to_have_count(1)
     page.locator("#selectionScope").select_option("switch")
     page.locator("#selectEligible").click()
@@ -270,27 +279,29 @@ def exercise(page, url, switch, second, shots, _backup):
     draft.fill(addresses[0] + " 2")
     expect(checkboxes).to_be_checked()
     expect(checkboxes).to_have_count(1)
-    expect(csv_view.locator("#device")).to_have_value(addresses[1])
-    expect(csv_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]')).to_be_visible()
+    expect(matrix_view.locator("#device")).to_have_value(addresses[1])
+    expect(matrix_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]')).to_be_visible()
     expect(page.locator("#controlTarget")).to_contain_text(addresses[1])
     assert [len(fixture.commands) for fixture in (switch, second)] == baseline
     draft.fill(saved_targets)
     page.locator("#clearSelection").click()
-    csv_view.locator("#device").select_option("")
+    matrix_view.locator("#device").select_option("")
     expect(checkboxes).to_have_count(2)
 
     change_target_while_previewing(page, switch, addresses[0])
 
     # The two ports have the same IP, interface, hostname and AP name; only SSH ports differ.
-    csv_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]').click()
-    csv_view.locator("#inspectObservedPort").click()
+    matrix_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]').click()
+    matrix_view.locator("#inspectObservedPort").click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
-    expect(csv_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')).to_be_checked()
     expect(
-        csv_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"] input')
+        matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')
+    ).to_be_checked()
+    expect(
+        matrix_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"] input')
     ).not_to_be_checked()
-    expect(page.locator("#csvViewer")).to_be_visible()
-    expect(csv_view.locator("#overviewRoot")).to_be_visible()
+    expect(page.locator("#matrixViewer")).to_be_visible()
+    expect(matrix_view.locator("#overviewRoot")).to_be_visible()
     page.locator("#preview").click()
     expect(page.locator("#reviewBody tbody tr")).to_have_count(1, timeout=60000)
     expect(page.locator("#reviewBody tbody tr")).to_contain_text(addresses[1])
@@ -299,20 +310,22 @@ def exercise(page, url, switch, second, shots, _backup):
 
     page.locator("#clearSelection").click()
     expect(page.locator("#quickResult")).to_be_hidden()
-    csv_view.locator("#search").fill(addresses[0])
+    matrix_view.locator("#search").fill(addresses[0])
     expect(checkboxes).to_have_count(1)
     page.locator("#selectionScope").select_option("filtered")
     page.locator("#selectVisible").click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
-    expect(csv_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"] input')).to_be_checked()
-    expect(csv_view.locator("#search")).to_have_value(addresses[0])
-    csv_view.locator("#search").fill("")
-    second_checkbox = csv_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')
+    expect(
+        matrix_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"] input')
+    ).to_be_checked()
+    expect(matrix_view.locator("#search")).to_have_value(addresses[0])
+    matrix_view.locator("#search").fill("")
+    second_checkbox = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')
     expect(second_checkbox).not_to_be_checked()
     second_checkbox.check()
     expect(page.locator("#selectedCount")).to_have_text("선택 2개")
     expect(page.locator("#quickResult")).to_be_hidden()
-    expect(page.locator("#csvViewer")).to_be_visible()
+    expect(page.locator("#matrixViewer")).to_be_visible()
     if shots:
         page.screenshot(path=shots / "unified-port-control.png")
 
@@ -365,21 +378,21 @@ def exercise(page, url, switch, second, shots, _backup):
         assert fixture.commands.count(off_command) == 1
         after_write = fixture.commands.index(off_command) + 1
         assert fixture.commands[after_write:].count(power_read) >= 2
-    expect(page.locator("#csvViewer")).to_be_visible()
+    expect(page.locator("#matrixViewer")).to_be_visible()
     expect(combined).to_have_attribute("aria-pressed", "true")
     expect(page.locator("#selectedCount")).to_have_text("선택 0개")
-    failed_row = csv_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"]')
-    ready_row = csv_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"]')
+    failed_row = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"]')
+    ready_row = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"]')
     expect(failed_row.get_by_role("checkbox")).to_be_disabled()
     expect(failed_row).not_to_contain_text("8.1 W")
     expect(ready_row.get_by_role("checkbox")).to_be_enabled()
     expect(ready_row).to_contain_text("0 W")
-    leave_failed_port_inspection_for_batch(page, csv_view, addresses[0], addresses[1])
+    leave_failed_port_inspection_for_batch(page, matrix_view, addresses[0], addresses[1])
 
     page.set_viewport_size({"width": 390, "height": 844})
     expect(page.locator("#queryTargets")).to_be_editable()
     expect(page.locator("#queryPorts")).to_be_enabled()
-    expect(page.locator("#csvViewer")).to_be_visible()
+    expect(page.locator("#matrixViewer")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     if shots:
         page.screenshot(path=shots / "unified-port-mobile.png")
@@ -390,7 +403,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(failed_row).not_to_contain_text("8.1 W")
     expect(ready_row).to_contain_text("0 W")
     key = addresses[0] + "/1"
-    csv_view.locator(f'#matrix [data-port-key="{key}"]').click()
+    matrix_view.locator(f'#matrix [data-port-key="{key}"]').click()
     untouched_commands = len(second.commands)
     with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")) as req:
         page.locator("#refreshPorts").click()
@@ -422,7 +435,7 @@ def exercise(page, url, switch, second, shots, _backup):
         return respond_on(channel, command)
 
     with patch.object(second, "_respond", delayed_draw):
-        select_measured_port(page, csv_view, addresses[1], addresses[0], switch)
+        select_measured_port(page, matrix_view, addresses[1], addresses[0], switch)
     assert second.commands.count(on_command) == 1
     assert second.poe_enabled and not switch.poe_enabled
 
@@ -431,7 +444,9 @@ def exercise(page, url, switch, second, shots, _backup):
     start = len(switch.commands)
     draft.fill(addresses[0] + " 1")
     expect(tiles).to_have_count(2)
-    expect(csv_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')).to_be_checked()
+    expect(
+        matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')
+    ).to_be_checked()
     with page.expect_request(
         lambda req: req.method == "POST" and req.url.endswith("/api/jobs")
     ) as query:
@@ -444,7 +459,7 @@ def exercise(page, url, switch, second, shots, _backup):
     assert len(second.commands) == untouched
     assert "show power-over-ethernet 1" in switch.commands[start:]
     assert "configure terminal" not in switch.commands[start:]
-    verify_rejected_draft_and_failed_read(page, csv_view, addresses, switch, second)
+    verify_rejected_draft_and_failed_read(page, matrix_view, addresses, switch, second)
     assert not page_errors, page_errors
     page.locator("#shutdown").click()
     page.locator("#reviewBody").get_by_role("button", name="서버 종료").click()
