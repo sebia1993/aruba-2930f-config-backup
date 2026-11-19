@@ -15,6 +15,20 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 .port-query-input textarea {flex:1;min-height:38px;max-height:9rem;min-width:0}
 .query-commands {justify-content:flex-end}
 #queryPorts {white-space:nowrap}
+.monitor-settings,.monitor-settings label {display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.monitor-settings label {flex-direction:row;color:var(--muted);font-size:12px}
+#monitorInterval {box-sizing:border-box;width:3.3rem;min-width:0;padding-inline:4px;text-align:center}
+#monitorToggle[aria-pressed=true] {color:var(--teal);border-color:var(--teal);background:var(--active)}
+#monitorStatus {margin:3px 10px 5px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+#monitorStatus[data-error=true] {color:var(--bad)}
+@media(max-width:800px),(pointer:coarse) {
+  #monitorInterval {min-height:44px;font-size:16px}
+}
+@media(max-width:650px) {
+  #monitorStatus {margin:2px 0}
+  #monitorInterval {width:44px}
+  .monitor-verb {display:none}
+}
 #targetOptions summary {color:var(--teal);padding:5px 0}
 #targetOptions .target-tools {margin-top:6px}
 #targetCount {color:var(--muted);font-size:12px;overflow-wrap:anywhere}

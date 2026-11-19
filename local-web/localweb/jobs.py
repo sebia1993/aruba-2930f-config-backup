@@ -4,16 +4,19 @@ import json
 import re
 import secrets
 import sqlite3
+import time
 from collections import OrderedDict
 from contextlib import closing, suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Event, Lock, Thread
+from threading import Event, RLock, Thread
 
 from aruba2930f_backup.models import CollectionFailure
 
 from .controls import Controls
-from .operations import Operations, TargetInputError
+from .monitoring import PortMonitoring
+from .operations import Operations, TargetInputError, _groups
+from .port_tools import group_targets
 
 ACTIONS = frozenset(
     [
@@ -118,24 +121,89 @@ class Jobs:
                 "UPDATE jobs SET state='interrupted',finished=?,summary=? WHERE state='running'",
                 (now(), "이전 실행 중 서버가 종료되었습니다."),
             )
-        self.lock = Lock()
+        self.lock = RLock()
         self.recent = OrderedDict()
         self.port_view = None
         self.active = None
         self.closing = False
         self.cancel_event = None
+        self.monitor: PortMonitoring | None = None
+
+    def monitor_status(self):
+        with self.lock:
+            plan = self.monitor
+            return {
+                "active": plan is not None,
+                "suspended": bool(plan and plan.suspended),
+                "monitorId": plan.id if plan else None,
+                "intervalMinutes": plan.minutes if plan else 5,
+                "portCount": sum(len(g.interfaces) for g in plan.groups) if plan else 0,
+                "nextAt": plan.next_at if plan else None,
+                "jobId": plan.job if plan else None,
+                "lastJobId": plan.last_job if plan else None,
+                "lastFinished": plan.last_finished if plan else None,
+                "lastSuccess": plan.last_success if plan else None,
+                "error": plan.error if plan else "",
+                "session": self.operations.session_summary(),
+            }
+
+    def start_monitor(self, body):
+        minutes = body.get("intervalMinutes", 5)
+        if type(minutes) is not int or not 1 <= minutes <= 60:
+            raise ValueError("조회 간격은 1~60분 사이의 정수로 입력하세요.")
+        groups = _groups(body)
+        with self.lock:
+            if self.monitor:
+                if self.monitor.groups == groups and self.monitor.minutes == minutes:
+                    return self.monitor_status()
+                raise Busy("실행 중인 모니터링을 중지한 후 대상이나 간격을 바꾸세요.")
+            if not self.operations.credentials:
+                raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
+            # Publish the plan before the new worker can acquire the lock and finish.
+            key = self.submit("ports.query", {"targets": body["targets"]}, monitored=True)
+            self.monitor = PortMonitoring(key, groups, body["targets"], minutes, job=key)
+            return self.monitor_status()
+
+    def stop_monitor(self, monitor_id=None):
+        with self.lock:
+            if self.monitor and (monitor_id is None or self.monitor.id == monitor_id):
+                if self.monitor.job and self.monitor.job == self.active:
+                    self.cancel_event.set()
+                self.monitor = None
+            return self.monitor_status()
+
+    def tick_monitor(self):
+        with self.lock:
+            plan = self.monitor
+            if (
+                self.closing
+                or not plan
+                or plan.job
+                or plan.suspended
+                or time.monotonic() < plan.due
+            ):
+                return
+            plan.advance_to_next_slot()
+            if self.active or self.controls.awaiting_confirmation():
+                # Never queue missed reads behind a manual operation or its review.
+                return
+            plan.job = self.submit("ports.refresh", {"targets": plan.targets}, monitored=True)
+            plan.next_at = None
 
     def claim_shutdown(self):
         with self.lock:
             if self.active:
                 raise Busy("작업을 마치거나 취소한 후 서버를 종료하세요.")
+            self.monitor = None
             self.closing = True
 
-    def submit(self, action, body):
+    def submit(self, action, body, *, monitored=False):
         if not isinstance(action, str) or action not in ACTIONS or not isinstance(body, dict):
             raise ValueError("작업 이름과 입력 형식을 확인하세요.")
         with self.lock:
             if self.closing or self.active:
+                if self.active and self.monitor and self.monitor.job == self.active:
+                    raise Busy("자동 전력 조회가 진행 중입니다. 조회 완료 후 다시 실행하세요.")
                 raise Busy("다른 작업이 실행 중이거나 서버가 종료 중입니다.")
             repeat_message = {
                 "control.quick-execute": DUPLICATE_POE_REQUEST,
@@ -150,7 +218,8 @@ class Jobs:
             else:
                 key = secrets.token_hex(16)
             started = now()
-            if action in PERSIST:
+            persist = action in PERSIST and not monitored
+            if persist:
                 with closing(sqlite3.connect(self.db)) as db, db:
                     try:
                         db.execute(
@@ -177,7 +246,7 @@ class Jobs:
             self.operations.progress = {}
             self.operations.reset_query_progress()
             Thread(
-                target=self._run, args=(key, action, body, self.cancel_event), daemon=True
+                target=self._run, args=(key, action, body, self.cancel_event, persist), daemon=True
             ).start()
             return key
 
@@ -237,7 +306,7 @@ class Jobs:
             ]
             return {"groups": groups, "query": {"rows": rows}}
 
-    def _store_port_view(self, result):
+    def _store_port_view(self, result, *, monitored=False):
         sampled = set(result.pop("_sampledPorts", ()))
         if self.port_view:
             prior = {
@@ -249,13 +318,26 @@ class Jobs:
                 old = prior.get(key)
                 if old is None:
                     continue
-                if key in sampled:
+                stale = row["status"] != "ok" or row.get("watts") is None
+                retain_last = stale and (monitored or "lastSuccessfulObservation" in old)
+                prior_observation = None
+                if key in sampled or retain_last:
                     if (
                         old.get("complete")
                         and old["status"] == "ok"
                         and not old.get("refreshInvalidated")
                     ):
-                        row["previousObservation"] = _observation_for_comparison(old)
+                        prior_observation = _observation_for_comparison(old)
+                    if (not prior_observation or prior_observation.get("watts") is None) and (
+                        monitored or retain_last
+                    ):
+                        prior_observation = old.get("lastSuccessfulObservation", prior_observation)
+                # Display history is kept separately from current measurements and permissions.
+                if retain_last and prior_observation and prior_observation.get("watts") is not None:
+                    row["lastSuccessfulObservation"] = prior_observation
+                if key in sampled:
+                    if prior_observation:
+                        row["previousObservation"] = prior_observation
                 elif "previousObservation" in old:
                     row["previousObservation"] = old["previousObservation"]
         self.port_view = {"rows": result["rows"]}
@@ -291,8 +373,9 @@ class Jobs:
                 return folder.resolve()
         return file.parent
 
-    def _run(self, key, action, body, cancel):
+    def _run(self, key, action, body, cancel, persist):
         result, error, state = None, "", "done"
+        failure_code = None
         try:
             if action in {
                 "ports.query",
@@ -309,6 +392,8 @@ class Jobs:
             if cancel.is_set():
                 state = "cancelled"
         except (ValueError, CollectionFailure) as exc:
+            if isinstance(exc, CollectionFailure):
+                failure_code = exc.code
             error = getattr(exc, "safe_message", None) or str(exc)
             # Some underlying validation exceptions include the invalid value.
             creds = self.operations.credentials
@@ -340,7 +425,7 @@ class Jobs:
                     files.append({"id": handle, "name": path.name})
                 if "files" in result:
                     result["files"] = files
-            if action in PERSIST:
+            if persist:
                 labels = {"done": "완료", "failed": "실패", "cancelled": "취소됨"}
                 summary = labels[state]
                 if result:
@@ -373,7 +458,7 @@ class Jobs:
                 "failed",
                 None,
             )
-            if action in PERSIST:
+            if persist:
                 with suppress(sqlite3.Error), closing(sqlite3.connect(self.db)) as db, db:
                     db.execute(
                         "UPDATE jobs SET state=?,finished=?,summary=?,files='[]' WHERE id=?",
@@ -381,9 +466,10 @@ class Jobs:
                     )
         finally:
             with self.lock:
+                monitored = not persist and action in {"ports.query", "ports.refresh"}
                 if action == "ports.query":
                     if result and "rows" in result:
-                        self._store_port_view(result)
+                        self._store_port_view(result, monitored=monitored)
                     elif self.operations.query_started:
                         self.port_view = None
                 elif action in {
@@ -393,7 +479,7 @@ class Jobs:
                     "control.apply",
                 }:
                     if result and "rows" in result:
-                        self._store_port_view(result)
+                        self._store_port_view(result, monitored=monitored)
                     elif state != "done":
                         invalid = self.operations.invalidate_failed_refresh(cancel.is_set())
                         if invalid:
@@ -402,11 +488,35 @@ class Jobs:
                                 (r["ip"], int(r["ssh_port"]), r["interface"]): r
                                 for r in [*previous, *invalid]
                             }
-                            self.port_view = {"rows": list(rows.values())}
+                            self._store_port_view(
+                                {"rows": list(rows.values())}, monitored=monitored
+                            )
                 elif (
                     action in {"session.open", "session.close", "targets.apply", "hostkey.forget"}
                     and state == "done"
                 ):
                     self.port_view = None
+                plan = self.monitor
+                if plan and plan.job == key:
+                    plan.finished(
+                        key,
+                        result,
+                        error or ("조회 취소" if state == "cancelled" else ""),
+                        finished,
+                        failure_code,
+                    )
+                elif plan and (
+                    (
+                        action
+                        in {"session.open", "session.close", "targets.apply", "hostkey.forget"}
+                        and state == "done"
+                    )
+                    or (
+                        action == "ports.query"
+                        and self.operations.query_started
+                        and self.operations.inventory_view() != group_targets(plan.groups)
+                    )
+                ):
+                    self.monitor = None
                 self.recent[key].update(state=state, finished=finished, result=result, error=error)
                 self.active = self.cancel_event = None

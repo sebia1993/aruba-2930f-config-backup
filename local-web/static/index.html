@@ -11,6 +11,7 @@
   <script src="/static/power-matrix.js" defer></script>
   <script src="/static/app.js" defer></script>
   <script src="/static/port-tools.js" defer></script>
+  <script src="/static/monitoring.js" defer></script>
   <script src="/static/control-tools.js" defer></script>
   <script src="/static/cable-tools.js" defer></script>
   <script src="/static/backup-tools.js" defer></script>
@@ -85,9 +86,14 @@
           <div class="query-commands">
             <span id="targetCount" role="status"></span>
             <button type="button" id="editQueryTargets" aria-controls="queryFields" aria-expanded="true" hidden>조회 대상 접기</button>
-            <button id="queryPorts" class="primary" data-job disabled>포트 조회</button>
+            <button id="queryPorts" class="primary" data-job formnovalidate disabled>포트 조회</button>
+            <span class="monitor-settings">
+              <label title="전체 조회 대상 모니터링 간격 (1~60분)"><input id="monitorInterval" aria-label="모니터링 간격 (분)" type="number" min="1" max="60" step="1" value="5" required inputmode="numeric">분</label>
+              <button type="button" id="monitorToggle" aria-label="모니터링 시작" aria-pressed="false" title="조회 대상 전체 모니터링 시작" disabled><span id="monitorStartLabel"><span aria-hidden="true">▶</span> 모니터링<span class="monitor-verb"> 시작</span></span><span id="monitorStopLabel" hidden><span aria-hidden="true">■</span> 중지</span></button>
+            </span>
           </div>
         </form>
+        <p id="monitorStatus" role="status" hidden></p>
       </article>
       </div>
       <section class="port-station" id="matrixWorkspace" aria-labelledby="matrixWorkspaceTitle">

@@ -445,13 +445,18 @@
     for(const row of progress.observations || []) live.set(portKey(row),row);
     renderPorts();
   }
-  function restoreInventory(items,targetsText=inventoryText(items)) {
+  function restoreInventory(items,targetsText=inventoryText(items),preserveDraft=false) {
     if(!Array.isArray(items) || !items.length) return;
     directCableTarget=false;
-    groups=stableGroups(items); registeredText=raw.value=targetsText;
+    const editing=preserveDraft && raw.value.trim() && raw.value!==registeredText && raw.value.trim()!==targetsText.trim();
+    groups=stableGroups(items); registeredText=targetsText;
+    if (!editing) raw.value=targetsText;
     $('controlMode').value='batch'; $('controlMode').onchange();
     updateTargetCount();
     updatePortActions(); renderMatrix();
+  }
+  function matchesInventory(items) {
+    return Array.isArray(items) && inventoryText(stableGroups(items))===inventoryText(groups);
   }
   function reconcileRows(rows,refreshed=loading) {
     // A partial refresh also contains earlier observations from other ports.
@@ -465,6 +470,6 @@
     return reconciled.concat([...invalid.values()]);
   }
   window.portTools={reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,checkedTargets,scopeKeys,unobservedTargets,cableScope,
-    hasInventory:()=>groups.length>0 || ui.rows.length>0,refreshTargets,restoreInventory};
+    hasInventory:()=>groups.length>0 || ui.rows.length>0,refreshTargets,restoreInventory,matchesInventory};
   updatePortActions();sync();
 })();

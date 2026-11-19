@@ -284,6 +284,8 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .embedded #tableTitle{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .embedded #portListPane>.panel-head{justify-content:flex-end}
 .resulttable{min-width:0;table-layout:fixed}
+.reading-delay{display:block;color:var(--muted)}
+.port-tile[data-stale=true]{border:1px dashed currentColor}
 .resulttable .port-col{width:19%}.resulttable .power-state-col{width:24%}.resulttable .watts-col{width:17%}
 .resulttable .result-group{cursor:default;background:var(--surface2)}
 .resulttable .result-group th{color:var(--ink);font-size:12px}
@@ -670,12 +672,16 @@ window.PortViews = (() => {
   function isIssue(row) { return row.status === 'unpowered' || row.status === 'limited'; }
   function endpoint(row) { return row.sshPort === 22 ? row.ip : row.ip + ':' + row.sshPort; }
   function deviceCaption(row) { return [...new Set([row.hostname,endpoint(row)].filter(Boolean))].join(' · '); }
-  function watts(row) { return row.watts == null ? '미측정' : row.watts + ' W'; }
+  function watts(row) {
+    if (row.lastGood) return row.lastGood.watts+' W (이전)';
+    return row.watts == null ? '미측정' : row.watts + ' W';
+  }
   const refreshNotice='현재 상태 재조회 필요';
   function needsRefresh(row) { return liveSelectionId() && row.queryStatus==='ok' && excludedPorts.has(row.key); }
   function labelTile(tile,row) {
     const parts=[row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status],row.apName];
     if (row.comparison?.changed) parts.push('직전 조회에서 변화');
+    if (row.lastGood) parts.push('갱신 지연 · 마지막 측정 '+timeText(row.lastGood.observed));
     if (row.unobserved || needsRefresh(row)) parts.push(refreshNotice);
     const label=parts.filter(Boolean).join(' · ');
     tile.setAttribute('aria-label',label);
@@ -806,6 +812,7 @@ window.PortViews = (() => {
       const tile = button(embedded ? row.port : null,'port-tile '+row.status);
       tile.dataset.portKey = row.key;
       tile.dataset.state = row.status;
+      if (row.lastGood) tile.dataset.stale='true';
       if (row.comparison?.changed) tile.dataset.changed='true';
       labelTile(tile,row);
       tile.setAttribute('aria-pressed',String(multiSelect ? checkedPorts.has(row.key) : row.key===state.selected));
@@ -878,6 +885,7 @@ window.PortViews = (() => {
     }
     const badges=node('div',null,'badges');
     badges.append(node('span',statusNames[row.status],'badge '+row.status),node('span','인터페이스 '+row.port,'badge'));
+    if (row.lastGood) badges.append(node('span','갱신 지연','badge'));
     const fields = node('div',null,'dgrid');
     const values = [
       ['실측 전력',watts(row)],['PoE 공급 상태',row.poeStatus],['PoE 설정',row.poe],
@@ -886,6 +894,7 @@ window.PortViews = (() => {
       ['관측 당시 링크',row.link],['관측 시각',timeText(row.observed)]
     ];
     if (row.link === '미확인' && row.reportedLink) values.push(['링크 원문',row.reportedLink]);
+    if (row.lastGood) values.push(['마지막 전력 측정',timeText(row.lastGood.observed)]);
     if (row.linkObserved) values.push(['링크 관측 시각',timeText(row.linkObserved)]);
     if (row.label) values.push(['장비 라벨',row.label]);
     for (const [key,name] of [['model','스위치 모델'],['sku','스위치 SKU'],['software_version','스위치 소프트웨어'],['hostname_source','호스트 이름 수집 출처']]) {
@@ -1051,7 +1060,10 @@ window.PortViews = (() => {
       actions.append(pick); port.append(actions);
       const power=node('td');
       power.append(node('span',statusNames[row.status],'pillstat '+row.status));
-      tr.append(port,power,node('td',watts(row)),node('td',row.apName || (lldpMeasured(row)?'이름 없음':'미수집')));
+      if (row.lastGood) power.append(node('small','갱신 지연','reading-delay'));
+      const measured=node('td',watts(row));
+      if (row.lastGood) measured.title='마지막 측정 · '+timeText(row.lastGood.observed);
+      tr.append(port,power,measured,node('td',row.apName || (lldpMeasured(row)?'이름 없음':'미수집')));
       frag.append(tr);
     }
     if (!sorted.length) {
@@ -1176,11 +1188,15 @@ window.PortViews = (() => {
   function observedRow(raw) {
     const ip=raw.ip, sshPort=raw.ssh_port, port=String(raw.interface);
     const power=window.PowerMatrix.classify(raw);
+    const previous=raw.lastSuccessfulObservation;
+    const priorWatts=previous && window.PowerMatrix.classify(previous).watts;
+    const lastGood=power.watts==null && priorWatts!=null ?
+      {watts:priorWatts,observed:previous.observed_at || previous.finished_at} : null;
     const link=window.PowerMatrix.linkLabel(raw.link_status);
     const neighbors=(raw.lldp_neighbors || []).map(n=>n.system_name || '이름 없음');
     return {
       ip,sshPort,port,key:targetKey({ip,sshPort,port}),raw,
-      hostname:raw.hostname || ip,site:raw.site || '사업장 미지정',label:raw.label,
+      hostname:raw.hostname || previous?.hostname || ip,site:raw.site || previous?.site || '사업장 미지정',label:raw.label,lastGood,
       link,reportedLink:link==='미확인'?raw.link_status:link,linkObserved:raw.link_observed_at,
       status:power.state,reason:power.reason,watts:power.watts,apName:power.apName,
       poe:setting(raw.poe_enabled,'ON','OFF'),admin:setting(raw.enabled,'Enable','Disable'),
@@ -1205,8 +1221,11 @@ window.PortViews = (() => {
     return {previous,comparable:power || ap,changed:(power && previous.watts!==row.watts) ||
       (ap && previous.apName!==row.apName) || (color && previous.status!==row.status)};
   }
-  function loadLive(liveId, records, stillCurrent, unobserved=[], keepView=false) {
+  function loadLive(liveId, records, stillCurrent, unobserved=[], keepView=false, periodic=false) {
     if (!liveId || !stillCurrent()) return;
+    const viewport=periodic && {
+      top:window.scrollY, table:el('tbody').closest('.tablewrap').scrollTop, matrix:el('matrix').scrollTop
+    };
     keepView=state.preserveView || (keepView && !!liveSelectionId());
     state.preserveView=false;
     const rows=records.map(observedRow);
@@ -1229,6 +1248,11 @@ window.PortViews = (() => {
     updateSource();
     if (keepView) showView(state.view,state.found);
     else openView('overview');
+    if (viewport) {
+      el('tbody').closest('.tablewrap').scrollTop=viewport.table;
+      el('matrix').scrollTop=viewport.matrix;
+      window.scrollTo({top:viewport.top,behavior:'instant'});
+    }
   }
   function invalidateLive(preserveView=false) {
     if (!preserveView) {
