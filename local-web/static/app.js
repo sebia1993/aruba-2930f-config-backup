@@ -334,6 +334,27 @@ for (const frame of all('iframe')) frame.addEventListener('load', () => {
 });
 // A cached viewer may finish loading before the deferred script attaches its handler.
 if ($('logViewer').contentDocument?.readyState === 'complete' && $('logViewer').contentWindow.location.pathname === '/logs') ui.logLoaded = true;
+const phoneLayout = matchMedia('(max-width:650px), (max-width:950px) and (max-height:500px)');
+const mobileServerInfo = $('mobileServerInfo');
+function placeServerInfo() {
+  mobileServerInfo.open = false;
+  const container = phoneLayout.matches ? mobileServerInfo : document.querySelector('.sidebar');
+  container.append($('serverInfo'));
+}
+phoneLayout.addEventListener('change', placeServerInfo);
+placeServerInfo();
+document.addEventListener('click', event => {
+  if (mobileServerInfo.open && !mobileServerInfo.contains(event.target)) mobileServerInfo.open = false;
+});
+mobileServerInfo.addEventListener('focusout', event => {
+  if (!mobileServerInfo.contains(event.relatedTarget)) mobileServerInfo.open = false;
+});
+mobileServerInfo.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && mobileServerInfo.open) {
+    mobileServerInfo.open = false;
+    mobileServerInfo.querySelector('summary').focus();
+  }
+});
 function route() {
   const key = location.hash.slice(1);
   const admin = key === 'connect';
@@ -344,6 +365,7 @@ function route() {
     if (node === link) node.setAttribute('aria-current','page'); else node.removeAttribute('aria-current');
   }
   for (const node of all('[data-page]')) node.hidden = node.dataset.page !== name;
+  mobileServerInfo.open = false;
   $('crumb').textContent = admin ? $('connectionHeading').textContent : link.lastChild.textContent;
   if (name === 'ports' && !$('matrixViewer').hasAttribute('src')) $('matrixViewer').src = $('matrixViewer').dataset.src;
   if (name === 'history' && ui.token) loadHistory();
@@ -356,12 +378,18 @@ route();
 
 function simpleTable(columns, items, message) {
   if (!items.length) return elem('p',message || '표시할 결과가 없습니다.','empty');
-  const wrap = elem('div',undefined,'tablebox'), table = elem('table'), header = table.createTHead().insertRow(), body = table.createTBody();
-  for (const [label] of columns) header.append(elem('th',label));
+  const wrap = elem('div',undefined,'tablebox result-table'), table = elem('table'), header = table.createTHead().insertRow(), body = table.createTBody();
+  table.setAttribute('role','table');
+  for (const [label] of columns) {
+    const heading = elem('th',label);
+    heading.scope = 'col';
+    header.append(heading);
+  }
   for (const item of items) {
     const tr = body.insertRow();
-    for (const [,field,long] of columns) {
+    for (const [label,field,long] of columns) {
       const cell = tr.insertCell();
+      cell.dataset.label = label;
       const value = typeof field === 'function' ? field(item) : item[field];
       if (value instanceof Node) cell.append(value); else cell.textContent = value ?? '—';
       if (long) cell.className = 'long';

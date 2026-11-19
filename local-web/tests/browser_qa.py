@@ -17,12 +17,16 @@ from playwright.sync_api import expect, sync_playwright
 from verify_http_ssh import MonitorFixture
 
 
-def enter_ssh_credentials(page, switch):
+def enter_ssh_credentials(page, switch, *, touch=False):
     dialog = page.get_by_role("dialog", name="SSH 접속 계정", exact=True)
     expect(dialog).to_be_visible()
     dialog.locator("#queryUsername").fill(switch.username)
     dialog.locator("#queryPassword").fill(switch.password)
-    dialog.get_by_role("button", name="계정 적용 후 계속").click()
+    submit = dialog.get_by_role("button", name="계정 적용 후 계속")
+    if touch:
+        submit.tap()
+    else:
+        submit.click()
     expect(dialog).to_be_hidden()
     expect(page.locator("#queryPassword")).to_have_value("")
 
@@ -46,8 +50,8 @@ def expect_power_result(page, endpoint, before, after, *, port="1", delta=None):
 
 
 @contextmanager
-def click_quick_poe(page, operation, targets):
-    """Verify one user click submits exactly one job for the selected SSH endpoints."""
+def click_quick_poe(page, operation, targets, *, touch=False):
+    """Verify one click or tap submits exactly one job for the selected SSH endpoints."""
     jobs = []
 
     def record(request):
@@ -67,7 +71,11 @@ def click_quick_poe(page, operation, targets):
     try:
         name = "PoE ON 즉시 실행" if operation == "poe_on" else "PoE OFF 즉시 실행"
         with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")):
-            page.get_by_role("button", name=name, exact=True).click()
+            button = page.get_by_role("button", name=name, exact=True)
+            if touch:
+                button.tap()
+            else:
+                button.click()
         assert len(jobs) == 1 and jobs[0]["action"] == "control.quick-execute", jobs
         body = jobs[0]["body"]
         assert re.fullmatch(r"[0-9a-f]{32}", body["requestId"])
@@ -335,6 +343,14 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     logs.locator("#navAttention").click()
     expect(logs.locator("#rows tr")).to_have_count(2)
     logs.locator("#navAll").click()
+    page.set_viewport_size({"width": 390, "height": 844})
+    picked_port = logs.locator('#rows tr[data-status="down"] .row-name')
+    picked_port.click()
+    expect(logs.locator("#logDetailTitle")).to_be_focused()
+    expect(logs.locator("#detail h3")).to_contain_text("포트 2")
+    logs.locator("#backToLogPort").click()
+    expect(picked_port).to_be_focused()
+    page.set_viewport_size({"width": 1440, "height": 960})
     nav("history")
     expect(page.locator("#historyTable")).to_contain_text("구성 백업")
     expect(page.locator("#historyTable")).to_contain_text("포트 조회")
@@ -397,7 +413,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#statusText")).to_contain_text("종료했습니다.")
 
 
-def run_browser_case(case, *, switch_factory=MonitorFixture):
+def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chromium"):
     root = Path(os.environ.get("ARUBA_WEB_ROOT", Path(__file__).resolve().parents[1]))
     python = os.environ.get("ARUBA_WEB_PYTHON", sys.executable)
     chrome = os.environ.get(
@@ -443,7 +459,10 @@ def run_browser_case(case, *, switch_factory=MonitorFixture):
                     raise RuntimeError(f"Server exited: {process.returncode}")
                 time.sleep(0.1)
             info = json.loads((folder / "server-info.json").read_text(encoding="utf-8"))
-            browser = playwright.chromium.launch(executable_path=chrome, headless=True)
+            if browser_engine == "webkit":
+                browser = playwright.webkit.launch()
+            else:
+                browser = playwright.chromium.launch(executable_path=chrome, headless=True)
             try:
                 page = browser.new_page(viewport={"width": 1440, "height": 960}, locale="ko-KR")
                 page.set_default_timeout(15000)

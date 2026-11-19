@@ -2,7 +2,7 @@
 <html lang="ko" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">
   <meta name="color-scheme" content="dark light">
   <title>2930F Port Operations · 로컬 스위치 관리</title>
   <link rel="stylesheet" href="/static/style.css">
@@ -27,11 +27,11 @@
       <a href="#backup"><span aria-hidden="true">▤</span>구성 백업</a>
       <a href="#history"><span aria-hidden="true">◷</span>작업 이력</a>
     </nav>
-    <div class="sidefoot"><b><i></i>로컬 웹 서버</b><span id="version">버전 읽는 중</span><button id="shutdown" type="button" class="textbtn">서버 종료</button></div>
+    <div class="sidefoot" id="serverInfo"><b><i></i>로컬 웹 서버</b><span id="version">버전 읽는 중</span><button id="shutdown" type="button" class="textbtn">서버 종료</button></div>
   </aside>
   <main>
-    <header class="topbar"><div class="crumb">네트워크 운영 <span>›</span> <b id="crumb">AP 로그 관제</b></div>
-      <div class="tools"><button type="button" id="lanAccess" hidden>LAN 공유</button>
+    <header class="topbar"><div class="crumb"><span class="crumb-path">네트워크 운영 › </span><b id="crumb">AP 로그 관제</b></div>
+      <div class="tools"><details id="mobileServerInfo"><summary>서버 정보</summary></details><button type="button" id="lanAccess" hidden>LAN 공유</button>
       <button type="button" id="themeToggle" class="theme-toggle" aria-label="라이트 모드로 전환" title="라이트 모드로 전환">
         <svg aria-hidden="true" focusable="false" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <defs>
@@ -52,7 +52,7 @@
     </section>
     <section data-page="logs" aria-label="AP 로그 관제">
       <details class="live-source" id="sshLogs"><summary>스위치에서 로그 가져오기 <span>SSH · show logging</span></summary>
-        <form id="logForm" class="formrow"><label class="grow">스위치 주소 <textarea id="logTargets" rows="2" placeholder="스위치 IP 또는 IP:SSH포트 (한 줄에 한 대)" required></textarea></label><button class="primary" data-job>로그 수집</button></form>
+        <form id="logForm" class="formrow"><label class="grow">스위치 주소 <textarea id="logTargets" rows="2" autocapitalize="none" spellcheck="false" placeholder="스위치 IP 또는 IP:SSH포트 (한 줄에 한 대)" required></textarea></label><button class="primary" data-job>로그 수집</button></form>
         <div id="logResults" class="output" hidden></div>
       </details>
       <iframe id="logViewer" class="viewer" title="AP 포트 이벤트 상태 · 로그 파일과 붙여넣기" src="/logs?embedded=1"></iframe>
@@ -69,7 +69,7 @@
         <form id="queryForm">
           <div class="port-query-input">
             <div><h2 id="queryHeading">실시간 조회</h2><label for="queryTargets">스위치 주소와 포트 (한 줄에 한 대)</label></div>
-            <textarea id="queryTargets" rows="1" placeholder="주소와 포트 목록을 공백으로 구분하세요." required></textarea>
+            <textarea id="queryTargets" rows="1" autocapitalize="none" spellcheck="false" placeholder="주소와 포트 목록을 공백으로 구분하세요." required></textarea>
             <button id="queryPorts" class="primary" data-job disabled>포트 조회</button>
           </div>
           <details id="targetOptions"><summary>대상 목록 관리</summary>
@@ -100,7 +100,7 @@
     <section data-page="backup" hidden>
       <div class="heading"><div><div class="eyebrow">CONFIGURATION BACKUP</div><h1>스위치 구성 백업</h1><p>선택한 스위치의 설정 파일과 작업 보고서를 PC에 저장합니다.</p></div></div>
       <article class="panel"><header><h2>백업 대상</h2><span>스위치별 한 줄</span></header><form id="backupForm" class="panelbody">
-        <label>스위치 주소<textarea id="backupTargets" rows="5" placeholder="스위치 IP 또는 IP:SSH포트 (한 줄에 한 대)" required></textarea></label>
+        <label>스위치 주소<textarea id="backupTargets" rows="5" autocapitalize="none" spellcheck="false" placeholder="스위치 IP 또는 IP:SSH포트 (한 줄에 한 대)" required></textarea></label>
         <label>추가 저장 폴더 (선택)<input id="backupDirectory" placeholder="백업을 저장할 폴더의 전체 경로" autocomplete="off"><span class="hint">이 PC에 있는 폴더의 전체 경로를 입력하면 백업 결과를 그곳에도 저장합니다. 비워 두면 기본 폴더에 저장합니다.</span></label>
         <div class="bar"><label>파일 이름<select id="fileMode"><option value="hostname_ip">호스트 이름 + IP</option><option value="hostname">호스트 이름</option><option value="ip">IP 주소</option></select></label><label>동시 접속<input id="concurrency" type="number" min="1" max="20" value="10" required></label><label>최대 시도<input id="attempts" type="number" min="1" max="4" value="4" required></label></div>
         <div class="bar"><button class="primary" data-job>백업 시작</button><button type="button" data-import="backupTargets">대상 열기</button><button type="button" data-save="backupTargets">대상 저장</button></div>
@@ -127,7 +127,7 @@
     </section>
   </main>
 </div>
-<dialog id="review"><form method="dialog" class="dialog-head"><h2 id="reviewTitle">작업 검토</h2><button aria-label="검토 닫기">닫기</button></form><div id="reviewBody"></div></dialog>
+<dialog id="review" aria-labelledby="reviewTitle"><form method="dialog" class="dialog-head"><h2 id="reviewTitle">작업 검토</h2><button aria-label="검토 닫기">닫기</button></form><div id="reviewBody"></div></dialog>
 <dialog id="lanDialog" aria-labelledby="lanTitle">
   <form method="dialog" class="dialog-head"><h2 id="lanTitle">HTTPS로 다른 기기 초대</h2><button aria-label="LAN 공유 닫기">닫기</button></form>
   <div class="panelbody">
@@ -147,7 +147,7 @@
 <dialog id="queryCredentials" aria-labelledby="queryCredentialsTitle">
   <header class="dialog-head"><h2 id="queryCredentialsTitle">SSH 접속 계정</h2></header>
   <form id="queryLoginForm" class="panelbody" autocomplete="off">
-    <label>사용자 이름<input id="queryUsername" required maxlength="128" autocomplete="off" data-job autofocus></label>
+    <label>사용자 이름<input id="queryUsername" required maxlength="128" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-job autofocus></label>
     <label>비밀번호<input id="queryPassword" type="password" required autocomplete="off" data-job></label>
     <label>Enable 비밀번호 (선택)<input id="queryEnableSecret" type="password" autocomplete="off" data-job></label>
     <p id="queryLoginError" class="warning" role="alert" hidden></p>
