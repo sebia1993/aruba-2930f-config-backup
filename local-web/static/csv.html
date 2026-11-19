@@ -1480,9 +1480,9 @@ window.PortViews = (() => {
       toggle.setAttribute('aria-expanded',String(!filterTools.hidden));
     };
     filterTools.append(el('site'),el('zoom').closest('.filter-help'),el('clearFilters'));
+    el('status').after(toggle,filterTools);
     Object.assign(el('zoom'),{min:24,max:40,value:27});
     el('zoomValue').textContent=el('zoom').value+'px';
-    el('status').after(toggle,filterTools);
     const bar=el('search').closest('.filterbar');
     bar.id='overviewFilters';
     const shortToggle=button('검색·필터','btn ghost');
