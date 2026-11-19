@@ -91,6 +91,12 @@ def cancel_before_off(page, switch, address):
         expect(page.locator("#stopJob")).to_be_hidden(timeout=90000)
     assert "configure terminal" not in switch.commands[start:]
     assert switch.power["1"]
+    checkbox = page.frame_locator("#csvViewer").locator(
+        f'#tbody tr[data-port-key="{address}/1"] input'
+    )
+    expect(checkbox).to_be_enabled()
+    expect(checkbox).to_be_checked()
+    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
 
 
 def run_range(page, url, switch, second, shots, output):

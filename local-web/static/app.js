@@ -801,12 +801,15 @@ function markControlRowsUsed(targets) {
 }
 function receiveControlObservations(response,canDisplay) {
   const results=response.results || [], readings=response.powerRefresh?.readings;
+  const affected=['poe_on','poe_off'].includes(response.operation)
+    ? results.filter(row=>['verified','unchanged','unverified','result_unknown','preflight_failed'].includes(row.status))
+    : results;
   if (Array.isArray(readings) && Array.isArray(response.rows)) {
-    for (const row of results) ui.selected.delete(controlPortKey(row));
+    for (const row of affected) ui.selected.delete(controlPortKey(row));
     receivePorts(response,canDisplay,false,new Set(readings.map(controlPortKey)));
   } else {
     if (Array.isArray(response.rows)) receivePorts(response,canDisplay);
-    if (results.length) markControlRowsUsed(results);
+    if (affected.length) markControlRowsUsed(affected);
   }
 }
 function isMeasuredReading(reading) {
