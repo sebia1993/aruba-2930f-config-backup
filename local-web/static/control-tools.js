@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   Object.assign(stateNames, {queued:'승인 대기',preflight:'사전 검증'});
-  const single = $('singleControls'), batch = $('batchControls');
+  const single = $('singleControls');
   const inspection = elem('div',undefined,'output');
   inspection.hidden = true;
   single.after(inspection);
@@ -34,7 +34,7 @@
   }
   const quickResult = elem('div',undefined,'output');
   quickResult.id = 'quickResult'; quickResult.hidden = true;
-  batch.after(quickResult);
+  $('controlResult').before(quickResult);
   function clearQuickResult() {
     quickResult.hidden = true;
     quickResult.replaceChildren();
@@ -74,7 +74,7 @@
     const canDisplay=capturePortIntent();
     runSsh('control.quick-execute',{operation,targets,requestId},(result,cancelled)=>showQuickResult(result,cancelled,false,canDisplay));
   }
-  batch.append(liveButton('quickOff','PoE OFF 즉시 실행',()=>requestQuick('poe_off')),
+  $('quickActions').append(liveButton('quickOff','PoE OFF 즉시 실행',()=>requestQuick('poe_off')),
                liveButton('quickOn','PoE ON 즉시 실행',()=>requestQuick('poe_on')));
   const progress = elem('details'); progress.id = 'controlProgress'; progress.hidden = true;
   progress.append(elem('summary','포트별 실행 단계'));

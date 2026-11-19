@@ -144,6 +144,10 @@ def exercise(page, switch):
     expect(page.locator(".matrix-tile")).to_have_count(192)
     page.locator("#matrixNext").click()
     expect(page.locator("#matrixPage")).to_have_text("2 / 75")
+    # A long registration remains operable inside its pane without moving the workspace.
+    page.locator(".matrix-tile").last.click()
+    expect(page.locator("#matrixDetails")).to_be_visible()
+    assert page.evaluate("scrollY === 0 && document.documentElement.scrollWidth <= innerWidth")
     page.locator("#queryTargets").fill(source)
     page.locator("#targetVerify").click()
     expect(page.locator("#targetMessage")).to_contain_text("1대 · 1개")

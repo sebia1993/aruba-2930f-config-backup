@@ -132,7 +132,7 @@
       groups = stableGroups(r.groups); registeredText = raw.value = r.targets;
       ui.inventoryRequested=groups.length>0;
       focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
-      $('controlPanel').open=groups.length>0;
+      revealControlsOnDesktop(groups.length>0);
       $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
       updateTargetCount();
       editor.close(); renderMatrix();
@@ -271,7 +271,7 @@
     if (row?.observed_at) facts.push('포트 관측 시각 ' + dateText(row.observed_at));
     const checkLabel = elem('label','', 'inline-check'), check = elem('input'); check.type='checkbox';
     check.dataset.matrixCheck = key; check.checked = ui.selected.has(key); check.disabled = ui.busy;
-    check.onchange = ()=>{if(check.checked){ui.selected.add(key);$('controlPanel').open=true;}else ui.selected.delete(key);renderPorts();};
+    check.onchange = ()=>{if(check.checked){ui.selected.add(key);revealControlsOnDesktop();}else ui.selected.delete(key);renderPorts();};
     checkLabel.append(check,document.createTextNode('이 포트 체크'));
     area.replaceChildren(title,powerBadge(view),elem('span',facts.join(' · ')),checkLabel,elem('small',view.reason));
   }
@@ -319,7 +319,7 @@
         check.setAttribute('aria-label',addr+' 등록 포트 전체 체크');
         check.onchange=()=>{
           const blocked=invalidatedKeys();
-          if (check.checked) $('controlPanel').open=true;
+          if (check.checked) revealControlsOnDesktop();
           for(const p of item.g.interfaces){const key=addr+'|'+p;if(check.checked && !blocked.has(key))ui.selected.add(key);else ui.selected.delete(key);}
           renderPorts();
         };
@@ -353,7 +353,7 @@
     focused=''; page=0; live.clear(); loading.clear(); $('inventorySearch').value='';
     ui.inventoryRequested=show && groups.length>0;
     clearPorts();
-    $('controlPanel').open=groups.length>0;
+    revealControlsOnDesktop(groups.length>0);
     $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
     updateTargetCount();
   }
@@ -421,7 +421,7 @@
   function restoreInventory(items,targetsText=inventoryText(items)) {
     if(!Array.isArray(items) || !items.length) return;
     groups=stableGroups(items); registeredText=raw.value=targetsText;
-    $('controlPanel').open=true;
+    revealControlsOnDesktop();
     $('controlMode').value='batch'; $('controlMode').onchange();
     updateTargetCount();
     updatePortActions(); renderMatrix();

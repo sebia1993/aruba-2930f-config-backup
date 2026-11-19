@@ -1,13 +1,109 @@
-#controlHeading {padding:14px 18px;font-size:15px;font-weight:730}
-#controlPanel[open] > summary {border-bottom:1px solid var(--stroke)}
-#selectedCount {float:right;font-size:12px}
-.port-query-input {align-items:end}
-.port-query-input .grow {min-width:min(100%,15rem)}
+/* Keep the query, current view and selected-port actions in one workspace. */
+[data-page=ports] {display:flex;flex-direction:column;gap:8px;padding:10px clamp(10px,1.25vw,22px);width:100%}
+.port-heading {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 18px}
+.port-heading h1 {margin:0;font-size:clamp(21px,2vw,28px)}
+.port-workspace-bar {gap:6px;margin:0}
+.port-workspace-bar .primary {margin:0}
+.port-query {margin:0}
+.port-query form {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 16px;padding:9px 12px}
+.port-query-input {display:grid;grid-template-columns:auto minmax(7rem,1fr) auto;align-items:center;gap:10px}
+.port-query-input label {font-weight:500}
+.port-query-input textarea {min-height:38px;max-height:9rem;min-width:0}
 .port-query-input button {min-height:38px}
-#targetOptions {border-top:1px solid var(--stroke); padding-top:10px}
-#targetOptions summary {width:fit-content;color:var(--muted)}
-#targetOptions .target-tools {margin-top:10px}
+#targetOptions summary {color:var(--teal);padding:6px 0}
+#targetOptions[open] {grid-column:1/-1}
+#targetOptions .target-tools {margin-top:6px}
+.port-query-meta {grid-column:1/-1;display:flex;align-items:center;gap:4px 14px;flex-wrap:wrap}
+.port-query-meta:has(#targetCount:empty):has(#liveResultsBar[hidden]) {display:none}
+#targetCount {color:var(--muted);font-size:12px}
+#targetCount:empty {display:none}
 #profileFiles:not([hidden]) {margin-top:8px}
+#liveResultsBar {margin:0;align-items:center;gap:8px}
+#queryFiles a {padding:3px 0;border:0;background:transparent;text-decoration:underline}
+#showMatrix {padding:3px 8px}
+#selectedCount {float:right;font-size:12px}
+.port-station {display:grid;grid-template-columns:minmax(0,1fr) clamp(294px,24vw,375px);gap:10px;min-height:0}
+#portMonitor {min-width:0;min-height:0;margin:0}
+#portLiveControl {min-width:0}
+#liveScope {margin:0}
+#controlPanel {margin:0}
+#controlPanel .panelbody {gap:8px;padding:10px 12px}
+#controlHeading {padding:10px 12px;background:var(--surface);border-radius:inherit}
+#controlPanel[open] #controlHeading {border-radius:12px 12px 0 0}
+#controlPanel .bar {gap:6px}
+#controlPanel .panelbody > .bar > label {flex:1 1 7rem}
+#batchControls {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end;gap:6px}
+#quickActions {grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+#quickActions button {min-height:38px}
+#quickOff {color:var(--bad)}
+#quickOn {color:var(--teal)}
+#controlTarget {font-size:12px;overflow-wrap:anywhere}
+#controlResult p,#quickResult p {margin:5px 0}
+#controlSourceHint {padding:10px 12px;text-align:start}
+.port-station:has(#controlPanel[hidden]) {grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto}
+@media(min-height:520px) {
+  .shell:has([data-page=ports]:not([hidden])) {height:100dvh;min-height:0}
+  main:has([data-page=ports]:not([hidden])) {height:100%;min-height:0;display:flex;flex-direction:column}
+  main:has([data-page=ports]:not([hidden])) > :is(.topbar,.status) {flex:none}
+  main:has([data-page=ports]:not([hidden])) > .topbar {min-height:44px;padding-block:4px}
+  main:has([data-page=ports]:not([hidden])) > .status {margin:6px clamp(10px,1.25vw,22px) 0;padding:4px 9px}
+  [data-page=ports] {min-height:0;flex:1;overflow:auto;margin:0 auto}
+  [data-page=ports] > :not(.port-station) {flex:none}
+  .port-station {flex:1;min-height:12rem}
+  #portMonitor .viewer {height:100%;min-height:0}
+  #portMonitor:not(.has-data) .viewer {max-height:100%}
+  #monitorInventory {max-height:100%;overflow:auto}
+  #portLiveControl {overflow:auto;scrollbar-gutter:stable}
+  #controlHeading {position:sticky;top:0;z-index:1}
+}
+@media(max-width:1039px) {
+  .port-station {grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:6px}
+  #portLiveControl {scrollbar-gutter:auto}
+  #controlPanel:not([open]) #controlHeading {color:var(--teal)}
+  #controlPanel .panelbody {padding-bottom:max(10px,env(safe-area-inset-bottom))}
+  #controlHeading {min-height:42px}
+}
+@media(max-width:1039px) and (min-height:520px) {
+  .port-station {display:flex;flex-direction:column;min-height:0}
+  #portMonitor {flex:1;min-height:0}
+  #portLiveControl {flex:0 1 auto;max-height:100%}
+  #portLiveControl:has(#controlPanel[open]) {max-height:min(86%,34rem)}
+}
+@media(max-width:760px) {
+  .port-query form {column-gap:10px}
+  .port-query-input {grid-template-columns:minmax(0,1fr) auto;gap:4px 6px}
+  .port-query-input > div {grid-column:1/-1;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+  .port-query-input label {font-size:12px}
+}
+@media(max-width:650px) {
+  [data-page=ports] {gap:6px;padding:6px 8px}
+  .port-heading {gap:4px 10px}
+  .port-heading h1 {font-size:21px}
+  .port-workspace-bar {flex:1 1 100%;align-items:center}
+  .port-workspace-bar .primary {margin-inline-start:auto}
+  .port-workspace-bar button {padding-inline:9px;min-height:36px}
+  .port-query form {padding:6px 9px;gap:3px 6px}
+  .port-query-input {grid-column:1/-1}
+  .port-query form {grid-template-columns:auto minmax(0,1fr)}
+  #targetOptions {grid-column:1}
+  #targetOptions[open] {grid-column:1/-1}
+  .port-query-meta {grid-column:auto;justify-content:flex-end;gap:2px 8px;font-size:12px}
+  #targetOptions[open] + .port-query-meta {grid-column:1/-1;justify-content:flex-start}
+  #targetOptions summary {padding:4px 0}
+  .port-heading h1 {position:absolute;width:1px;height:1px;white-space:nowrap;overflow:hidden;clip-path:inset(50%)}
+  #liveResultsBar {gap:3px}
+  #queryFiles .filelinks a {font-size:12px}
+  .port-station #controlHeading {min-height:44px}
+  .port-station #quickActions button {min-height:44px}
+}
+@media(max-width:1039px) and (max-height:660px) {
+  [data-page=ports]:has(#controlPanel[open]:not([hidden])) .port-query,
+  [data-page=ports]:has(#controlPanel[open]:not([hidden])) .port-heading {display:none}
+  #portLiveControl:has(#controlPanel[open]) {max-height:100%}
+}
+@media(max-width:650px) and (min-height:520px) {
+  .shell:has([data-page=ports]:not([hidden])) {display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+}
 #targetEditor {width:min(60rem,95vw); max-height:90vh;overflow:auto}
 .target-body {padding:0 20px 20px;display:grid;gap:12px}
 .target-body > section {display:grid;gap:10px}
