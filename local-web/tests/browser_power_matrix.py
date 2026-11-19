@@ -1,4 +1,4 @@
-"""Compare both browser matrices against the same five switch-port observations."""
+"""Check the unified results and transient refresh states for five switch ports."""
 
 from threading import Event
 
@@ -61,7 +61,7 @@ class PowerMatrixSwitch(MonitorFixture):
         return False
 
 
-def refresh_without_result(page, port, final_state):
+def refresh_without_result(page, port, final_state, selected_tile):
     """A submitted refresh can finish without an authoritative rows array."""
     jobs = "**/api/jobs"
     poll = "**/api/jobs/power-regression-*"
@@ -70,20 +70,20 @@ def refresh_without_result(page, port, final_state):
         poll, lambda route: route.fulfill(json={"state": final_state, "error": "재조회 실패"})
     )
     try:
-        page.locator("#portLiveTab").click()
-        tile = page.locator(f'.matrix-tile[data-key$="|{port}"]')
-        tile.click()
+        selected_tile.click()
         page.locator("#refreshPorts").click()
+        tile = page.locator(f'.matrix-tile[data-key$="|{port}"]')
         expect(tile).to_have_attribute("data-phase", "stale")
         expect(tile).to_have_attribute("data-state", "unclassified")
+        expect(page.locator("#csvViewer")).to_be_hidden()
         expect(page.locator("#showMatrix")).to_be_hidden()
-        page.locator("#portMonitorTab").click()
-        row = page.locator(f'#portTable tr[data-key$="|{port}"]')
-        expect(row.locator("input[type=checkbox]")).to_be_disabled()
-        expect(row.locator("td").nth(5)).to_have_text("—")  # Draw
-        expect(row.locator("td").nth(8)).to_have_text("—")  # LLDP name
-        expect(row.locator(".power-badge")).to_have_attribute("data-state", "unclassified")
-        expect(page.locator('#portTable tr[data-key$="|1"] input')).to_be_enabled()
+        tile.click()
+        detail = page.locator("#matrixDetails")
+        expect(detail.get_by_role("checkbox")).to_be_disabled()
+        expect(detail).not_to_contain_text(" W")
+        expect(detail).not_to_contain_text("matrix-ap-")
+        page.locator('.matrix-tile[data-key$="|1"]').click()
+        expect(detail.get_by_role("checkbox")).to_be_enabled()
     finally:
         page.unroute(jobs)
         page.unroute(poll)
@@ -109,14 +109,13 @@ def exercise(page, url, switch, _second, _shots, _backup):
         ("mUnpowered", "1"),
         ("mLimited", "2"),
         ("mNormal", "1"),
-        ("issueCount", "3포트"),
     ):
         expect(csv.locator("#" + selector)).to_have_text(value)
     expect(csv.locator("#mUnclassified")).to_contain_text("1개")
     csv.locator("#status").select_option("limited")
     expect(csv_tiles).to_have_count(2)
     csv.locator("#status").select_option("all")
-    csv.locator("#priorityButton").click()
+    page.locator("#portReviewTab").click()
     expect(csv.locator("#extraView .dr-list button")).to_have_count(3)
     csv.locator("#reviewObservedPort").click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
@@ -124,28 +123,18 @@ def exercise(page, url, switch, _second, _shots, _backup):
     expect(page.locator("#controlPanel")).to_be_visible()
     assert "configure terminal" not in switch.commands
     page.locator("#clearSelection").click()
-    csv.locator("#navOverview").click()
-
-    page.locator("#portLiveTab").click()
-    tiles = page.locator(".matrix-tile")
-    assert tiles.evaluate_all("tiles => tiles.map(tile => tile.dataset.state)") == expected
-    expect(page.locator("#matrixLegend b")).to_have_text(["1", "2", "1"])
-    expect(page.locator("#matrixCounts")).to_contain_text("미분류 1")
-    page.locator("#matrixPriority").click()
-    expect(tiles).to_have_count(3)
-    page.locator("#matrixPriority").click()
-    page.locator("#portFilter").select_option("normal")
-    expect(tiles).to_have_count(1)
-    expect(tiles).to_have_text("3")
-    tiles.click()
-    expect(page.locator("#matrixDetails")).to_contain_text("Down")
-    expect(page.locator("#matrixDetails")).to_contain_text("matrix-ap-3")
     page.locator("#portMonitorTab").click()
-    expect(page.locator("#portTable .power-badge")).to_have_attribute("data-state", "normal")
-    expect(page.locator("#rowDetails .power-badge")).to_have_attribute("data-state", "normal")
-    page.locator("#portFilter").select_option("")
-    page.locator("#portLiveTab").click()
-    current = tiles.filter(has_text="3")
+    csv.locator("#status").select_option("normal")
+    expect(csv_tiles).to_have_count(1)
+    csv_tiles.click()
+    expect(csv.locator("#detail")).to_contain_text("Down")
+    expect(csv.locator("#detail")).to_contain_text("matrix-ap-3")
+    expect(csv.locator("#tbody .pillstat.normal")).to_be_visible()
+    expect(csv.locator("#detail .badge.normal")).to_be_visible()
+    csv.locator("#status").select_option("all")
+    csv.locator('#matrix [data-port-key$="/3"]').click()
+    tiles = page.locator(".matrix-tile")
+    current = page.locator('.matrix-tile[data-key$="|3"]')
     switch.draws["3"] = 0
     switch.allow_lldp.clear()
     try:
@@ -155,27 +144,28 @@ def exercise(page, url, switch, _second, _shots, _backup):
         expect(tiles.nth(1)).to_have_attribute("data-state", "limited")
         expect(page.locator("#queryTargets")).not_to_be_editable()
         expect(page.locator("[data-import=queryTargets]")).to_be_disabled()
-        page.locator("#portMonitorTab").click()
-        current_row = page.locator('#portTable tr[data-key$="|3"]')
-        expect(current_row.locator("input")).to_be_disabled()
-        expect(current_row).not_to_contain_text("8 W")
-        expect(current_row).not_to_contain_text("matrix-ap-3")
-        expect(current_row).to_contain_text("0 W", timeout=12000)
+        expect(page.locator("#csvViewer")).to_be_hidden()
+        current.click()
+        detail = page.locator("#matrixDetails")
+        expect(detail.get_by_role("checkbox")).to_be_disabled()
+        expect(detail).not_to_contain_text("8 W")
+        expect(detail).not_to_contain_text("matrix-ap-3")
+        expect(detail).to_contain_text("0 W", timeout=12000)
     finally:
         switch.allow_lldp.set()
-    expect(current).to_have_attribute("data-state", "unpowered", timeout=60000)
+    expect(csv_tiles.nth(2)).to_have_attribute("data-state", "unpowered", timeout=60000)
+    expect(page.locator("#csvViewer")).to_be_visible()
+    expect(page.locator("#matrixGroups")).to_be_hidden()
     expected[2] = "unpowered"
     page.reload()
-    page.locator("#portLiveTab").click()
-    expect(tiles).to_have_count(5)
-    expect(tiles.nth(2)).to_have_attribute("data-state", "unpowered")
-    assert tiles.evaluate_all("tiles => tiles.map(tile => tile.dataset.state)") == expected
-    page.locator("#showMatrix").click()
     expect(csv_tiles).to_have_count(5)
     assert csv_tiles.evaluate_all("tiles => tiles.map(tile => tile.dataset.state)") == expected
-    refresh_without_result(page, "2", "failed")
-    refresh_without_result(page, "4", "cancelled")
     page.locator("#portLiveTab").click()
+    expect(page.locator("#matrixGroups")).to_be_hidden()
+    page.locator("#portMonitorTab").click()
+    expect(page.locator("#csvViewer")).to_be_visible()
+    refresh_without_result(page, "2", "failed", csv.locator('#matrix [data-port-key$="/2"]'))
+    refresh_without_result(page, "4", "cancelled", page.locator('.matrix-tile[data-key$="|4"]'))
     page.locator('.matrix-tile[data-key$="|2"]').click()
     page.locator("#refreshPorts").click()
     expect(tiles.nth(1)).to_have_attribute("data-state", "limited", timeout=60000)
@@ -184,8 +174,9 @@ def exercise(page, url, switch, _second, _shots, _backup):
     expect(page.locator("#showMatrix")).to_be_hidden()
     tiles.nth(3).click()
     page.locator("#refreshPorts").click()
-    expect(tiles.nth(3)).to_have_attribute("data-state", "limited", timeout=60000)
-    expect(page.locator("#showMatrix")).to_be_visible()
+    expect(page.locator("#csvViewer")).to_be_visible(timeout=60000)
+    expect(csv_tiles.nth(3)).to_have_attribute("data-state", "limited")
+    expect(page.locator("#matrixGroups")).to_be_hidden()
     page.locator("#shutdown").click()
     page.locator("#reviewBody").get_by_role("button", name="서버 종료").click()
     expect(page.locator("#statusText")).to_contain_text("종료했습니다.")

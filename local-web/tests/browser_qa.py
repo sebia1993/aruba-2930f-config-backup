@@ -136,15 +136,15 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(csv_frame.locator("#tbody")).to_contain_text("fixture-ap")
     expect(csv_frame.locator("#matrix [data-port-key]")).to_have_attribute("data-state", "normal")
     expect(page.locator("#csvViewer")).to_be_visible()
-    expect(page.locator("#portTable")).to_contain_text("8.1 W", timeout=90000)
-    page.get_by_role("button", name="상세 보기").click()
-    expect(page.locator("#rowDetails")).to_contain_text("fixture-ap")
+    expect(csv_frame.locator("#tbody")).to_contain_text("8.1 W")
+    csv_frame.locator("#tbody").get_by_role("button", name=re.compile("상세 보기")).click()
+    expect(csv_frame.locator("#detail")).to_contain_text("fixture-ap")
     page.locator("#refreshSwitch").click()
     expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
     expect(page.locator("#csvViewer")).to_be_visible()
-    page.locator("#portFilter").select_option("off")
-    expect(page.locator("#portTable")).to_contain_text("검색 조건에 맞는 포트가 없습니다.")
-    page.locator("#portFilter").select_option("")
+    csv_frame.locator("#status").select_option("off")
+    expect(csv_frame.locator("#tbody tr[data-port-key]")).to_have_count(0)
+    csv_frame.locator("#status").select_option("all")
     with page.expect_download() as output:
         page.locator('#queryFiles a[download$=".csv"]').click()
     csv_data = output.value.path().read_bytes()
@@ -152,10 +152,12 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     if shots:
         page.screenshot(path=shots / "03-live-port-query.png")
     expect(csv_frame.locator("#tbody")).to_contain_text("fixture-ap", timeout=20000)
-    csv_frame.locator("#priorityButton").click()
+    page.locator("#portReviewTab").click()
     expect(csv_frame.locator("#extraView")).to_be_visible()
-    csv_frame.locator("#navOverview").click()
-    csv_frame.locator("#addCsv").set_input_files(
+    page.locator("#portMonitorTab").click()
+    with page.expect_file_chooser() as comparison_event:
+        page.locator("#portCompareTab").click()
+    comparison_event.value.set_files(
         {"name": "earlier.csv", "mimeType": "text/csv", "buffer": csv_data}
     )
     expect(csv_frame.locator("h1")).to_contain_text("비교")
