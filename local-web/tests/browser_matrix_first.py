@@ -93,6 +93,14 @@ def check_matrix_at_top(page):
     }""")
 
 
+def toggle_failures(count, mobile):
+    if mobile:
+        count.tap()
+    else:
+        count.focus()
+        count.press("Space")
+
+
 def exercise(page, url, switch, other, shots, _backup):
     mobile = page.context.browser.browser_type.name == "webkit"
     width, height = (390, 844) if mobile else (1366, 768)
@@ -160,6 +168,8 @@ def exercise(page, url, switch, other, shots, _backup):
     expect(first_failure).to_have_accessible_name(re.compile("조회 실패"))
     markers = frame.locator('#matrix [data-read-failed="true"]')
     expect(markers).to_have_count(2)
+    failure_count = frame.get_by_role("button", name=re.compile(r"조회 실패\s*\d+개"))
+    expect(failure_count).to_have_attribute("aria-pressed", "false")
     for port in ("1", "2"):
         expect(
             frame.locator(f'#matrix [data-port-key="{address}/{port}"] .port-failure-mark')
@@ -215,13 +225,63 @@ def exercise(page, url, switch, other, shots, _backup):
     device_filter.select_option(other_address)
     selected = frame.locator(f'#tbody tr[data-port-key="{other_address}/1"] input')
     selected.check()
+    expect(failure_count).to_be_hidden()
 
     # The checked port shares an IP and interface number with the failed port.
     # The explicit detail action must ignore that selection.
-    device_filter.select_option("")
+    device_filter.select_option(address)
+    search = frame.locator("#search")
+    search.fill("127.0.0.1")
     page.locator("#matrixView").click()
     if mobile:
         resize_workspace(page, 320, 568)
+    original = frame.locator(f'#matrix [data-port-key="{address}/5"]')
+    original.click()
+    expect(original).to_have_attribute("aria-pressed", "true")
+    tiles = frame.locator("#matrix [data-port-key]")
+    expect(tiles).to_have_count(5)
+    filters = frame.locator("#shortFilterToggle")
+    if mobile:
+        expect(filters).to_have_attribute("aria-expanded", "true")
+    requests = []
+
+    def record_job(req):
+        if req.method == "POST" and req.url.endswith("/api/jobs"):
+            requests.append(req.post_data_json)
+
+    page.on("request", record_job)
+    toggle_failures(failure_count, mobile)
+    expect(failure_count).to_have_attribute("aria-pressed", "true")
+    expect(failure_count).to_have_text(re.compile("조회 실패 2개"))
+    expect(tiles).to_have_count(2)
+    assert set(tiles.evaluate_all("els => els.map(el => el.dataset.portKey)")) == {
+        f"{address}/1",
+        f"{address}/2",
+    }
+    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+    if mobile:
+        hit_point(first_failure)
+    if shots:
+        page.screenshot(path=shots / f"failed-only-{page.viewport_size['width']}.png")
+    first_failure.click()
+    expect(frame.locator("#portReadFailure")).to_be_visible()
+    toggle_failures(failure_count, mobile)
+    expect(failure_count).to_have_attribute("aria-pressed", "false")
+    expect(tiles).to_have_count(5)
+    expect(original).to_have_attribute("aria-pressed", "true")
+    expect(frame.locator("#portReadFailure")).to_be_hidden()
+    expect(device_filter).to_have_value(address)
+    expect(search).to_have_value("127.0.0.1")
+    if mobile:
+        expect(filters).to_have_attribute("aria-expanded", "true")
+        expect(search).to_be_visible()
+    expect(page.locator("#matrixView")).to_have_attribute("aria-pressed", "true")
+    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+    page.remove_listener("request", record_job)
+    assert requests == []
+    assert (len(switch.commands), len(other.commands)) == (first_log, second_log)
+    device_filter.select_option("")
+    search.fill("")
     retry_from_tile(page, frame, address, "1", "show power-over-ethernet 1", mobile, shots)
     expect(markers).to_have_count(2)
     expect(first_failure).to_have_accessible_name(re.compile("조회 실패"))
@@ -242,7 +302,7 @@ def exercise(page, url, switch, other, shots, _backup):
     expect(selected).to_be_checked()
 
     # Retrying while a filter hides the failure must address that failure only.
-    def retry_filtered_failures(retry_ports):
+    def retry_failures(retry_ports):
         with page.expect_request(
             lambda req: (
                 req.url.endswith("/api/jobs")
@@ -253,11 +313,11 @@ def exercise(page, url, switch, other, shots, _backup):
             retry.click()
         assert request.value.post_data_json["body"]["targets"] == f"{address} {retry_ports}"
         expect(submit).to_be_enabled(timeout=60000)
-        expect(page.locator("#listView")).to_have_attribute("aria-pressed", "true")
-        expect(device_filter).to_have_value(other_address)
-        expect(selected).to_be_checked()
 
-    retry_filtered_failures("1,2")
+    retry_failures("1,2")
+    expect(page.locator("#listView")).to_have_attribute("aria-pressed", "true")
+    expect(device_filter).to_have_value(other_address)
+    expect(selected).to_be_checked()
     results = current_rows(page)
     assert (
         results[failed]["status"] == "failed"
@@ -272,12 +332,17 @@ def exercise(page, url, switch, other, shots, _backup):
     expect(status).to_contain_text(f"{address} 포트 2")
     expect(status).not_to_contain_text("show power-over-ethernet 1")
     expect(markers).to_have_count(2)
+    original.click()
+    toggle_failures(failure_count, mobile)
+    expect(failure_count).to_have_attribute("aria-pressed", "true")
     switch.failed_lldp.clear()
     retry_from_tile(page, frame, address, "2", "show lldp info remote-device 2", mobile, shots)
     expect(status).to_contain_text(re.compile("완료|성공"))
     expect(status).to_contain_text(f"{address} 포트 2")
     expect(status).not_to_contain_text("실패")
     expect(markers).to_have_count(1)
+    expect(failure_count).to_have_text(re.compile("조회 실패 1개"))
+    expect(tiles).to_have_count(1)
     expect(first_failure).to_have_attribute("data-read-failed", "true")
     expect(frame.locator("#detail #portReadFailure")).to_be_hidden()
     expect(frame.get_by_role("button", name="이 포트만 재조회")).to_be_hidden()
@@ -287,13 +352,19 @@ def exercise(page, url, switch, other, shots, _backup):
     for key in unchanged | {failed}:
         assert recovered[key]["observed_at"] == results[key]["observed_at"]
         assert recovered[key]["watts"] == results[key]["watts"]
-    page.locator("#listView").click()
-    if not device_filter.is_visible():
-        frame.locator("#shortFilterToggle").click()
-    device_filter.select_option(other_address)
     switch.failed_ports.clear()
-    retry_filtered_failures("1")
+    retry_failures("1")
     expect(retry).to_be_hidden()
+    expect(failure_count).to_have_attribute("aria-pressed", "true")
+    expect(failure_count).to_have_text(re.compile("조회 실패 0개"))
+    expect(tiles).to_have_count(0)
+    toggle_failures(failure_count, mobile)
+    expect(tiles).to_have_count(6)
+    expect(original).to_have_attribute("aria-pressed", "true")
+    expect(failure_count).to_be_hidden()
+    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+    page.locator("#listView").click()
+    expect(selected).to_be_checked()
     final = current_rows(page)
     assert final[failed]["status"] == "ok"
     for key in unchanged:
@@ -319,5 +390,5 @@ if __name__ == "__main__":
         exercise, switch_factory=QuerySwitch, browser_engine=engine, touch=engine == "webkit"
     )
     print(
-        f"PASS {engine}: matrix-first query, failed tiles and reasons, exact one-port and bulk retries, preserved filters, readings and selection."
+        f"PASS {engine}: matrix-first query, reversible failure-count filter, exact single and bulk retries, preserved readings and selection."
     )

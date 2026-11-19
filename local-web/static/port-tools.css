@@ -141,6 +141,9 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 :root {--power-red:#ffacb5;--power-yellow:#f6d376;--power-green:#82e5b4}
 :root[data-theme=light] {--power-red:#a01e36;--power-yellow:#805000;--power-green:#00683c}
 .matrix-legend {display:flex;flex-wrap:wrap;gap:.35rem 1rem;margin-bottom:.4rem}
+#matrixCounts {display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px}
+#matrixCounts button {font-size:inherit;font-weight:650}
+#matrixCounts button[aria-pressed=true] {background:var(--active);color:var(--teal);border-color:var(--teal)}
 .power-badge {display:inline-flex;align-items:center;gap:.4em;color:var(--muted);font-weight:650}
 .power-badge:is([data-state=unpowered],[data-state=limited],[data-state=normal])::before {content:"";width:.65em;height:.65em;border-radius:50%;background:currentColor;flex:none}
 .power-badge[data-state=unpowered],.matrix-tiles .matrix-tile[data-state=unpowered]{color:var(--power-red)}
@@ -155,6 +158,7 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 #matrixPager {margin-top:.6rem}
 @media(max-width:650px){.target-body{padding:0 10px 14px}.port-matrix-panel header .tools{flex-wrap:wrap}.matrix-group-head{align-items:flex-start}}
 @media(max-width:650px), (pointer:coarse) {
+  #matrixCounts button {min-height:44px}
   #matrixGroups .matrix-tile {min-width:48px;min-height:48px}
   #matrixGroups[data-zoom=small] .matrix-tile {min-width:44px;min-height:44px}
   #matrixGroups[data-zoom=large] .matrix-tile {min-width:56px;min-height:56px}
