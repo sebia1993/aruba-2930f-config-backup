@@ -54,6 +54,7 @@ def assert_comparison(view, earlier, later):
 
 
 def assert_historical_context(page, view):
+    expect(page.locator("#queryForm")).to_be_visible()
     expect(page.locator("#csvViewer")).to_be_visible()
 
     expect(page.locator("#controlPanel")).to_be_hidden()
@@ -96,7 +97,7 @@ def open_comparison_during_query(page, switch, view, earlier, later):
 def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     page.goto(url)
     expect(page.locator("#inspectSingle")).to_have_count(1)
-    page.get_by_role("link", name="포트 관제·제어").click()
+    page.get_by_role("link", name="관제·비교·제어", exact=True).click()
     embedded = page.frame_locator("#csvViewer")
     assert_empty(embedded, standalone=False)
     expect(page.locator("#portReviewTab")).to_be_disabled()
@@ -144,11 +145,11 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     # Importing history must leave the pending target intact without changing its power state.
     start = len(switch.commands)
     address = f"127.0.0.1:{switch.port}"
-    page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(address + " 2")
+    page.locator("#targetOptions > summary").click()
     page.locator("#targetVerify").click()
     page.locator("#acceptTargets").click()
-    page.locator("#portMonitorTab").click()
+    page.locator("#targetOptions > summary").click()
     pending = page.locator(f'.matrix-tile[data-key="{address}|2"]')
     expect(pending).to_be_visible()
     expect(pending).to_have_attribute("data-phase", "pending")
@@ -160,11 +161,20 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     assert_comparison(embedded, earlier, later)
     expect(page.locator("#portCompareTab")).to_have_attribute("aria-pressed", "true")
     assert_historical_context(page, embedded)
+    # Typing another target drafts the next query while the displayed snapshots stay fixed.
+    draft = page.locator("#queryTargets")
+    saved_targets = draft.input_value()
+    draft.fill(address + " 3")
+    assert_comparison(embedded, earlier, later)
+    assert_historical_context(page, embedded)
     switch_source = page.locator("#showMatrix")
     expect(switch_source).to_have_accessible_name("등록 포트 보기")
     switch_source.click()
     expect(pending).to_be_visible()
     expect(pending).to_have_attribute("data-state", "unclassified")
+    expect(page.locator(".matrix-tile")).to_have_count(1)
+    expect(draft).to_have_value(address + " 3")
+    draft.fill(saved_targets)
     expect(page.locator("#csvViewer")).to_be_hidden()
     expect(switch_source).to_have_accessible_name("열어 둔 CSV 보기")
     switch_source.click()
@@ -209,7 +219,6 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     assert not switch.poe_enabled
     inspected = switch.commands[command_count:]
     assert "show power-over-ethernet 1" in inspected and "configure terminal" not in inspected
-    page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1")
     open_comparison_during_query(page, switch, embedded, earlier, later)
     expect(embedded.locator("#sourceName")).to_have_text("실시간 조회 결과.csv", timeout=60000)

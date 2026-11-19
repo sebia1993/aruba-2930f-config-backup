@@ -100,7 +100,6 @@ def assert_display_and_export(page, switch, expected, *, poe_failed=None):
 def exercise(page, url, switch, _other, _shots, _backup):
     page.goto(url)
     page.locator('nav a[href="#ports"]').click()
-    page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1,10,2/1")
     page.locator("#queryForm .primary").click()
     enter_ssh_credentials(page, switch)

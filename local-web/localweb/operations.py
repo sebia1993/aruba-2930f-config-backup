@@ -226,11 +226,15 @@ class Operations:
             return tracker.snapshot()
         return dict(progress)
 
+    @property
+    def query_started(self) -> bool:
+        return bool(self._query_targets)
+
     def query_progress(self, after):
         with self._progress_lock:
             batch = self._query_events[after : after + 512]
             changes = {"observations": batch, "cursor": after + len(batch)}
-            if after == 0:
+            if after == 0 and self.query_started:
                 changes["targets"] = group_targets(self._query_targets)
             return changes
 
@@ -429,7 +433,10 @@ class Operations:
         for row in observed:
             if row.complete and row.status is QueryStatus.OK and row.snapshot:
                 self.unverified_controls.discard((row.group.target, row.interface))
-        return self._export_query(with_rows=True)
+        result = self._export_query(with_rows=True)
+        if not refresh:
+            result["groups"] = self.inventory_view()
+        return result
 
     def _collect_ports(self, groups, credentials, cancel, message, approve_host_key):
         total = sum(len(g.interfaces) for g in groups)
