@@ -691,6 +691,7 @@ function withSshAccount(onConnected) {
   if (queryCredentials.open || ui.busy || !ui.token) return;
   if (ui.session.active) return onConnected();
   credentialRequest=onConnected;
+  $('queryLoginForm').reset();
   $('queryLoginError').hidden=true;
   queryCredentials.showModal();
 }
