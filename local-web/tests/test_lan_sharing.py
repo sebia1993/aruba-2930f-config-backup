@@ -149,9 +149,12 @@ class LanSharingTests(unittest.TestCase):
         self.assertNotEqual(first["Cookie"], self.remote_auth["Cookie"])
         self.assertNotEqual(first["X-Local-Token"], self.remote_auth["X-Local-Token"])
         mixed = {**self.remote_auth, "X-Local-Token": first["X-Local-Token"]}
-        self.assertEqual(self.request("/api/jobs", remote=True, body={}, headers=mixed)[0], 403)
+        # Authentication runs before body parsing. A zero-length POST leaves no unread
+        # TLS request bytes when Windows closes the rejected connection.
+        self.assertEqual(self.request("/api/jobs", remote=True, body=b"", headers=mixed)[0], 403)
         for auth in (first, self.remote_auth):
             self.assertEqual(self.request("/api/bootstrap", remote=True, headers=auth)[0], 200)
+            self.assertEqual(self.request("/api/jobs", remote=True, body=b"", headers=auth)[0], 400)
 
     def test_plain_http_only_redirects_the_root_to_the_selected_https_address(self):
         self.enable()
