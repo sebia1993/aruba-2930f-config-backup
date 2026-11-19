@@ -10,6 +10,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urljoin
 
 from playwright.sync_api import expect, sync_playwright
 from verify_http_ssh import MonitorFixture
@@ -64,6 +65,34 @@ def click_quick_poe(page, operation, targets):
         assert not opened, "Quick PoE opened an approval dialog"
 
 
+def assert_theme_action(page, mode):
+    label, icon = ("라이트", "sun") if mode == "dark" else ("다크", "moon")
+    expect(page.locator("html")).to_have_attribute("data-theme", mode)
+    actions = page.get_by_role("button", name=re.compile("라이트|다크"))
+    expect(actions).to_have_count(1)
+    expect(actions).to_have_accessible_name(label + " 모드로 전환")
+    expect(actions).to_have_text(label)
+    expect(actions.locator("svg")).to_be_visible()
+    expect(actions.locator("use")).to_have_attribute("href", "#i-" + icon)
+
+
+def verify_standalone_themes(page):
+    viewer = page.context.browser.new_page(storage_state=page.context.storage_state())
+    try:
+        for path in ("/logs", "/csv"):
+            viewer.goto(urljoin(page.url, path))
+            assert_theme_action(viewer, "dark")
+            toggle = viewer.locator("#themeToggle")
+            toggle.press("Space")
+            assert_theme_action(viewer, "light")
+            viewer.reload()
+            assert_theme_action(viewer, "light")
+            toggle.press("Enter")
+            assert_theme_action(viewer, "dark")
+    finally:
+        viewer.close()
+
+
 def exercise(page, url, switch, second_switch, shots, backup_directory):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -78,18 +107,37 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(logs.locator("#resetDemo")).to_have_count(0)
     if shots:
         page.screenshot(path=shots / "01-local-log-dashboard.png")
-    page.locator("[data-theme-choice=light]").click()
-    expect(logs.locator("html")).to_have_attribute("data-theme", "light")
-    page.set_viewport_size({"width": 390, "height": 844})
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    if shots:
-        page.screenshot(path=shots / "02-mobile-log-dashboard.png")
-    page.set_viewport_size({"width": 1440, "height": 960})
-    page.locator("[data-theme-choice=dark]").click()
 
     def nav(key):
         page.locator(f'nav a[href="#{key}"]').click()
         expect(page.locator(f'[data-page="{key}"]')).to_be_visible()
+
+    assert_theme_action(page, "dark")
+    toggle = page.locator("#themeToggle")
+    toggle.press("Space")
+    assert_theme_action(page, "light")
+    expect(logs.locator("html")).to_have_attribute("data-theme", "light")
+    expect(logs.locator("#themeToggle")).to_be_hidden()
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert_theme_action(page, "light")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    if shots:
+        page.screenshot(path=shots / "02-mobile-log-dashboard.png")
+
+    # Opening the lazy CSV viewer after a switch and reloading should keep both viewers in sync.
+    nav("ports")
+    matrix = page.frame_locator("#csvViewer")
+    expect(matrix.locator("html")).to_have_attribute("data-theme", "light")
+    page.reload()
+    assert_theme_action(page, "light")
+    expect(matrix.locator("#themeToggle")).to_be_hidden()
+    expect(matrix.locator("html")).to_have_attribute("data-theme", "light")
+    toggle.press("Enter")
+    assert_theme_action(page, "dark")
+    for frame in (logs, matrix):
+        expect(frame.locator("html")).to_have_attribute("data-theme", "dark")
+    page.set_viewport_size({"width": 1440, "height": 960})
+    verify_standalone_themes(page)
 
     expect(page.locator('a[href="#connect"]')).to_have_count(0)
     expect(page.locator("#sessionChip")).to_have_count(0)

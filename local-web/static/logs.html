@@ -8,14 +8,33 @@
 <script>
 /* Apply the saved theme before the first paint. The preview also works with file:// URLs. */
 (function () {
-  const key = 'aruba2930f.portMatrix.theme';
-  let preference = 'dark';
+  const preferenceKey = 'aruba2930f.portMatrix.theme';
+  const root = document.documentElement;
+  let initialMode = 'dark';
   try {
-    const stored = localStorage.getItem(key);
-    if (stored === 'light' || stored === 'dark') preference = stored;
-  } catch (_) { /* storage may be disabled for local files */ }
-  window.__arubaThemePreference = preference;
-  document.documentElement.dataset.theme = preference;
+    if (localStorage.getItem(preferenceKey) === 'light') initialMode = 'light';
+  } catch (_) { /* Local files may have no storage. */ }
+  root.dataset.theme = initialMode;
+
+  function renderTheme(mode) {
+    root.dataset.theme = mode;
+    const toggle = document.getElementById('themeToggle');
+    if (!toggle) return;
+    const label = mode === 'dark' ? '라이트' : '다크';
+    toggle.querySelector('span').textContent = label;
+    toggle.querySelector('use').setAttribute('href', mode === 'dark' ? '#i-sun' : '#i-moon');
+    toggle.title = label + ' 모드로 전환';
+    toggle.setAttribute('aria-label', toggle.title);
+  }
+  document.addEventListener('aruba-viewer-theme', event => renderTheme(event.detail));
+  document.addEventListener('DOMContentLoaded', () => {
+    renderTheme(root.dataset.theme);
+    document.getElementById('themeToggle').addEventListener('click', () => {
+      const mode = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      renderTheme(mode);
+      try { localStorage.setItem(preferenceKey, mode); } catch (_) { /* Keep the in-memory choice. */ }
+    });
+  });
 })();
 </script>
 <style>
@@ -36,17 +55,11 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 @media(max-width:780px){.layout{grid-template-columns:1fr}.rightcol{grid-row:1;grid-template-columns:1fr 1fr;align-items:start}.issues{max-height:255px}.metrics{grid-template-columns:repeat(3,1fr)}.heading{align-items:start;flex-direction:column}.notice .noteright{white-space:normal}.filterbar .search{min-width:100%}}
 @media(max-width:600px){.app{grid-template-columns:1fr}.sidebar{height:auto;position:static;padding:0 10px}.brand{display:none}.nav{display:flex;gap:4px;overflow:auto;padding:8px 0}.nav button{min-width:45px;min-height:38px}.sidebar-bottom,.navhead{display:none}.topbar{height:55px}.top-chip:not(.pending){display:none}.content{padding:16px 11px}.metrics{grid-template-columns:repeat(2,1fr)}.metric{min-height:85px}.metric .value{font-size:23px}.rightcol{grid-template-columns:1fr;grid-row:2}.notice{align-items:start;flex-direction:column}.filterbar{gap:7px}.filterbar select{flex:1;min-width:120px}.panel-head{padding:14px}.matrix-area{padding:14px}.port-grid{gap:2px}.actionbar{padding:10px;flex-direction:column;align-items:stretch}.action-info{justify-content:space-between}.action-btns{justify-content:stretch}.action-btns .btn{flex:1}.toast{bottom:135px}.dgrid{grid-template-columns:1fr 1fr}}
 
-/* One-click two-state theme switch. Both options remain visible; no dropdown or OS setting. */
-.theme-switch{display:inline-flex;align-items:center;gap:2px;height:36px;padding:3px;border:1px solid var(--stroke-light);border-radius:9px;background:var(--surface2);flex-shrink:0;white-space:nowrap}
-.theme-option{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:28px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--muted);font:700 11px/1 'Segoe UI','Malgun Gothic',system-ui,sans-serif;cursor:pointer;transition:background-color .12s,color .12s}
-.theme-option svg{width:14px;height:14px;stroke:currentColor}
-.theme-option:hover:not([aria-pressed="true"]){background:var(--hover);color:var(--ink)}
-.theme-option[aria-pressed="true"]{background:#256f62;color:#fff;box-shadow:0 1px 5px #020e1433}
-.theme-option:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
-[data-theme="light"] .theme-switch{background:#edf4f7;border-color:#c3d7df}
-[data-theme="light"] .theme-option[aria-pressed="true"]{background:#fff;color:#0c786b;box-shadow:0 1px 6px #123d4a26}
-@media(max-width:760px){.theme-option{padding:0 8px}}
-@media(max-width:440px){.theme-option svg{display:none}.theme-option{font-size:10px;padding:0 7px}}
+.theme-toggle{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:0 11px;border:1px solid var(--stroke-light);border-radius:9px;background:var(--surface2);color:var(--ink);font:700 12px/1 'Segoe UI','Malgun Gothic',system-ui,sans-serif;cursor:pointer;flex-shrink:0;white-space:nowrap}
+.theme-toggle svg{width:16px;height:16px;stroke:currentColor}
+.theme-toggle:hover{background:var(--hover)}
+.theme-toggle:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+@media(max-width:440px){.theme-toggle{padding:0 8px}}
 @media(max-width:445px){.top-actions .top-chip.pending{display:none}.topbar{padding-left:12px;padding-right:12px}.crumb{font-size:11px}}
 
 /* Light edition: independent component colors, including badges, table, dialog
@@ -205,7 +218,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 
 <div class="app"><aside class="sidebar"><div class="brand"><span class="brandmark"><svg fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-switch"/></svg></span><div class="brand-copy"><div class="brand-title">2930F Network</div><div class="brand-sub">SWITCH OPERATIONS CONSOLE</div></div></div>
 <div class="navhead">워크스페이스</div><nav class="nav" aria-label="화면 선택"><button id="navAll" class="active" disabled aria-label="전체 포트"><svg fill="none" stroke="currentColor"><use href="#i-grid"/></svg><span class="navtxt">전체 포트</span></button><button id="navAttention" disabled aria-label="우선 점검"><svg fill="none" stroke="currentColor"><use href="#i-alert"/></svg><span class="navtxt">우선 점검</span></button></nav><div class="sidebar-bottom"><div class="status-line"><i></i><span>스위치 이벤트 로그</span></div><div class="side-footnote">브라우저 로컬 분석</div></div></aside>
-<div class="page"><header class="topbar"><div class="crumb">네트워크 운영 <span>›</span><b>AP 포트 관제</b></div><div class="top-actions"><div class="theme-switch" role="group" aria-label="화면 테마"><button id="themeLight" class="theme-option" aria-pressed="false">라이트</button><button id="themeDark" class="theme-option" aria-pressed="true">다크</button></div><span id="mode" class="top-chip pending">로그 대기</span></div></header>
+<div class="page"><header class="topbar"><div class="crumb">네트워크 운영 <span>›</span><b>AP 포트 관제</b></div><div class="top-actions"><button id="themeToggle" class="theme-toggle" type="button" title="라이트 모드로 전환" aria-label="라이트 모드로 전환"><svg aria-hidden="true" fill="none" stroke-width="1.8"><use href="#i-sun"/></svg><span>라이트</span></button><span id="mode" class="top-chip pending">로그 대기</span></div></header>
 <main class="content"><div class="heading log-head"><div><div class="eyebrow">PORT EVENT MONITORING</div><h1>AP 포트 이벤트 상태</h1><p>등록된 AP 전용 포트의 최근 PoE 공급과 유선 링크 이벤트를 확인합니다.</p></div>
 <div class="heading-actions"><button id="pasteOpen" class="btn" aria-expanded="false" aria-controls="pastePanel">로그 붙여넣기</button><button id="openFiles" class="btn primary">로그 파일 열기</button><input id="logFiles" type="file" accept=".log,.txt,text/plain" multiple hidden></div></div>
 <section id="pastePanel" class="panel input-panel" hidden><h2>스위치 로그 붙여넣기</h2><label>스위치 또는 원본 이름 (선택)<input id="pasteSource" placeholder="스위치 이름 또는 로그 원본 이름"></label><label>show logging 출력<textarea id="pasteText" placeholder="한 스위치의 날짜와 시각이 포함된 로그를 붙여넣으세요." spellcheck="false"></textarea></label><div class="heading-actions"><button id="pasteApply" class="btn primary">로그 분석</button><button id="pasteCancel" class="btn">닫기</button></div></section><div id="fileError" class="file-error" role="alert" hidden></div>
@@ -411,12 +424,6 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   function makeButton(txt,css,cb) {
     const x=node('button',txt,css); x.type='button'; x.addEventListener('click',cb); return x;
   }
-  function setTheme(mode,save) {
-    document.documentElement.dataset.theme=mode;
-    id('themeLight').setAttribute('aria-pressed', String(mode==='light'));
-    id('themeDark').setAttribute('aria-pressed', String(mode==='dark'));
-    if(save) try { localStorage.setItem('aruba2930f.portMatrix.theme',mode); } catch{}
-  }
   function navigate(nextScope) {
     scope=nextScope; page=0; selection=''; render();
   }
@@ -573,8 +580,6 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   for(const control of ['search','portFilter'])id(control).addEventListener('input',()=>{page=0;selection='';render();});
   id('prev').addEventListener('click',()=>{page--;selection='';render();});id('next').addEventListener('click',()=>{page++;selection='';render();});
   id('navAll').addEventListener('click',()=>navigate('all'));id('navAttention').addEventListener('click',()=>navigate('attention'));
-  id('themeLight').addEventListener('click',()=>setTheme('light',true));id('themeDark').addEventListener('click',()=>setTheme('dark',true));
-  setTheme(document.documentElement.dataset.theme==='light'?'light':'dark',false);
 })();
 
 </script></body></html>

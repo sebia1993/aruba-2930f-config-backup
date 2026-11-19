@@ -9,7 +9,9 @@
     if (event.origin !== location.origin || event.source !== parent) return;
     const message = event.data;
     if (message?.type === "aruba-theme" && ["light", "dark"].includes(message.theme)) {
-      document.getElementById(message.theme === "light" ? "themeLight" : "themeDark")?.click();
+      if (document.documentElement.dataset.theme !== message.theme) {
+        document.dispatchEvent(new CustomEvent("aruba-viewer-theme", {detail: message.theme}));
+      }
     }
     if (message?.type === "aruba-switch-log" && location.pathname === "/logs"
         && typeof message.text === "string" && typeof message.source === "string") {

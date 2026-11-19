@@ -8,14 +8,33 @@
 <script>
 /* Apply the saved theme before the first paint. The preview also works with file:// URLs. */
 (function () {
-  const key = 'aruba2930f.portMatrix.theme';
-  let preference = 'dark';
+  const preferenceKey = 'aruba2930f.portMatrix.theme';
+  const root = document.documentElement;
+  let initialMode = 'dark';
   try {
-    const stored = localStorage.getItem(key);
-    if (stored === 'light' || stored === 'dark') preference = stored;
-  } catch (_) { /* storage may be disabled for local files */ }
-  window.__arubaThemePreference = preference;
-  document.documentElement.dataset.theme = preference;
+    if (localStorage.getItem(preferenceKey) === 'light') initialMode = 'light';
+  } catch (_) { /* Local files may have no storage. */ }
+  root.dataset.theme = initialMode;
+
+  function renderTheme(mode) {
+    root.dataset.theme = mode;
+    const toggle = document.getElementById('themeToggle');
+    if (!toggle) return;
+    const label = mode === 'dark' ? '라이트' : '다크';
+    toggle.querySelector('span').textContent = label;
+    toggle.querySelector('use').setAttribute('href', mode === 'dark' ? '#i-sun' : '#i-moon');
+    toggle.title = label + ' 모드로 전환';
+    toggle.setAttribute('aria-label', toggle.title);
+  }
+  document.addEventListener('aruba-viewer-theme', event => renderTheme(event.detail));
+  document.addEventListener('DOMContentLoaded', () => {
+    renderTheme(root.dataset.theme);
+    document.getElementById('themeToggle').addEventListener('click', () => {
+      const mode = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      renderTheme(mode);
+      try { localStorage.setItem(preferenceKey, mode); } catch (_) { /* Keep the in-memory choice. */ }
+    });
+  });
 })();
 </script>
 <style>
@@ -36,17 +55,11 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 @media(max-width:780px){.layout{grid-template-columns:1fr}.rightcol{grid-row:1;grid-template-columns:1fr 1fr;align-items:start}.issues{max-height:255px}.metrics{grid-template-columns:repeat(3,1fr)}.heading{align-items:start;flex-direction:column}.notice .noteright{white-space:normal}.filterbar .search{min-width:100%}}
 @media(max-width:600px){.app{grid-template-columns:1fr}.sidebar{height:auto;position:static;padding:0 10px}.brand{display:none}.nav{display:flex;gap:4px;overflow:auto;padding:8px 0}.nav button{min-width:45px;min-height:38px}.sidebar-bottom,.navhead{display:none}.topbar{height:55px}.top-chip:not(.pending){display:none}.content{padding:16px 11px}.metrics{grid-template-columns:repeat(2,1fr)}.metric{min-height:85px}.metric .value{font-size:23px}.rightcol{grid-template-columns:1fr;grid-row:2}.notice{align-items:start;flex-direction:column}.filterbar{gap:7px}.filterbar select{flex:1;min-width:120px}.panel-head{padding:14px}.matrix-area{padding:14px}.port-grid{gap:2px}.actionbar{padding:10px;flex-direction:column;align-items:stretch}.action-info{justify-content:space-between}.action-btns{justify-content:stretch}.action-btns .btn{flex:1}.toast{bottom:135px}.dgrid{grid-template-columns:1fr 1fr}}
 
-/* One-click two-state theme switch. Both options remain visible; no dropdown or OS setting. */
-.theme-switch{display:inline-flex;align-items:center;gap:2px;height:36px;padding:3px;border:1px solid var(--stroke-light);border-radius:9px;background:var(--surface2);flex-shrink:0;white-space:nowrap}
-.theme-option{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:28px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--muted);font:700 11px/1 'Segoe UI','Malgun Gothic',system-ui,sans-serif;cursor:pointer;transition:background-color .12s,color .12s}
-.theme-option svg{width:14px;height:14px;stroke:currentColor}
-.theme-option:hover:not([aria-pressed="true"]){background:var(--hover);color:var(--ink)}
-.theme-option[aria-pressed="true"]{background:#256f62;color:#fff;box-shadow:0 1px 5px #020e1433}
-.theme-option:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
-[data-theme="light"] .theme-switch{background:#edf4f7;border-color:#c3d7df}
-[data-theme="light"] .theme-option[aria-pressed="true"]{background:#fff;color:#0c786b;box-shadow:0 1px 6px #123d4a26}
-@media(max-width:760px){.theme-option{padding:0 8px}}
-@media(max-width:440px){.theme-option svg{display:none}.theme-option{font-size:10px;padding:0 7px}}
+.theme-toggle{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:0 11px;border:1px solid var(--stroke-light);border-radius:9px;background:var(--surface2);color:var(--ink);font:700 12px/1 'Segoe UI','Malgun Gothic',system-ui,sans-serif;cursor:pointer;flex-shrink:0;white-space:nowrap}
+.theme-toggle svg{width:16px;height:16px;stroke:currentColor}
+.theme-toggle:hover{background:var(--hover)}
+.theme-toggle:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+@media(max-width:440px){.theme-toggle{padding:0 8px}}
 @media(max-width:445px){.top-actions .top-chip.pending{display:none}.topbar{padding-left:12px;padding-right:12px}.crumb{font-size:11px}}
 
 /* Light edition: independent component colors, including badges, table, dialog
@@ -160,7 +173,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 #dataMode:not(.pending){color:var(--teal)}.rightcol,.leftcol{min-width:0}
 @media(max-width:780px){.rightcol{grid-row:auto}.layout{display:flex;flex-direction:column}.leftcol,.rightcol{width:100%}.filterbar select{min-width:0}.filterbar .search{min-width:min(100%,240px)}}
 @media(max-width:600px){.nav .navtxt{display:inline}.nav button{padding:0 7px;gap:6px}.table-head-tools{flex-wrap:wrap}.table-head-tools .count{white-space:nowrap}.notice-l{flex-wrap:wrap}.topbar{gap:5px}.heading-actions{width:100%}}
-@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.port-tile,.theme-option{transition:none}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.port-tile{transition:none}}
 
 </style>
 <link rel=stylesheet href=/static/embed.css><script src=/static/embed.js defer></script></head>
@@ -196,10 +209,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
  </aside>
  <div class="page">
   <header class="topbar"><div class="crumb"><svg fill="none" stroke="currentColor"><use href="#i-home"/></svg>네트워크 운영 <span>›</span><b>포트 통합 관리</b></div><div class="top-actions">
-   <div class="theme-switch" role="group" aria-label="화면 테마 선택">
-    <button id="themeLight" class="theme-option" type="button" aria-pressed="false" title="라이트 모드로 전환"><svg aria-hidden="true" fill="none" stroke-width="1.8"><use href="#i-sun"/></svg>라이트</button>
-    <button id="themeDark" class="theme-option" type="button" aria-pressed="true" title="다크 모드로 전환"><svg aria-hidden="true" fill="none" stroke-width="1.8"><use href="#i-moon"/></svg>다크</button>
-   </div>
+   <button id="themeToggle" class="theme-toggle" type="button" title="라이트 모드로 전환" aria-label="라이트 모드로 전환"><svg aria-hidden="true" fill="none" stroke-width="1.8"><use href="#i-sun"/></svg><span>라이트</span></button>
 <span class="top-chip">ArubaOS-Switch · 2930F</span><span id="dataMode" class="top-chip pending">CSV 대기</span>
   </div></header>
   <main class="content">
@@ -247,24 +257,6 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   </main>
  </div>
 </div>
-<script>
-(function(){'use strict';
-const $=id=>document.getElementById(id);
-
-/* A single click changes theme; no intermediary menu or system mode. */
-const themeStorageKey = 'aruba2930f.portMatrix.theme';
-function applyTheme(mode, save = true) {
-  if (mode !== 'dark' && mode !== 'light') return;
-  document.documentElement.dataset.theme = mode;
-  $('themeLight').setAttribute('aria-pressed', String(mode === 'light'));
-  $('themeDark').setAttribute('aria-pressed', String(mode === 'dark'));
-  if (save) { try { localStorage.setItem(themeStorageKey, mode); } catch (_) { /* non-persistent fallback */ } }
-}
-applyTheme(window.__arubaThemePreference || 'dark', false);
-$('themeLight').addEventListener('click', () => applyTheme('light'));
-$('themeDark').addEventListener('click', () => applyTheme('dark'));
-})();
-</script>
 <script src="power-matrix.js"></script>
 <script>
 /* Reader for Aruba2930FConfigBackup's UTF-8 CSV exports. No network or storage. */
