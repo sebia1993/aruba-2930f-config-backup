@@ -7,7 +7,7 @@ const jobNames = {
   'session.open': '접속 계정 적용', 'session.close': '세션 해제', 'hostkey.inspect': '호스트 키 조회',
   'hostkey.approve': '호스트 키 승인', 'hostkey.list':'등록된 키 조회', 'hostkey.forget':'등록된 키 삭제', 'ports.query': '포트 조회', 'ports.refresh':'선택 범위 재조회',
   'profiles.export': '대상 프로필 저장', 'profiles.import': '대상 프로필 열기', 'logs.query': '스위치 로그 수집',
-  'backup.run': '구성 백업', 'control.preview': '포트 제어 검토', 'control.apply': '포트 명령 실행'
+  'backup.run': '스위치 컨피그 백업', 'control.preview': '포트 제어 검토', 'control.apply': '포트 명령 실행'
 };
 const stateNames = {ok:'성공',success:'성공',failed:'실패',cancelled:'취소',unsupported:'미지원',unknown:'미등록',changed:'키 변경',trusted:'등록됨',rejected:'거부',retry_exhausted:'접속 재시도 소진',verified:'검증 완료',unchanged:'이미 요청 상태',preflight_failed:'사전 검증 실패',unverified:'검증 미완료',paused:'일시 중지',skipped:'건너뜀',blocked:'실행 차단',result_unknown:'결과 미기록'};
 const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), tileRow:null, logs:[], chosenLog:null, logLoaded:false, liveId:null, inspectedRow:null };
