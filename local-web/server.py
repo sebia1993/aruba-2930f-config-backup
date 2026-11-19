@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 STATIC = {
     "/": "index.html",
     "/logs": "logs.html",
@@ -192,8 +192,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"id": app.jobs.submit(data.get("action"), data.get("body"))}, 202)
             elif re.fullmatch("/api/jobs/" + KEY + "/cancel", path):
                 self._json(app.jobs.cancel(path.split("/")[3]))
-            elif re.fullmatch("/api/jobs/" + KEY + "/hostkeys", path):
-                self._json(app.jobs.answer_hostkeys(path.split("/")[3], data))
             elif path == "/api/open-folder":
                 handle = data.get("fileId")
                 if not isinstance(handle, str) or not re.fullmatch(KEY, handle):

@@ -1,10 +1,10 @@
-"""Exercise first-use in-job SSH approval in an isolated Chrome/loopback session."""
+"""Verify first-use SSH key registration and changed-key blocking with two loopback switches."""
 
 import browser_qa
 from playwright.sync_api import expect
 
 
-def inline_keys(page, url, first, second, shots, output):
+def first_use_keys(page, url, first, second, shots, output):
     page.goto(url)
     addr = f"127.0.0.1:{first.port}"
     other = f"127.0.0.1:{second.port}"
@@ -17,13 +17,8 @@ def inline_keys(page, url, first, second, shots, output):
     page.locator('nav a[href="#backup"]').click()
     page.locator("#backupTargets").fill(addr + "\n" + other)
     page.locator("#backupForm .primary").click()
-    review = page.locator("#hostReview")
-    expect(review.locator("label")).to_have_count(2, timeout=90000)
-    assert not first.auth_attempts and not second.auth_attempts
-    review.locator("label").filter(has_text=addr).locator("input").check()
-    review.get_by_role("button", name="선택한 지문 승인").click()
     expect(page.locator("#backupResult")).to_contain_text("성공", timeout=90000)
-    assert first.auth_attempts and not second.auth_attempts
+    assert first.auth_attempts and second.auth_attempts
     page.locator('nav a[href="#home"]').click()
     expect(page.locator("#homeBackup")).to_contain_text("구성 백업")
 
@@ -31,21 +26,25 @@ def inline_keys(page, url, first, second, shots, output):
     page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(other + " 1")
     page.locator("#queryForm button.primary").click()
-    expect(review).to_contain_text(other, timeout=90000)
-    review.get_by_role("button", name="새 지문 모두 건너뛰기").click()
-    expect(page.locator("#statusText")).to_contain_text("조회 완료", timeout=90000)
-    assert not second.auth_attempts
-    page.locator("#portLiveTab").click()
-    page.locator("#queryForm button.primary").click()
-    expect(review.locator("input")).to_be_visible(timeout=90000)
-    review.locator("input").check()
-    review.get_by_role("button", name="선택한 지문 승인").click()
     expect(page.locator("#portTable")).to_contain_text("8.1 W", timeout=90000)
     page.reload()
     expect(page.locator("#portTable")).to_contain_text("8.1 W", timeout=30000)
     assert str(second.port) in page.locator("#queryTargets").input_value()
+    # A different key on the same endpoint must not replace the original pin.
+    saved_fingerprint = second.host_key.fingerprint
+    auth_count = len(second.auth_attempts)
+    command_count = len(second.commands)
+    second.host_key = first.host_key
+    page.locator('nav a[href="#backup"]').click()
+    page.locator("#backupTargets").fill(other)
+    page.locator("#backupForm .primary").click()
+    expect(page.locator("#backupResult")).to_contain_text("HOST_KEY_CHANGED", timeout=90000)
+    assert len(second.auth_attempts) == auth_count and len(second.commands) == command_count
     page.locator('nav a[href="#connect"]').click()
     page.locator("#listKeys").click()
+    for endpoint, fingerprint in ((addr, first.host_key.fingerprint), (other, saved_fingerprint)):
+        entry = page.locator("#knownKeys tbody tr").filter(has_text=endpoint)
+        expect(entry).to_contain_text(fingerprint)
     page.get_by_role("button", name="여러 저장 지문 제거").click()
     choices = page.locator("#reviewBody input")
     expect(choices).to_have_count(2)
@@ -59,5 +58,7 @@ def inline_keys(page, url, first, second, shots, output):
 
 
 if __name__ == "__main__":
-    browser_qa.run_browser_case(inline_keys)
-    print("PASS in-job key approval, skip before auth, resume, home, and workspace restore")
+    browser_qa.run_browser_case(first_use_keys)
+    print(
+        "PASS first-use key registration, workspace restore, changed-key blocking and stored pins"
+    )

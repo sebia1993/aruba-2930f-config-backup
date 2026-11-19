@@ -87,7 +87,6 @@ async function poll(id) {
       await delay(850);
       continue;
     }
-    renderHostReview(id,job.progress?.hostKeys || []);
     if (job.state === 'done') return {result:job.result || {}, cancelled:false};
     if (job.state === 'cancelled') return {result:job.result || {}, cancelled:true};
     if (job.state === 'failed') throw new Error(job.error || '작업이 실패했습니다.');
@@ -111,7 +110,6 @@ async function run(action, body, receive) {
   sync();
   notify(jobNames[action] + ' 진행 중…');
   try {
-    if (['backup.run','ports.query','ports.refresh','control.inspect','control.preview','control.quick','logs.query'].includes(action)) body.interactive_hostkeys = true;
     window.portTools?.onJob?.(action,'running',body);
     const submitted = await api('/api/jobs', {action,body});
     body = null;
@@ -123,7 +121,6 @@ async function run(action, body, receive) {
   } catch (error) {
     notify(error.message, true);
   } finally {
-    renderHostReview('',[]);
     ui.jobId = null;
     ui.busy = false;
     sync();
@@ -326,35 +323,6 @@ function keyChecklist(checks) {
   }
   return {list, checked:()=>Array.from(selected,c=>({endpoint:c.endpoint,fingerprint:c.fingerprint}))};
 }
-function renderHostReview(jobId, requests) {
-  const panel = $('hostReview'), request = requests[0];
-  if (!request) {
-    panel.hidden = true; panel.replaceChildren(); delete panel.dataset.request;
-    return;
-  }
-  if (panel.dataset.request === request.id) return;
-  panel.dataset.request = request.id;
-  panel.hidden = false;
-  const content = elem('div',undefined,'panelbody');
-  const choices = keyChecklist(request.checks);
-  async function respond(approved) {
-    for (const node of content.querySelectorAll('button,input')) node.disabled = true;
-    try {
-      await api('/api/jobs/' + jobId + '/hostkeys',{requestId:request.id,approved});
-      content.replaceChildren(elem('p','호스트 키 검토 결과를 적용하고 있습니다.'));
-    } catch (err) {
-      notify(err.message,true);
-      for (const node of content.querySelectorAll('button,input')) node.disabled = false;
-    }
-  }
-  const approve = button('선택한 지문 승인',()=>respond(choices.checked()),'primary');
-  approve.disabled = true;
-  choices.list.addEventListener('change',()=>{ approve.disabled = !choices.checked().length; });
-  const actions = elem('div',undefined,'bar');
-  actions.append(approve,button('새 지문 모두 건너뛰기',()=>respond([])));
-  content.append(elem('h2','처음 연결하는 장비의 SSH 지문'),elem('p','장비에서 확인한 SHA256 지문과 대조한 항목을 선택하세요. 승인한 장비는 현재 작업을 이어갑니다.'),choices.list,actions);
-  panel.replaceChildren(content);
-}
 function homeSlot(action) {
   if (action === 'backup.run') return $('homeBackup');
   if (['ports.query','ports.refresh','control.apply'].includes(action)) return $('homePorts');
@@ -446,7 +414,7 @@ function showStoredKeys(keys) {
     ['스위치','endpoint'],['종류','key_type'],['SHA256 지문','fingerprint'],['등록 시각',x=>dateText(x.approved_at)],
     ['관리',x=> {
       const forget = button('등록 삭제',()=>confirmDialog('호스트 키 등록 삭제',[
-        elem('b',x.endpoint),elem('code',x.fingerprint),elem('p','이 지문을 삭제하면 다음 접속 전에 장비의 호스트 키를 다시 조회하고 승인해야 합니다.')
+        elem('b',x.endpoint),elem('code',x.fingerprint),elem('p','이 지문을 삭제하면 다음 접속에서 장비가 제시하는 지문을 새로 등록합니다.')
       ],'이 키 삭제',()=>run('hostkey.forget',{endpoint:x.endpoint,fingerprint:x.fingerprint},r=>{
         if (r.removed) {
           showStoredKeys(keys.filter(key=>key!==x));
@@ -473,7 +441,7 @@ function showStoredKeys(keys) {
       });
       apply.disabled = true;
       choices.list.onchange = ()=>{ apply.disabled = !choices.checked().length; };
-      openDialog('저장 지문 제거',[elem('p','선택한 지문을 제거하면 해당 장비는 다음 접속에서 다시 승인해야 합니다.'),choices.list,apply]);
+      openDialog('저장 지문 제거',[elem('p','선택한 지문을 제거하면 해당 장비가 다음 접속에서 제시하는 지문을 새로 등록합니다.'),choices.list,apply]);
     }));
   }
 }

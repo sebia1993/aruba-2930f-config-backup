@@ -12,7 +12,14 @@ from unittest.mock import Mock
 from localweb.backup_tools import HistoryFolders
 from localweb.controls import Controls
 
-from aruba2930f_backup.models import Credentials, DeviceTarget
+from aruba2930f_backup.hostkeys import sha256_fingerprint
+from aruba2930f_backup.models import (
+    Credentials,
+    DeviceTarget,
+    HostKeyCheck,
+    HostKeyObservation,
+    HostKeyTrustState,
+)
 from aruba2930f_backup.poe_power import LLDPNeighbor, LLDPObservation, LLDPStatus
 from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from aruba2930f_backup.port_control import (
@@ -103,10 +110,18 @@ class WebControlTests(unittest.TestCase):
             self.cancel,
         )
 
-    def test_manual_confirmation_pins_real_endpoint_and_does_not_approve_new_key(self):
+    def test_first_key_can_be_registered_but_manual_control_still_requires_confirmation(self):
         plan = self.preview(scope="single", operation="disable")
         self.assertEqual(plan["confirmationText"], "192.0.2.42:2222 / 1")
-        self.assertFalse(self.service.inspect.call_args.kwargs["approve_host_key"](object()))
+        register = self.service.inspect.call_args.kwargs["approve_host_key"]
+        observed = HostKeyObservation(self.target, "ssh-ed25519", sha256_fingerprint(b"switch"))
+        unknown = HostKeyCheck(observed, HostKeyTrustState.UNKNOWN)
+        self.assertTrue(register(unknown))
+        self.assertFalse(register(replace(unknown, state=HostKeyTrustState.CHANGED)))
+        self.assertFalse(register(replace(unknown, state=HostKeyTrustState.REJECTED)))
+        self.cancel.set()
+        self.assertFalse(register(unknown))
+        self.cancel.clear()
         self.assertFalse(self.service.apply.called)
         result = self.apply(plan, operation="poe_on", targets=[{"ip": "192.0.2.1", "port": "9"}])
         self.assertEqual(result["results"][0]["status"], "verified")

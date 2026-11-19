@@ -121,7 +121,6 @@ dialog::backdrop { background: #030c17bc; }
 }
 
 .home-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px }
-#hostReview { margin:12px clamp(10px,2vw,32px);border-color:var(--teal) }
 .key-list { display:grid;gap:6px;max-height: min(45vh,440px);overflow:auto;margin:10px 0 }
 .key-list label { display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px;background:var(--field) }
 .key-list input { width:auto }

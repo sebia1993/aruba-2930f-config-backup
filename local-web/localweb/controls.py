@@ -23,7 +23,7 @@ from aruba2930f_backup.batch_port_control import (
     journal_states,
     validate_batch_target,
 )
-from aruba2930f_backup.models import Credentials, DeviceTarget, HostKeyTrustState
+from aruba2930f_backup.models import Credentials, DeviceTarget
 from aruba2930f_backup.poe_power import LLDPStatus
 from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from aruba2930f_backup.port_control import (
@@ -34,6 +34,8 @@ from aruba2930f_backup.port_control import (
 )
 from aruba2930f_backup.port_control_ssh import port_change_command
 from aruba2930f_backup.storage import default_output_directory
+
+from .operations import first_use_host_key_policy
 
 if TYPE_CHECKING:
     from aruba2930f_backup.batch_port_control import _BatchJournal
@@ -153,16 +155,6 @@ class Controls:
     def invalidate(self) -> None:
         self._approval = None
 
-    def _permit_new_key(self, body, cancel):
-        def review(check):
-            return (
-                body.get("interactive_hostkeys") is True
-                and check.state is HostKeyTrustState.UNKNOWN
-                and bool(self.operations.host_review.ask([check], cancel))
-            )
-
-        return review
-
     def dispatch(self, action: str, body: dict, cancel: Event) -> dict:
         if action == "control.history":
             return {"rows": self._history()}
@@ -200,7 +192,7 @@ class Controls:
                 state = self._factory().inspect(
                     *target[0],
                     self.operations.credentials,
-                    approve_host_key=self._permit_new_key(body, cancel),
+                    approve_host_key=first_use_host_key_policy(cancel),
                 )
                 return {"snapshot": _snapshot_info(state)}
             if action == "control.quick":
@@ -228,7 +220,7 @@ class Controls:
             target, interface = targets[0]
             service = self._factory()
             snapshot = service.inspect(
-                target, interface, credentials, approve_host_key=self._permit_new_key(body, cancel)
+                target, interface, credentials, approve_host_key=first_use_host_key_policy(cancel)
             )
             if cancel.is_set():
                 raise ValueError("포트 제어 미리보기가 중지되었습니다.")
@@ -283,13 +275,7 @@ class Controls:
                 ports = tuple(port for port in group.interfaces if (group.target, port) in refresh)
                 if ports:
                     groups.append(PoETarget(group.target, ports, group.label))
-            reread = self.operations._query(
-                tuple(groups),
-                credentials,
-                cancel,
-                refresh=True,
-                interactive_keys=body.get("interactive_hostkeys") is True,
-            )
+            reread = self.operations._query(tuple(groups), credentials, cancel, refresh=True)
             rows = {(r.group.target, r.interface): r for r in self.operations.last_results}
         if cancel.is_set():
             raise ValueError("사전 조회가 중지되었습니다.")
