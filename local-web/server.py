@@ -8,11 +8,12 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import sys
 import threading
 import time
 import webbrowser
-from contextlib import closing
+from contextlib import closing, contextmanager, suppress
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,7 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 STATIC = {
     "/": "index.html",
     "/logs": "logs.html",
@@ -33,6 +34,7 @@ STATIC = {
         "/static/" + name: name
         for name in (
             "app.js",
+            "browser-presence.js",
             "style.css",
             "embed.css",
             "embed.js",
@@ -59,7 +61,8 @@ class Handler(BaseHTTPRequestHandler):
     def _headers(self, code, typ, size=0, **extra):
         self.send_response(code)
         self.send_header("Content-Type", typ)
-        self.send_header("Content-Length", str(size))
+        if size is not None:
+            self.send_header("Content-Length", str(size))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -79,6 +82,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _fail(self, code, msg):
         self._json({"error": msg}, code)
+
+    def _browser_presence(self):
+        with self.server.browser_connection(self.connection):
+            self.close_connection = True
+            self._headers(200, "application/octet-stream", size=None, Connection="close")
+            self.wfile.write(b"\n")
+            self.wfile.flush()
+            # The presence stream ends when the client closes its TCP connection, even
+            # if no unload event runs or the browser stops scheduling background tabs.
+            with suppress(OSError):
+                self.connection.recv(1)
 
     def _trusted_host(self):
         port = self.server.server_port
@@ -143,12 +157,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._fail(403, "Start-Local-Web.cmd로 관리 화면을 여세요.")
         try:
             if path in STATIC:
+                if (
+                    path in {"/", "/csv", "/logs"}
+                    and self.headers.get("Sec-Fetch-Mode") == "navigate"
+                    and self.headers.get("Sec-Fetch-Dest") == "document"
+                ):
+                    app.browser_opening()
                 self._file(ROOT / "static" / STATIC[path])
             elif path == "/api/bootstrap":
                 self._json(
                     dict(
                         token=app.token,
                         version=VERSION,
+                        instance=app.instance,
                         session=app.jobs.operations.session_summary(),
                         busyJob=app.jobs.active,
                     )
@@ -208,9 +229,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self._fail(500, "Windows 탐색기에서 결과 폴더를 열지 못했습니다.")
                 self._json({"opened": True})
             elif path == "/api/shutdown":
-                app.jobs.claim_shutdown()
-                self._json({"stopped": True})
-                threading.Thread(target=app.shutdown, daemon=True).start()
+                app.claim_shutdown()
+                try:
+                    self._json({"stopped": True})
+                finally:
+                    threading.Thread(target=app.shutdown, daemon=True).start()
+            elif path == "/api/browser-presence":
+                self._browser_presence()
             else:
                 self._fail(404, "요청한 작업을 찾을 수 없습니다.")
         except Busy as exc:
@@ -226,6 +251,63 @@ class LocalServer(ThreadingHTTPServer):
     request_queue_size = 64
 
     daemon_threads = True
+    browser_close_grace = 5.0
+    browser_attach_grace = 20.0
+
+    def __init__(self, *args, **kwargs):
+        self._browser_lock = threading.Lock()
+        self._browsers = set()
+        self._close_after = None
+        self._stopping = False
+        super().__init__(*args, **kwargs)
+
+    def browser_opening(self):
+        # A top-level navigation can be closed before its JavaScript attaches.
+        with self._browser_lock:
+            if not self._browsers and not self._stopping:
+                self._close_after = time.monotonic() + self.browser_attach_grace
+
+    @contextmanager
+    def browser_connection(self, connection):
+        with self._browser_lock:
+            if self._stopping:
+                raise Busy("서버를 종료하고 있습니다.")
+            self._browsers.add(connection)
+            self._close_after = None
+        try:
+            yield
+        finally:
+            with self._browser_lock:
+                self._browsers.discard(connection)
+                if not self._browsers and not self._stopping:
+                    self._close_after = time.monotonic() + self.browser_close_grace
+
+    def claim_shutdown(self):
+        with self._browser_lock:
+            self.jobs.claim_shutdown()
+            self._stopping = True
+
+    def service_actions(self):
+        with self._browser_lock:
+            if self._stopping or self._close_after is None or time.monotonic() < self._close_after:
+                return
+            try:
+                self.jobs.claim_shutdown()
+            except Busy:
+                # A running operation owns the device until it has saved its result.
+                self._close_after = time.monotonic() + 0.5
+                return
+            self._stopping = True
+        # BaseServer.shutdown() must be called outside the serve_forever thread.
+        threading.Thread(target=self.shutdown, daemon=True).start()
+
+    def server_close(self):
+        with self._browser_lock:
+            self._stopping = True
+            for connection in self._browsers:
+                with suppress(OSError):
+                    connection.shutdown(socket.SHUT_RDWR)
+        super().server_close()
 
     def handle_error(self, request, client_address):
         pass  # Browser navigation may close an in-flight request.

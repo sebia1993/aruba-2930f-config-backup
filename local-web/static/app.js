@@ -1010,6 +1010,7 @@ $('exportProfile').onclick = () => run('profiles.export',{targets:$('queryTarget
 $('shutdown').onclick = () => confirmDialog('로컬 웹 서버 종료',[elem('p','현재 SSH 세션을 닫고 이 PC의 로컬 웹 서버를 종료합니다.')],'서버 종료',async () => {
   try {
     await api('/api/shutdown',{});
+    window.dispatchEvent(new Event('aruba-server-stopped'));
     ui.token = ''; ui.session = {active:false}; clearPorts(); sync();
     notify('로컬 웹 서버를 종료했습니다. 다시 사용하려면 Start-Local-Web.cmd를 여세요.');
   } catch (e) { notify(e.message,true); }
@@ -1019,6 +1020,7 @@ async function start() {
   try {
     const bootstrap = await api('/api/bootstrap');
     ui.token = bootstrap.token;
+    import('/static/browser-presence.js').then(module=>module.watchBrowserTab(bootstrap)).catch(()=>{});
     ui.session = bootstrap.session || {active:false};
     $('version').textContent = 'v' + String(bootstrap.version || '').replace(/^v/,'');
     if (bootstrap.busyJob) {
