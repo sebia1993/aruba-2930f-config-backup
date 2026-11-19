@@ -19,7 +19,6 @@ def first_use_keys(page, url, first, second, shots, output):
     expect(page.locator("#homeBackup")).to_contain_text("구성 백업")
 
     page.locator('nav a[href="#ports"]').click()
-    page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(other + " 1")
     page.locator("#queryForm button.primary").click()
     observed = page.frame_locator("#csvViewer").locator("#tbody")

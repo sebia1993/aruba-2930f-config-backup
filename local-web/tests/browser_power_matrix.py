@@ -92,7 +92,6 @@ def refresh_without_result(page, port, final_state, selected_tile):
 def exercise(page, url, switch, _second, _shots, _backup):
     page.goto(url)
     page.locator('nav a[href="#ports"]').click()
-    page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1-5")
     page.locator("#queryForm .primary").click()
     enter_ssh_credentials(page, switch)
@@ -156,9 +155,8 @@ def exercise(page, url, switch, _second, _shots, _backup):
     page.reload()
     expect(csv_tiles).to_have_count(5)
     assert csv_tiles.evaluate_all("tiles => tiles.map(tile => tile.dataset.state)") == expected
-    page.locator("#portLiveTab").click()
+    expect(page.locator("#queryForm")).to_be_visible()
     expect(page.locator("#matrixGroups")).to_be_hidden()
-    page.locator("#portMonitorTab").click()
     expect(page.locator("#csvViewer")).to_be_visible()
     refresh_without_result(page, "2", "failed", csv.locator('#matrix [data-port-key$="/2"]'))
     refresh_without_result(page, "4", "cancelled", page.locator('.matrix-tile[data-key$="|4"]'))

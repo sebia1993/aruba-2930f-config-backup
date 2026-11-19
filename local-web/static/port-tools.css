@@ -1,4 +1,13 @@
-.target-tools {margin:10px 0}
+#controlHeading {padding:14px 18px;font-size:15px;font-weight:730}
+#controlPanel[open] > summary {border-bottom:1px solid var(--stroke)}
+#selectedCount {float:right;font-size:12px}
+.port-query-input {align-items:end}
+.port-query-input .grow {min-width:min(100%,15rem)}
+.port-query-input button {min-height:38px}
+#targetOptions {border-top:1px solid var(--stroke); padding-top:10px}
+#targetOptions summary {width:fit-content;color:var(--muted)}
+#targetOptions .target-tools {margin-top:10px}
+#profileFiles:not([hidden]) {margin-top:8px}
 #targetEditor {width:min(60rem,95vw); max-height:90vh;overflow:auto}
 .target-body {padding:0 20px 20px;display:grid;gap:12px}
 .target-body > section {display:grid;gap:10px}

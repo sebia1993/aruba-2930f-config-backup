@@ -11,7 +11,7 @@ const jobNames = {
 };
 const states = {queued: '대기', running: '진행 중', done: '완료', failed: '실패', cancelled: '취소', interrupted:'서버 종료로 중단'};
 const stateNames = {ok:'성공',success:'성공',failed:'실패',cancelled:'취소',unsupported:'미지원',unknown:'미등록',changed:'키 변경',trusted:'등록됨',rejected:'거부',retry_exhausted:'접속 재시도 소진',verified:'검증 완료',unchanged:'이미 요청 상태',preflight_failed:'사전 검증 실패',unverified:'검증 미완료',paused:'일시 중지',skipped:'건너뜀',blocked:'실행 차단',result_unknown:'결과 미기록'};
-const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), logs:[], chosenLog:null, logLoaded:false, csvLoaded:false, matrixFile:null, pendingMatrix:null, portView:'monitor', inventoryRequested:false, inspectedRow:null };
+const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), logs:[], chosenLog:null, logLoaded:false, csvLoaded:false, matrixFile:null, pendingMatrix:null, inventoryRequested:false, inspectedRow:null };
 const dialog = $('review');
 const queryCredentials = $('queryCredentials');
 Object.assign(jobNames, {'targets.preview':'대상 목록 검토','targets.apply':'대상 목록 적용','control.inspect':'단일 포트 상태 조회','control.quick':'빠른 제어 검토','control.quick-execute':'빠른 PoE 제어','control.import-history':'작업 기록 열기','backup.pick-directory':'저장 폴더 선택','history.open-folder':'이력 위치 열기'});
@@ -112,7 +112,8 @@ async function run(action, body, receive) {
     ui.jobId = submitted.id;
     sync();
     const {result,cancelled} = await poll(ui.jobId);
-    if (receive) receive(result, cancelled);
+    if (action==='ports.query' && !Array.isArray(result.rows)) await window.portTools.recoverQuery();
+    else if (receive) receive(result, cancelled);
     if (['control.apply','control.quick-execute'].includes(action) && hasUncertainControl(result)) {
       notify(result.message || '포트 제어 결과를 확인하지 못했습니다.',true);
     } else if (action === 'control.quick-execute' && result.blocked?.length) {
@@ -126,6 +127,7 @@ async function run(action, body, receive) {
       notify(jobNames[action] + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'));
     }
   } catch (error) {
+    if (action==='ports.query') await window.portTools.recoverQuery();
     if (quick) window.controlTools.finishProgress();
     if (quick && ui.jobId) {
       markControlRowsUsed(quick.targets);
@@ -198,7 +200,7 @@ function currentInspection() {
   return ui.inspectedRow && ui.inspectedRow===monitor()?.selected();
 }
 function controlContextMatches(inspected) {
-  return ui.portView==='monitor' && !$('portMonitor').closest('[data-page]').hidden &&
+  return !$('portMonitor').closest('[data-page]').hidden &&
     (inspected ? ui.inspectedRow===inspected && currentInspection() : !ui.inspectedRow && !historicalControlOnly());
 }
 function controlChoice() {
@@ -222,20 +224,13 @@ function clearInspection() {
 const monitorTabs = {overview:'portMonitorTab', review:'portReviewTab', compare:'portCompareTab'};
 function updatePortActions() {
   const source=monitor()?.source();
-  const liveTab=ui.portView==='live';
   const inventory=displayingInventory();
-  const showInventory=inventory && !liveTab;
-  const showViewer=!liveTab && !showInventory;
-  const view=showViewer ? source?.view || 'overview' : 'overview';
-  const inspected=!!currentInspection() && showViewer;
-  const blocked=historicalControlOnly() && !showInventory;
-  $('portMonitor').hidden=liveTab;
-  $('portTargets').hidden=!liveTab;
-  $('portLiveControl').hidden=liveTab;
-  $('csvViewer').hidden=!showViewer;
+  const view=inventory ? 'overview' : source?.view || 'overview';
+  const inspected=!!currentInspection() && !inventory;
+  const blocked=historicalControlOnly();
+  $('csvViewer').hidden=inventory;
   $('portMonitor').classList.toggle('has-data',!!source?.hasData);
-  for (const [name,id] of Object.entries(monitorTabs)) $(id).setAttribute('aria-pressed',String(!liveTab && view===name));
-  $('portLiveTab').setAttribute('aria-pressed',String(liveTab));
+  for (const [name,id] of Object.entries(monitorTabs)) $(id).setAttribute('aria-pressed',String(view===name));
   $('portReviewTab').disabled=!source?.hasData || inventory;
   $('portCompareTab').disabled=!ui.csvLoaded;
   $('openPortCsv').disabled=!ui.csvLoaded;
@@ -248,37 +243,31 @@ function updatePortActions() {
   $('controlSourceHint').hidden=!$('controlPanel').hidden;
   $('controlMode').disabled=inspected;
   $('singleIP').readOnly=$('singlePort').readOnly=inspected;
-  window.portTools?.showInventory(showInventory);
-  $('liveScope').hidden=!(showInventory || (showViewer && source?.liveId===ui.matrixFile && !!ui.matrixFile && view==='overview' && !inspected));
+  window.portTools?.showInventory(inventory);
+  $('liveScope').hidden=!(inventory || (source?.liveId===ui.matrixFile && !!ui.matrixFile && view==='overview' && !inspected));
   updateControlTarget();
-}
-function setPortView(view) {
-  ui.portView=view;
-  updatePortActions();
 }
 for (const [view,id] of Object.entries(monitorTabs)) {
   $(id).onclick=()=>{
     const viewer=monitor();
-    if (ui.portView!=='monitor' || view!=='overview' || viewer?.source().view!=='overview') portNavigationRevision++;
-    setPortView('monitor');
+    if (view!=='overview' || viewer?.source().view!=='overview') portNavigationRevision++;
     if (view==='overview' && ui.matrixFile && !viewer?.source().hasData) queueMatrix(ui.matrixFile,capturePortIntent());
     else if (view==='compare' && displayingInventory()) viewer?.openCsv();
     else if (view!=='overview' || !displayingInventory()) viewer?.navigate(view);
     updatePortActions();
   };
 }
-$('portLiveTab').onclick=()=>{ portNavigationRevision++; setPortView('live'); };
 function focusControls() {
+  $('controlPanel').open=true;
   $('controlHeading').focus({preventScroll:true});
   $('controlHeading').scrollIntoView({block:'start'});
 }
 $('openPortCsv').onclick=()=>{
   portNavigationRevision++;
-  setPortView('monitor');
   monitor()?.openCsv();
 };
 function selectObservedPort(message) {
-  if (ui.portView!=='monitor' || ui.busy) return;
+  if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
   const row=monitor()?.selected();
   if (!row || row.ip!==message.ip || row.port!==message.port || row.sshPort!==message.sshPort) return;
   if (!ui.session.active) {
@@ -298,7 +287,7 @@ function selectObservedPort(message) {
   }
   const address=row.sshPort===22?row.ip:row.ip+':'+row.sshPort;
   run('control.inspect',{targets:[{ip:row.ip,sshPort:row.sshPort,port:row.port}]},(result,cancelled)=>{
-    if (cancelled || !result.snapshot || row!==monitor()?.selected() || ui.portView!=='monitor') return;
+    if (cancelled || !result.snapshot || row!==monitor()?.selected() || $('portMonitor').closest('[data-page]').hidden) return;
     ui.inspectedRow=row;
     $('controlMode').value='single'; $('controlMode').onchange();
     $('singleIP').value=address; $('singlePort').value=row.port;
@@ -307,7 +296,7 @@ function selectObservedPort(message) {
   });
 }
 function selectObservedBatch(openControls) {
-  if (ui.portView!=='monitor' || ui.busy) return;
+  if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
   const batch=monitor()?.batch();
   if (!batch?.liveId || batch.liveId!==ui.matrixFile || !Array.isArray(batch.rows)) return;
   const available=new Set(ui.rows.filter(row=>row.status==='ok' && !row.controlUsed && !row.refreshInvalidated).map(portKey));
@@ -315,6 +304,7 @@ function selectObservedBatch(openControls) {
   if (keys.some(key=>!available.has(key))) { syncMonitorChecks(); return; }
   clearInspection();
   ui.selected=new Set(keys);
+  if (keys.length) $('controlPanel').open=true;
   $('controlMode').value='batch'; $('controlMode').onchange();
   renderPorts();
   if (openControls && keys.length) focusControls();
@@ -372,7 +362,6 @@ if ($('logViewer').contentDocument?.readyState === 'complete' && $('logViewer').
 function route() {
   if (location.hash==='#csv') {
     history.replaceState(null,'','#ports');
-    setPortView('monitor');
   }
   const key = location.hash.slice(1);
   const admin = key === 'connect';
@@ -691,12 +680,11 @@ function receivePorts(result,canDisplay,preferLive=false,refreshedKeys) {
   renderPorts();
 }
 function queryPorts(targets) {
-  clearPorts();
-  ui.inventoryRequested=true;
-  setPortView('monitor');
-  $('controlMode').value='batch'; $('controlMode').onchange();
   const canDisplay=capturePortIntent();
-  return run('ports.query',{targets},result=>receivePorts(result,canDisplay,true));
+  return run('ports.query',{targets},result=>{
+    window.portTools.acceptQuery(result.groups);
+    receivePorts(result,canDisplay,true);
+  });
 }
 let credentialRequest=null;
 function withSshAccount(onConnected) {
@@ -753,14 +741,12 @@ $('refreshSwitch').onclick = () => refreshTargets(true);
 $('showMatrix').onclick = () => {
   portNavigationRevision++;
   if (ui.matrixFile) {
-    setPortView('monitor');
     queueMatrix(ui.matrixFile,capturePortIntent());
     return;
   }
   clearInspection();
   ui.inventoryRequested=!displayingInventory();
   ui.selected.clear();
-  setPortView('monitor');
   renderPorts();
 };
 function selectScope(eligibleOnly) {
@@ -1012,11 +998,8 @@ async function start() {
     }
     const workspace = await api('/api/workspace');
     if (workspace.groups?.length && !$('queryTargets').value.trim()) {
-      const quote = value => '"' + String(value ?? '').replaceAll('"','""') + '"';
-      const lines = [['IP','ssh_port','interfaces','label'],...workspace.groups.map(g=>[g.ip,g.ssh_port,g.interfaces.join(','),g.label])];
-      const targets = lines.map(row=>row.map(quote).join('\t')).join('\n');
       if (document.readyState === 'loading') await new Promise(resolve=>window.addEventListener('DOMContentLoaded', resolve,{once:true}));
-      window.portTools?.restoreInventory?.(workspace.groups,targets);
+      window.portTools?.restoreInventory?.(workspace.groups);
       if (workspace.query) receivePorts(workspace.query,canDisplay);
     }
     if (resumed?.action === 'control.quick-execute') {

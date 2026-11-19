@@ -203,11 +203,10 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
         report.click()
     assert report_event.value.path().read_bytes()[:2] == b"PK"
     nav("ports")
-    expect(page.get_by_role("link", name="포트 관제·제어")).to_have_count(1)
+    expect(page.get_by_role("link", name="관제·비교·제어", exact=True)).to_have_count(1)
     expect(page.locator('nav a[href="#csv"]')).to_have_count(0)
     csv_frame = page.frame_locator("#csvViewer")
     expect(csv_frame.locator("#matrix [data-port-key]")).to_have_count(0)
-    page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(address + " 1")
     page.locator("#queryForm .primary").click()
     expect(csv_frame.locator("#tbody")).to_be_visible(timeout=90000)

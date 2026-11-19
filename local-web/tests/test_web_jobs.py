@@ -137,7 +137,26 @@ class JobTests(unittest.TestCase):
         with patch.object(self.jobs.operations.query_service, "collect", self.collect_ports):
             job = self.finished(self.jobs.submit("ports.query", {"targets": "192.0.2.5:2222 1-3"}))
         self.assertEqual(job["state"], "done")
+        self.assertEqual(job["result"]["groups"], self.jobs.workspace()["groups"])
         return self.jobs.workspace()["query"]
+
+    def test_rejected_query_draft_preserves_live_workspace_until_new_targets_are_accepted(self):
+        self.initial_query()
+        saved = self.jobs.workspace()
+        ops = self.jobs.operations
+        with patch.object(ops.query_service, "collect") as collect:
+            rejected = self.finished(self.jobs.submit("ports.query", {"targets": "bad input"}))
+            self.assertEqual(rejected["state"], "failed")
+            collect.assert_not_called()
+        self.assertEqual(self.jobs.workspace(), saved)
+        self.assertNotIn("targets", ops.query_progress(0))
+
+        with patch.object(ops.query_service, "collect", side_effect=OSError("read failed")):
+            accepted = self.finished(self.jobs.submit("ports.query", {"targets": "192.0.2.9 4"}))
+        self.assertEqual(accepted["state"], "failed")
+        self.assertNotIn("query", self.jobs.workspace())
+        groups = self.jobs.workspace()["groups"]
+        self.assertEqual([(g["ip"], g["interfaces"]) for g in groups], [("192.0.2.9", ["4"])])
 
     def test_failed_refresh_keeps_other_rows_and_cannot_restore_stale_control_or_csv(self):
         for failure in ("collection", "cancel", "export"):

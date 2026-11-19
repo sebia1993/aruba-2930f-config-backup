@@ -104,11 +104,11 @@ def run_range(page, url, switch, second, shots, output):
     page.locator('nav a[href="#ports"]').click()
     # Registration is offline. The first quick action asks for the account in place.
     address = f"127.0.0.1:{switch.port}"
-    page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(address + " 2")
+    page.locator("#targetOptions > summary").click()
     page.locator("#targetVerify").click()
     page.locator("#acceptTargets").click()
-    page.locator("#portMonitorTab").click()
+    page.locator("#targetOptions > summary").click()
     page.get_by_role("button", name="범위 전체 선택", exact=True).click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     page.get_by_role("button", name="PoE OFF 즉시 실행").click()
@@ -136,7 +136,6 @@ def run_range(page, url, switch, second, shots, output):
             switch.replacement_key = second.host_key
             switch.prompt = "Aruba 2930F Edge#"
         start = len(switch.commands)
-        page.locator("#portLiveTab").click()
         page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1-2")
         page.locator("#queryForm .primary").click()
         expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
@@ -171,7 +170,6 @@ def run_range(page, url, switch, second, shots, output):
             assert writes == ["interface 1 power-over-ethernet", "interface 2 power-over-ethernet"]
             # Both ports have PoE ON, but only port 1 has a live AP-535.
             switch.linked.add("1")
-            page.locator("#portLiveTab").click()
             page.locator("#queryPorts").click()
             expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
             page.locator("#operation").select_option("poe_off")

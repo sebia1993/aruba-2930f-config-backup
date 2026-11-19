@@ -4,7 +4,7 @@
   const jobText = {'targets.preview':'대상 목록 검증', 'targets.apply':'대상 목록 적용'};
   Object.assign(jobNames,jobText);
   let groups = [], preview = null, page = 0, focused = '', live = new Map(), loading = new Set();
-  let matrixJob = '', registeredText = '', progressGroups = null;
+  let matrixJob = '', registeredText = '', progressGroups = null, fullQuery = null;
   const pageSize = 192;
   const noPowerData = PowerMatrix.classify({});
   const phaseLabels = {pending:'조회 대기',loading:'조회 중',stale:'재조회 필요'};
@@ -27,11 +27,6 @@
     legend.append(entry);
   }
   $('matrixCounts').before(legend);
-
-  const tools = document.createElement('div');
-  tools.className = 'bar target-tools';
-  tools.innerHTML = '<button type="button" data-job id="targetRows">스위치 행 편집</button><button type="button" data-job id="targetPaste">표 붙여넣기</button><button type="button" data-job id="targetVerify">입력한 대상 검증</button><span class="hint" id="targetCount"></span>';
-  raw.closest('label').after(tools);
 
   const editor = document.createElement('dialog');
   editor.id = 'targetEditor';
@@ -90,10 +85,15 @@
   async function openEditor(mode) {
     editorDirty();
     $('editTargetRows').replaceChildren();
-    const rows = mode === 'rows';
-    $('targetEditorTitle').textContent = rows ? '스위치 행 편집' : '표 붙여넣기 · 대상 검증';
-    rowPane.hidden = !rows; pastePane.hidden = rows;
-    $('pasteTargets').value = mode === 'verify' ? raw.value : '';
+    const rows = mode === 'rows', verify = mode === 'verify';
+    if (verify && !raw.value.trim()) {
+      raw.focus(); notify('검증할 스위치 주소와 포트를 입력하세요.',true);
+      return;
+    }
+    $('targetEditorTitle').textContent = rows ? '스위치 행 편집' : verify ? '조회 대상 검증' : '표 붙여넣기';
+    rowPane.hidden = !rows; pastePane.hidden = mode!=='paste';
+    $('verifyEditor').hidden=verify;
+    $('pasteTargets').value = '';
     $('pasteMode').value = 'replace';
     editor.showModal();
     if (rows) {
@@ -105,8 +105,8 @@
       if (raw.value.trim() && raw.value !== registeredText) {
         await requestPreview({targets:raw.value},r=>populate(r.groups));
       } else populate(groups);
-    } else if (mode === 'verify' && raw.value.trim()) {
-      await requestPreview(previewPayload(),showPreview);
+    } else if (verify) {
+      await requestPreview({targets:raw.value},showPreview);
     } else $('pasteTargets').focus();
   }
   $('targetRows').onclick = ()=>openEditor('rows');
@@ -132,19 +132,22 @@
       groups = stableGroups(r.groups); registeredText = raw.value = r.targets;
       ui.inventoryRequested=groups.length>0;
       focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
+      $('controlPanel').open=groups.length>0;
       $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
-      $('targetCount').textContent = groups.length + '대 · ' + targetCount(groups) + '포트 등록 · 관제에서 포트 선택';
+      updateTargetCount();
       editor.close(); renderMatrix();
     });
     if (editor.open && preview === accepted) {
       $('targetMessage').textContent = $('statusText').textContent; $('acceptTargets').disabled = false;
     }
   };
-  raw.addEventListener('input',()=>{
-    if (raw.value === registeredText) return;
-    groups=[]; registeredText=''; live.clear(); loading.clear(); focused=''; $('inventorySearch').value=''; page=0;
-    clearPorts(); $('targetCount').textContent = '입력한 목록은 검증 또는 조회 시 적용됩니다.';
-  });
+  function updateTargetCount() {
+    const dirty=raw.value!==registeredText;
+    const count=groups.length ? groups.length+'대 · '+targetCount(groups)+'포트 등록' : '';
+    const draft=dirty ? '입력한 목록은 검증하여 적용하거나 포트를 조회하면 반영됩니다.' : '';
+    $('targetCount').textContent=[count,draft].filter(Boolean).join(' · ');
+  }
+  raw.addEventListener('input',updateTargetCount);
 
   const address = g=>Number(g.ssh_port || 22) === 22 ? g.ip : g.ip+':'+g.ssh_port;
   function inventory() {
@@ -177,7 +180,7 @@
     return checked;
   }
   function currentScope() {
-    if (!ui.matrixFile || ui.portView==='live') return null;
+    if (!ui.matrixFile) return null;
     const scope=monitor()?.scope();
     return scope?.liveId===ui.matrixFile ? scope : null;
   }
@@ -268,7 +271,7 @@
     if (row?.observed_at) facts.push('포트 관측 시각 ' + dateText(row.observed_at));
     const checkLabel = elem('label','', 'inline-check'), check = elem('input'); check.type='checkbox';
     check.dataset.matrixCheck = key; check.checked = ui.selected.has(key); check.disabled = ui.busy;
-    check.onchange = ()=>{if(check.checked)ui.selected.add(key);else ui.selected.delete(key);renderPorts();};
+    check.onchange = ()=>{if(check.checked){ui.selected.add(key);$('controlPanel').open=true;}else ui.selected.delete(key);renderPorts();};
     checkLabel.append(check,document.createTextNode('이 포트 체크'));
     area.replaceChildren(title,powerBadge(view),elem('span',facts.join(' · ')),checkLabel,elem('small',view.reason));
   }
@@ -316,6 +319,7 @@
         check.setAttribute('aria-label',addr+' 등록 포트 전체 체크');
         check.onchange=()=>{
           const blocked=invalidatedKeys();
+          if (check.checked) $('controlPanel').open=true;
           for(const p of item.g.interfaces){const key=addr+'|'+p;if(check.checked && !blocked.has(key))ui.selected.add(key);else ui.selected.delete(key);}
           renderPorts();
         };
@@ -339,13 +343,49 @@
   $('inventorySearch').oninput=()=>{page=0;renderMatrix();};
   $('matrixPrev').onclick=()=>{page--;renderMatrix();};
   $('matrixNext').onclick=()=>{page++;renderMatrix();};
+  function inventoryText(items) {
+    const quote=value=>'"'+String(value ?? '').replaceAll('"','""')+'"';
+    const lines=[['IP','ssh_port','interfaces','label'],...items.map(g=>[g.ip,g.ssh_port,g.interfaces.join(','),g.label])];
+    return lines.map(row=>row.map(quote).join('\t')).join('\n');
+  }
+  function replaceQueryInventory(items,text,show) {
+    groups=stableGroups(items); registeredText=text;
+    focused=''; page=0; live.clear(); loading.clear(); $('inventorySearch').value='';
+    ui.inventoryRequested=show && groups.length>0;
+    clearPorts();
+    $('controlPanel').open=groups.length>0;
+    $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
+    updateTargetCount();
+  }
+  function acceptQuery(items) {
+    if (!fullQuery || fullQuery.accepted || !items?.length) return;
+    fullQuery.accepted=true;
+    replaceQueryInventory(items,fullQuery.text,fullQuery.canDisplay());
+  }
+  async function recoverQuery() {
+    if (!fullQuery) return;
+    let workspace;
+    try { workspace=await api('/api/workspace'); } catch { /* An interrupted request may have replaced the live inventory. */ }
+    if (!Array.isArray(workspace?.groups)) {
+      replaceQueryInventory([], '',false);
+      return;
+    }
+    const query=workspace.query;
+    if (ui.matrixFile && query?.files?.some(file=>file.id===ui.matrixFile)) return;
+    const items=stableGroups(workspace.groups);
+    const same=inventoryText(items)===inventoryText(groups);
+    if (same && !query && !ui.rows.length && !ui.matrixFile) return;
+    const text=same ? registeredText : items.length ? inventoryText(items) : '';
+    replaceQueryInventory(items,text,fullQuery.canDisplay());
+    if (query) receivePorts(query,fullQuery.canDisplay);
+  }
   function onJob(action,state,body) {
     if (action==='ports.query' || action==='ports.refresh') {
       matrixJob=state==='running' ? action : '';
       if (state==='running') {
         progressGroups=null;live.clear();
         if (action==='ports.query') {
-          loading=new Set(inventory().flatMap(g=>g.interfaces.map(p=>address(g)+'|'+p)));
+          fullQuery={text:raw.value.trim()===body.targets ? raw.value : body.targets,canDisplay:capturePortIntent(),accepted:false};
         } else if (body?.targets) {
           // Refresh requests are built by refreshTargets from canonical endpoints and port lists.
           loading=new Set(body.targets.split('\n').flatMap(line=>{
@@ -360,6 +400,7 @@
           expireLiveMatrix();
         }
       } else {
+        fullQuery=null;
         live.clear();loading.clear();progressGroups=null;
         for (const key of invalidatedKeys()) ui.selected.delete(key);
       }
@@ -371,17 +412,18 @@
     if(Array.isArray(progress.targets) && progress.targets!==progressGroups) {
       progressGroups=progress.targets;
       const requested=stableGroups(progress.targets);
-      if(action==='ports.query') {groups=requested;registeredText=raw.value;}
+      if (action==='ports.query') acceptQuery(requested);
       loading=new Set(requested.flatMap(g=>g.interfaces.map(p=>address(g)+'|'+p)));
     }
     for(const row of progress.observations || []) live.set(portKey(row),row);
     renderPorts();
   }
-  function restoreInventory(items,targetsText) {
+  function restoreInventory(items,targetsText=inventoryText(items)) {
     if(!Array.isArray(items) || !items.length) return;
     groups=stableGroups(items); registeredText=raw.value=targetsText;
+    $('controlPanel').open=true;
     $('controlMode').value='batch'; $('controlMode').onchange();
-    $('targetCount').textContent=groups.length+'대 · '+targetCount(groups)+'포트 등록 · 관제에서 포트 선택';
+    updateTargetCount();
     updatePortActions(); renderMatrix();
   }
   function reconcileRows(rows,refreshed=loading) {
@@ -395,7 +437,7 @@
     });
     return reconciled.concat([...invalid.values()]);
   }
-  window.portTools={reconcileRows,renderMatrix,showInventory,currentKey,onJob,onProgress,checkedTargets,scopeKeys,unobservedTargets,
+  window.portTools={reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,checkedTargets,scopeKeys,unobservedTargets,
     hasInventory:()=>groups.length>0 || ui.rows.length>0,refreshTargets,restoreInventory};
   updatePortActions();sync();
 })();

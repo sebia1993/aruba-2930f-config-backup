@@ -318,7 +318,10 @@ class Jobs:
         finally:
             with self.lock:
                 if action == "ports.query":
-                    self.port_view = result if result and "rows" in result else None
+                    if result and "rows" in result:
+                        self.port_view = result
+                    elif self.operations.query_started:
+                        self.port_view = None
                 elif action in {
                     "ports.refresh",
                     "control.quick",
