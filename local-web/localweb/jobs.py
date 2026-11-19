@@ -25,6 +25,8 @@ ACTIONS = frozenset(
         "hostkey.forget",
         "ports.query",
         "ports.refresh",
+        "cable.show",
+        "cable.test",
         "targets.preview",
         "targets.apply",
         "profiles.import",
@@ -46,6 +48,7 @@ ACTIONS = frozenset(
 PERSIST = {
     "ports.query",
     "ports.refresh",
+    "cable.test",
     "profiles.export",
     "backup.run",
     "logs.query",
@@ -134,12 +137,16 @@ class Jobs:
         with self.lock:
             if self.closing or self.active:
                 raise Busy("다른 작업이 실행 중이거나 서버가 종료 중입니다.")
-            if action == "control.quick-execute":
+            repeat_message = {
+                "control.quick-execute": DUPLICATE_POE_REQUEST,
+                "cable.test": "이미 접수한 케이블 테스트입니다. 저장된 결과를 조회하세요.",
+            }.get(action)
+            if repeat_message:
                 key = body.get("requestId")
                 if not isinstance(key, str) or re.fullmatch(r"[0-9a-f]{32}", key) is None:
-                    raise ValueError("빠른 PoE 요청 식별자가 올바르지 않습니다.")
+                    raise ValueError("작업 요청 식별자가 올바르지 않습니다.")
                 if key in self.recent:
-                    raise Busy(DUPLICATE_POE_REQUEST)
+                    raise Busy(repeat_message)
             else:
                 key = secrets.token_hex(16)
             started = now()
@@ -151,8 +158,8 @@ class Jobs:
                             (key, action, "running", started, None, "", "[]"),
                         )
                     except sqlite3.IntegrityError:
-                        if action == "control.quick-execute":
-                            raise Busy(DUPLICATE_POE_REQUEST) from None
+                        if repeat_message:
+                            raise Busy(repeat_message) from None
                         raise
             self.recent[key] = dict(
                 id=key,
@@ -290,6 +297,7 @@ class Jobs:
             if action in {
                 "ports.query",
                 "ports.refresh",
+                "cable.test",
                 "targets.apply",
                 "session.open",
                 "session.close",

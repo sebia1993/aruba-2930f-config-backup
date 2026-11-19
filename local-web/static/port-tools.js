@@ -5,6 +5,7 @@
   Object.assign(jobNames,jobText);
   let groups = [], preview = null, page = 0, focused = '', live = new Map(), loading = new Set();
   let matrixJob = '', registeredText = '', progressGroups = null, fullQuery = null;
+  let directCableTarget=false;
   const pageSize = 192;
   const noPowerData = PowerMatrix.classify({});
   const phaseLabels = {pending:'조회 대기',loading:'조회 중',stale:'재조회 필요'};
@@ -130,6 +131,7 @@
     const accepted = preview;
     $('acceptTargets').disabled = true;
     await run('targets.apply',accepted.groups.length ? {targets:accepted.targets} : {rows:[]},r=>{
+      directCableTarget=false;
       groups = stableGroups(r.groups); registeredText = raw.value = r.targets;
       focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
       $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
@@ -146,7 +148,11 @@
     const draft=dirty ? '입력한 목록은 검증하여 적용하거나 포트를 조회하면 반영됩니다.' : '';
     $('targetCount').textContent=[count,draft].filter(Boolean).join(' · ');
   }
-  raw.addEventListener('input',updateTargetCount);
+  raw.addEventListener('input',()=>{ directCableTarget=false; updateTargetCount(); });
+  for (const input of [$('singleIP'),$('singlePort')]) {
+    input.addEventListener('input',()=>{ directCableTarget=true; });
+  }
+  $('controlMode').addEventListener('change',()=>{ directCableTarget=false; });
 
   const address = g=>Number(g.ssh_port || 22) === 22 ? g.ip : g.ip+':'+g.ssh_port;
   function inventory() {
@@ -177,6 +183,26 @@
       if (ui.selected.has(key) && !blocked.has(key)) checked.push({ip:g.ip,sshPort:Number(g.ssh_port || 22),port});
     }
     return checked;
+  }
+  function cableScope() {
+    if (directCableTarget && $('controlMode').value==='single') {
+      const ip=$('singleIP').value.trim(), port=$('singlePort').value.trim();
+      const complete=ip && !/\s/.test(ip) && /^\d+(?:\/\d+)*$/.test(port);
+      return {label:'관제·제어에서 직접 지정한 단일 포트',targets:complete ? ip+' '+port : ''};
+    }
+    // An edited or cleared query supersedes selections from the previous inventory.
+    if (raw.value !== registeredText) {
+      return {label:'관제·제어에 입력한 조회 대상', targets:raw.value.trim()};
+    }
+    const items=inventory();
+    const tile=ui.liveId ? ui.tileRow : null;
+    const focusKey=ui.liveId ? (tile && tile===monitor()?.selected() ? controlPortKey(tile) : '') : focused;
+    const keys=ui.selected.size ? ui.selected : focusKey ? new Set([focusKey]) : null;
+    const chosen=keys ? items.map(g=>({...g,interfaces:g.interfaces.filter(p=>keys.has(address(g)+'|'+p))})).filter(g=>g.interfaces.length) : items;
+    const count=targetCount(chosen);
+    const label=keys ? '포트 상태 매트릭스에서 선택한 대상' : '관제·제어의 전체 조회 대상';
+    if (keys && count!==keys.size) return {label:'관제·제어에서 포트를 다시 선택하세요.', targets:''};
+    return {label, groups:chosen, targets:chosen.map(g=>address(g)+' '+g.interfaces.join(',')).join('\n')};
   }
   function currentScope() {
     if (!ui.liveId) return null;
@@ -287,6 +313,7 @@
     if (check) { check.checked=ui.selected.has(check.dataset.matrixCheck);check.disabled=ui.busy || blocked.has(check.dataset.matrixCheck); }
   }
   function selectItem(item) {
+    directCableTarget=false;
     focused=item.key;
     renderMatrix();
   }
@@ -347,6 +374,7 @@
     return lines.map(row=>row.map(quote).join('\t')).join('\n');
   }
   function replaceQueryInventory(items,text,preserveView=false) {
+    directCableTarget=false;
     groups=stableGroups(items); registeredText=text;
     focused=''; page=0; live.clear(); loading.clear(); $('inventorySearch').value='';
     clearPorts(preserveView);
@@ -419,6 +447,7 @@
   }
   function restoreInventory(items,targetsText=inventoryText(items)) {
     if(!Array.isArray(items) || !items.length) return;
+    directCableTarget=false;
     groups=stableGroups(items); registeredText=raw.value=targetsText;
     $('controlMode').value='batch'; $('controlMode').onchange();
     updateTargetCount();
@@ -435,7 +464,7 @@
     });
     return reconciled.concat([...invalid.values()]);
   }
-  window.portTools={reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,checkedTargets,scopeKeys,unobservedTargets,
+  window.portTools={reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,checkedTargets,scopeKeys,unobservedTargets,cableScope,
     hasInventory:()=>groups.length>0 || ui.rows.length>0,refreshTargets,restoreInventory};
   updatePortActions();sync();
 })();

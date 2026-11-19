@@ -67,6 +67,7 @@ function sync() {
   $('dismissStatus').hidden = ui.busy;
   $('shutdown').disabled = ui.busy || !ui.token;
   updateControlTarget();
+  window.cableTools?.sync();
 }
 async function api(path, data) {
   const options = {credentials:'same-origin', cache:'no-store'};
@@ -126,14 +127,15 @@ async function run(action, body, receive) {
   $('stopJob').disabled = false;
   sync();
   const quick = action === 'control.quick-execute' ? body : null;
+  const requestId = quick || action==='cable.test' ? body.requestId : null;
   setJobProgress({});
   notify(quick ? operationNames[quick.operation] + ' 즉시 실행 · 선택 ' + quick.targets.length + '개' : jobNames[action] + ' 진행 중…');
   try {
     window.portTools?.onJob?.(action,'running',body);
     const submitted = await api('/api/jobs', {action,body}).catch(error=>{
-      if (!quick || (error.status && error.status < 500)) throw error;
+      if (!requestId || (error.status && error.status < 500)) throw error;
       // The server may have accepted the operation. Read its original job without submitting again.
-      return {id:quick.requestId};
+      return {id:requestId};
     });
     body = null;
     ui.jobId = submitted.id;
@@ -412,6 +414,7 @@ function route() {
   if (name === 'ports' && !$('matrixViewer').hasAttribute('src')) $('matrixViewer').src = $('matrixViewer').dataset.src;
   if (dialog.open) dialog.close();
   if (queryCredentials.open) queryCredentials.close();
+  if (name === 'cable') window.cableTools?.sync();
 }
 window.addEventListener('hashchange',route);
 route();
@@ -1035,6 +1038,9 @@ async function start() {
       showProfileFiles(resumed.result);
     } else if (resumed?.action === 'control.quick-execute') {
       window.controlTools.showQuickResult(resumed.result,resumed.cancelled,true);
+    } else if (resumed?.action === 'cable.show' || resumed?.action === 'cable.test') {
+      window.cableTools?.sync(true);
+      window.cableTools?.showResult(resumed.action,resumed.result,resumed.cancelled,true);
     } else if (resumed?.action === 'control.apply' && resumed.result.results?.length) {
       window.controlTools.finishProgress();
       showControlResults(resumed.result,operationNames[resumed.result.operation] || '포트 제어');
