@@ -23,7 +23,21 @@ def exercise(page, http, url, switch, folder):
     errors = []
     page.on("pageerror", lambda err: errors.append(str(err)))
     page.goto(url)
-    page.locator("nav a[href='#backup']").click()
+    label = "스위치 컨피그 백업"
+    link = page.get_by_role("link", name=label, exact=True)
+    link.click()
+    expect(page.get_by_role("heading", level=1, name=label, exact=True)).to_be_visible()
+    expect(page.locator("#crumb")).to_have_text(label)
+    for width, height in ((320, 568), (390, 844), (768, 1024), (1280, 720)):
+        page.set_viewport_size({"width": width, "height": height})
+        assert link.evaluate("""link => {
+            const box = link.getBoundingClientRect();
+            const range = document.createRange();
+            range.selectNodeContents(link);
+            return box.left >= 0 && box.right <= innerWidth &&
+                [...range.getClientRects()].every(r => r.left >= box.left && r.right <= box.right &&
+                    r.top >= box.top && r.bottom <= box.bottom);
+        }"""), f"Backup menu label clipped at {width}x{height}"
     page.locator("#backupTargets").fill("127.0.0.1")
     page.locator("#backupSSHPort").fill(str(switch.port))
     page.locator("#attempts").fill("1")
@@ -62,7 +76,7 @@ def exercise(page, http, url, switch, folder):
         and invalid_password not in text
         and "127.0.0.1" not in text
     )
-    page.locator("#uiInspectorDialog select").select_option(label="구성 백업 · 기본 SSH 포트")
+    page.locator("#uiInspectorDialog select").select_option(label=f"{label} · 기본 SSH 포트")
     expect(page.locator("#uiRequestPreview")).to_contain_text("backupSSHPort")
     page.get_by_role("button", name="작업 요청 복사").click()
     assert "backupSSHPort" in page.evaluate("navigator.clipboard.readText()")

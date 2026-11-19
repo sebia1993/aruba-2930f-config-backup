@@ -36,7 +36,7 @@
     if (lastDevices === json && !live.hidden) return;
     lastDevices = json; live.hidden = false;
     table.replaceChildren(simpleTable([
-      ['스위치','endpoint'], ['단계',r=>r.phase === 'host_key' ? '지문 확인' : '구성 백업'],
+      ['스위치','endpoint'], ['단계',r=>r.phase === 'host_key' ? '지문 확인' : '스위치 컨피그 백업'],
       ['진행 상태','stage'], ['지문 시도','host_key_attempts'], ['백업 시도','attempts'], ['오류 코드','error_code']
     ],page));
     pager.hidden = devices.length <= pageSize;
@@ -84,13 +84,13 @@
   function register(screen, source, items, frame = '') {
     for (const [id, title, purpose] of items) catalog.push({screen,source,id,title,purpose,frame});
   }
-  register('구성 백업','static/index.html',[
+  register('스위치 컨피그 백업','static/index.html',[
     ['backupForm','백업 입력','대상과 백업 옵션을 입력합니다.'],['backupTargets','백업 대상','스위치 주소 목록을 입력합니다.'],
     ['backupDirectory','저장 폴더','추가로 저장할 로컬 폴더를 입력합니다.'],['fileMode','파일 이름','장비 이름과 IP 조합을 선택합니다.'],
     ['concurrency','동시 접속','동시에 접속할 장비 수를 정합니다.'],['attempts','최대 시도','장비별 접속 시도 횟수를 정합니다.'],
     ['backupResult','백업 결과','장비별 결과와 진단 코드를 확인합니다.'],['backupFiles','백업 파일','생성한 설정과 보고서를 다운로드합니다.']
   ]);
-  register('구성 백업','static/backup-tools.js',[
+  register('스위치 컨피그 백업','static/backup-tools.js',[
     ['backupSSHPort','기본 SSH 포트','포트가 생략된 대상에 공통 포트를 적용합니다.'],
     ['chooseBackupDirectory','폴더 찾아보기','Windows에서 저장할 폴더를 선택합니다.'],
     ['backupDeviceProgress','장비별 진행 상황','SSH 키 확인과 설정 수집 단계를 표시합니다.'],
