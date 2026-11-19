@@ -153,7 +153,9 @@ def run_range(page, url, switch, second, shots, output):
             page.get_by_role("button", name="범위 전체 선택", exact=True).click()
         with click_quick_poe(page, "poe_on", targets):
             rows = page.locator("#controlResult tbody tr")
-            expect(rows).to_have_count(2, timeout=90000)
+            # The fixture drops an ACK and returns a stale setting. Allow the
+            # serial SSH checks and both post-control power reads to finish.
+            expect(rows).to_have_count(2, timeout=150000)
         results = rows.all_text_contents()
         writes = [cmd for cmd in switch.commands[start:] if cmd.endswith(" power-over-ethernet")]
         if rotate_key:
