@@ -16,7 +16,7 @@ from unittest.mock import patch
 from urllib.parse import urljoin
 
 from playwright.sync_api import expect, sync_playwright
-from verify_http_ssh import MonitorFixture
+from verify_http_ssh import MonitorFixture, backup_switch
 
 
 def open_port_controls(page):
@@ -231,7 +231,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     page.evaluate("location.hash = 'connect'")
     expect(page.locator('[data-page="connect"]')).to_be_visible()
     address = f"127.0.0.1:{switch.port}"
-    second_address = f"127.0.0.1:{second_switch.port}"
+    second_address = f"{second_switch.ip}:{second_switch.port}"
     page.locator("#trustTargets").fill(address + "\n" + second_address)
     page.locator("#inspectForm button").click()
     expect(page.locator("#trustResult")).to_contain_text("SHA256:")
@@ -245,10 +245,10 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#concurrency")).to_have_value("10")
     expect(page.locator("#attempts")).to_have_value("4")
     page.locator("#backupDirectory").fill(str(backup_directory))
-    page.locator("#backupTargets").fill(address)
+    page.locator("#backupTargets").fill(second_switch.ip)
     # A second tab opened during the backup must recover the same result and files.
     reading, resume = Event(), Event()
-    respond = switch._respond
+    respond = second_switch._respond
 
     def hold_config_read(channel, command):
         if command == "show running-config":
@@ -256,7 +256,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
             assert resume.wait(45), "Backup result check did not resume the SSH read"
         return respond(channel, command)
 
-    with patch.object(switch, "_respond", hold_config_read):
+    with patch.object(second_switch, "_respond", hold_config_read):
         try:
             page.locator("#backupForm .primary").click()
             enter_ssh_credentials(page, switch)
@@ -445,7 +445,12 @@ def launch_test_browser(browser_type):
 
 
 def run_browser_case(
-    case, *, switch_factory=MonitorFixture, browser_engine="chromium", touch=False
+    case,
+    *,
+    switch_factory=MonitorFixture,
+    second_switch_factory=MonitorFixture,
+    browser_engine="chromium",
+    touch=False,
 ):
     root = Path(os.environ.get("ARUBA_WEB_ROOT", Path(__file__).resolve().parents[1]))
     python = os.environ.get("ARUBA_WEB_PYTHON", sys.executable)
@@ -457,7 +462,7 @@ def run_browser_case(
     with (
         tempfile.TemporaryDirectory() as temp,
         switch_factory() as switch,
-        MonitorFixture() as second_switch,
+        second_switch_factory() as second_switch,
         sync_playwright() as playwright,
     ):
         folder = Path(temp)
@@ -515,7 +520,7 @@ def run_browser_case(
 
 
 def main():
-    run_browser_case(exercise)
+    run_browser_case(exercise, second_switch_factory=backup_switch)
     print(
         "PASS Chrome UI: default ports page, three menus, themes, mobile layout, host trust, XLSX downloads, live matrix and review, confirmed batch/single SSH writes on loopback, retired routes, session close and shutdown."
     )

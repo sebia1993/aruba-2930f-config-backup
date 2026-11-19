@@ -66,8 +66,8 @@ from .port_tools import group_targets, matrix_observation, preview_targets, targ
 POWER_SETTLE_SECONDS = 3
 
 
-def _target_text(body: dict) -> str:
-    text = body.get("targets")
+def _target_text(body: dict, field: str = "targets") -> str:
+    text = body.get(field)
     if not isinstance(text, str) or not text.strip() or len(text) > MAX_PASTE_CHARACTERS:
         raise ValueError("대상 목록을 1~100,000자로 입력하세요.")
     return text.strip().removeprefix("\ufeff")
@@ -84,28 +84,42 @@ class TargetInputError(ValueError):
     """All error lines are generated here, without echoing input values."""
 
 
-def _backup_targets(body: dict) -> tuple[DeviceTarget, ...]:
-    default_port = _bounded_integer(body, "ssh_port", 22, 65535)
-    _target_text(body)  # Enforce the shared input length before parsing the original line numbers.
+def _switch_targets(body: dict, *, ip_only: bool = False) -> tuple[DeviceTarget, ...]:
+    field = "ips" if ip_only else "targets"
+    _target_text(body, field)  # Validate length before parsing the original line numbers.
+    default_port = 22 if ip_only else _bounded_integer(body, "ssh_port", 22, 65535)
+    invalid = (
+        "스위치 IPv4 주소만 입력하세요." if ip_only else "올바른 IPv4 주소와 SSH 포트를 입력하세요."
+    )
+    identity = "스위치 IP" if ip_only else "스위치 주소 및 SSH 포트"
     targets, errors = {}, []
-    for number, raw in enumerate(body["targets"].removeprefix("\ufeff").splitlines(), 1):
+    for number, raw in enumerate(body[field].removeprefix("\ufeff").splitlines(), 1):
         line = raw.strip()
         if not line:
             continue
         try:
-            target = _endpoint(line) if ":" in line else DeviceTarget(line, default_port)
+            target = (
+                _endpoint(line) if not ip_only and ":" in line else DeviceTarget(line, default_port)
+            )
         except ValueError:
-            errors.append(f"{number}행 · 올바른 IPv4 주소와 SSH 포트를 입력하세요.")
+            errors.append(f"{number}행 · {invalid}")
             continue
         if target in targets:
-            errors.append(
-                f"{number}행 · {targets[target]}행과 스위치 주소 및 SSH 포트가 중복됩니다."
-            )
+            errors.append(f"{number}행 · {targets[target]}행과 {identity}가 중복됩니다.")
         else:
             targets[target] = number
     if errors:
         raise TargetInputError("\n".join(errors))
+    if not targets:
+        raise TargetInputError("스위치 IPv4 주소를 한 개 이상 입력하세요.")
     return tuple(targets)
+
+
+def _backup_targets(body: dict) -> tuple[DeviceTarget, ...]:
+    ip_only = "ips" in body
+    if ip_only and ("targets" in body or "ssh_port" in body):
+        raise TargetInputError("백업 IP 목록에는 다른 대상이나 SSH 포트를 함께 지정할 수 없습니다.")
+    return _switch_targets(body, ip_only=ip_only)
 
 
 def _expand_interfaces(text: str) -> str:
@@ -297,7 +311,7 @@ class Operations:
         if action == "hostkey.inspect":
             self._review.clear()
             self.collector.begin_run()
-            targets = _backup_targets(body)
+            targets = _switch_targets(body)
             self._start_progress("호스트 키 조회 중", len(targets))
             checks = self.collector.probe_host_keys(
                 targets, options=CollectionOptions(max_attempts=1), cancel_event=cancel

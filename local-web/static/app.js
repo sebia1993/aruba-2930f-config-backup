@@ -669,16 +669,20 @@ function showBackupResult(r,body) {
   }
   if (r.files?.length) area.append(openFolder(r.files[0]));
   for (const warning of r.warnings || []) area.append(elem('p',warning,'warning'));
-  const retry = rows.filter(x=>x.status === 'retry_exhausted');
-  if (body && retry.length) {
+  const failed = new Set(rows.filter(row=>row.status === 'retry_exhausted').map(row=>row.endpoint));
+  const retry = body?.ips?.split('\n').filter(ip=>failed.has(ip+':22')) || [];
+  if (retry.length) {
     const again = button('접속 실패 장비만 다시 시도 (' + retry.length + ')',()=>
-      backup({...body, targets:retry.map(x=>x.endpoint).join('\n')}));
+      backup({...body, ips:retry.join('\n')}));
     again.dataset.job = ''; area.append(again);
   }
 }
-form('backupForm', () => backup({targets:$('backupTargets').value, concurrency:Number($('concurrency').value),
-  max_attempts:Number($('attempts').value), ssh_port:Number($('backupSSHPort')?.value || 22),
-  filename_mode:$('fileMode').value, output_directory:$('backupDirectory').value.trim()}));
+form('backupForm', () => {
+  const ips = window.backupTools.readIPs();
+  if (!ips) { $('backupTargets').focus(); return; }
+  backup({ips, concurrency:Number($('concurrency').value), max_attempts:Number($('attempts').value),
+    filename_mode:$('fileMode').value, output_directory:$('backupDirectory').value.trim()});
+});
 
 const endpoint = row => Number(row.ssh_port || 22) === 22 ? row.ip : row.ip + ':' + row.ssh_port;
 const portKey = row => endpoint(row) + '|' + row.interface;
@@ -1099,12 +1103,13 @@ $('targetFile').onchange = async () => {
     const input = $(isQuery ? 'editorTargets' : dest);
     input.value = text;
     input.dispatchEvent(new Event('input'));
-    if (isQuery) input.focus();
+    if (dest === 'backupTargets') window.backupTools.readIPs();
+    input.focus();
   } catch (e) { fileError(e.message); }
 };
-for (const node of all('[data-save]')) node.onclick = () => {
-  const value = $(node.dataset.save).value.trim();
-  if (!value) { notify('저장할 스위치 주소를 입력하세요.',true); return; }
+document.querySelector('[data-save="backupTargets"]').onclick = () => {
+  const value = window.backupTools.readIPs();
+  if (!value) { $('backupTargets').focus(); return; }
   const a = document.createElement('a');
   const url = URL.createObjectURL(new Blob(['\uFEFF' + value + '\n'],{type:'text/plain;charset=utf-8'}));
   a.href = url; a.download = 'switch-targets.txt'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);

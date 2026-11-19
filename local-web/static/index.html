@@ -125,7 +125,8 @@
     <section data-page="backup" hidden>
       <div class="heading"><div><div class="eyebrow">CONFIGURATION BACKUP</div><h1>스위치 컨피그 백업</h1><p>선택한 스위치의 설정 파일과 작업 보고서를 PC에 저장합니다.</p></div></div>
       <article class="panel"><header><h2>백업 대상</h2><span>스위치별 한 줄</span></header><form id="backupForm" class="panelbody">
-        <label>스위치 주소<textarea id="backupTargets" rows="5" autocapitalize="none" spellcheck="false" placeholder="스위치 IP 또는 IP:SSH포트 (한 줄에 한 대)" required></textarea></label>
+        <label>스위치 IP<textarea id="backupTargets" rows="5" autocapitalize="none" spellcheck="false" aria-describedby="backupTargetError" placeholder="스위치 IPv4 주소를 한 줄에 하나씩 입력하세요." required></textarea></label>
+        <p id="backupTargetError" class="warning" role="alert" hidden></p>
         <label>추가 저장 폴더 (선택)<input id="backupDirectory" placeholder="백업을 저장할 폴더의 전체 경로" autocomplete="off"><span class="hint">이 PC에 있는 폴더의 전체 경로를 입력하면 백업 결과를 그곳에도 저장합니다. 비워 두면 기본 폴더에 저장합니다.</span></label>
         <div class="bar"><label>파일 이름<select id="fileMode"><option value="hostname_ip">호스트 이름 + IP</option><option value="hostname">호스트 이름</option><option value="ip">IP 주소</option></select></label><label>동시 접속<input id="concurrency" type="number" min="1" max="20" value="10" required></label><label>최대 시도<input id="attempts" type="number" min="1" max="4" value="4" required></label></div>
         <div class="bar"><button class="primary" data-job>백업 시작</button><button type="button" data-import="backupTargets">대상 열기</button><button type="button" data-save="backupTargets">대상 저장</button></div>
