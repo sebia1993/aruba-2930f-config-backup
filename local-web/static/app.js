@@ -24,6 +24,7 @@ const labels = {
 const stateNames = {ok:'성공',success:'성공',failed:'실패',cancelled:'취소',unsupported:'미지원',unknown:'미등록',changed:'키 변경',trusted:'등록됨',rejected:'거부',retry_exhausted:'접속 재시도 소진',verified:'검증 완료',unchanged:'이미 요청 상태',preflight_failed:'사전 검증 실패',unverified:'검증 미완료',paused:'일시 중지',skipped:'건너뜀',blocked:'실행 차단',result_unknown:'결과 미기록'};
 const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), detail:null, logs:[], chosenLog:null, logLoaded:false, csvLoaded:false, matrixFile:null, pendingMatrix:null, portView:'monitor', inspectedRow:null };
 const dialog = $('review');
+const queryCredentials = $('queryCredentials');
 Object.assign(jobNames, {'targets.preview':'대상 목록 검토','targets.apply':'대상 목록 적용','control.inspect':'단일 포트 상태 조회','control.quick':'빠른 제어 검토','control.import-history':'작업 기록 열기','backup.pick-directory':'저장 폴더 선택','history.open-folder':'이력 위치 열기'});
 
 function elem(tag, text, className) {
@@ -263,6 +264,7 @@ function route() {
   if (name === 'history' && ui.token) loadHistory();
   if (name === 'home' && ui.token) loadHome();
   if (dialog.open) dialog.close();
+  if (queryCredentials.open) queryCredentials.close();
 }
 window.addEventListener('hashchange',route);
 route();
@@ -372,16 +374,20 @@ async function loadHome() {
     }
   } catch (err) { notify(err.message,true); }
 }
-form('loginForm', () => {
-  const body = {username:$('username').value.trim(),password:$('password').value,enable_secret:$('enableSecret').value};
-  $('password').value = ''; $('enableSecret').value = '';
-  const user = body.username;
-  run('session.open',body,r => {
-    if (!r.connected) return;
-    ui.session = {active:true,username:user};
+async function applySshAccount(username, password, enableSecret) {
+  const user = username.value.trim();
+  const credentials = {username:user, password:password.value, enable_secret:enableSecret.value};
+  password.value = ''; enableSecret.value = '';
+  let applied = false;
+  await run('session.open',credentials,(result,cancelled) => {
+    if (!result.connected) return;
+    ui.session = {active:true, username:user};
     clearPorts();
+    applied = !cancelled;
   });
-});
+  return applied;
+}
+form('loginForm', () => applySshAccount($('username'), $('password'), $('enableSecret')));
 $('logout').onclick = () => run('session.close',{},r => {
   if (r.connected !== false) return;
   ui.session = {active:false}; clearPorts();
@@ -625,9 +631,44 @@ function receivePorts(result, openMonitor=false) {
   const selected = ui.rows.find(row=>portKey(row) === ui.detail);
   if (selected) showDetail(selected); else $('rowDetails').hidden = true;
 }
-form('queryForm', () => {
+function queryPorts(targets) {
   clearPorts();
-  run('ports.query',{targets:$('queryTargets').value.trim()},result=>receivePorts(result,true));
+  return run('ports.query',{targets},result=>receivePorts(result,true));
+}
+form('queryForm', () => {
+  if (ui.busy || !ui.token || queryCredentials.open) return;
+  const input = $('queryTargets'), targets = input.value.trim();
+  if (!targets) {
+    input.value = '';
+    input.reportValidity();
+    return;
+  }
+  if (ui.session.active) {
+    queryPorts(targets);
+    return;
+  }
+  $('queryLoginError').hidden = true;
+  queryCredentials.showModal();
+});
+$('cancelQueryCredentials').onclick = () => queryCredentials.close();
+queryCredentials.addEventListener('close', () => $('queryLoginForm').reset());
+form('queryLoginForm', async () => {
+  if (!queryCredentials.open || ui.busy || !ui.token) return;
+  const targets = $('queryTargets').value.trim();
+  const submit = $('submitQueryCredentials'), error = $('queryLoginError');
+  error.hidden = true;
+  submit.textContent = '계정 적용 중…';
+  const applied = await applySshAccount($('queryUsername'), $('queryPassword'), $('queryEnableSecret'));
+  submit.textContent = '계정 적용 후 조회';
+  if (!queryCredentials.open) return;
+  if (!applied) {
+    error.textContent = $('statusText').textContent;
+    error.hidden = false;
+    $('queryPassword').focus();
+    return;
+  }
+  queryCredentials.close();
+  queryPorts(targets);
 });
 function refreshTargets(bySwitch) {
   if (window.portTools?.refreshTargets) {

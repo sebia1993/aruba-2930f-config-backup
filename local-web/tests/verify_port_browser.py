@@ -13,6 +13,84 @@ from playwright.sync_api import expect, sync_playwright
 from verify_http_ssh import MonitorFixture
 
 
+def query_with_inline_credentials(page, switch):
+    targets = page.locator("#queryTargets")
+    original_targets = targets.input_value()
+    submit = page.get_by_role("button", name="포트 조회", exact=True)
+    dialog = page.get_by_role("dialog", name="포트 조회용 SSH 계정")
+    actions = []
+
+    def record_action(request):
+        if request.method == "POST" and request.url.endswith("/api/jobs"):
+            actions.append(request.post_data_json["action"])
+
+    page.on("request", record_action)
+    expect(submit).to_be_enabled()
+    for blank in ("", "   "):
+        targets.fill(blank)
+        submit.click()
+        expect(dialog).to_be_hidden()
+        expect(targets).to_be_focused()
+    targets.fill(original_targets)
+
+    for cancel in ("button", "escape"):
+        submit.click()
+        expect(dialog).to_be_visible()
+        expect(page.locator("#queryUsername")).to_be_focused()
+        page.locator("#queryPassword").fill(switch.password)
+        page.locator("#queryEnableSecret").fill(switch.password)
+        if cancel == "button":
+            dialog.get_by_role("button", name="취소").click()
+        else:
+            page.keyboard.press("Escape")
+        expect(dialog).to_be_hidden()
+        expect(page.locator("#queryPassword")).to_have_value("")
+        expect(page.locator("#queryEnableSecret")).to_have_value("")
+        expect(targets).to_have_value(original_targets)
+        expect(submit).to_be_focused()
+    assert not actions and not switch.auth_attempts
+
+    submit.click()
+    page.locator("#queryUsername").fill(switch.username)
+    accept = dialog.get_by_role("button", name="계정 적용 후 조회")
+    accept.click()
+    expect(dialog).to_be_visible()
+    expect(page.locator("#queryPassword")).to_be_focused()
+    assert not actions
+    error = "계정 적용 요청에 실패했습니다."
+    page.route(
+        "**/api/jobs", lambda route: route.fulfill(status=409, json={"error": error}), times=1
+    )
+    page.locator("#queryPassword").fill(switch.password)
+    accept.click()
+    expect(dialog.get_by_role("alert")).to_contain_text(error)
+    expect(page.locator("#queryPassword")).to_have_value("")
+    expect(targets).to_have_value(original_targets)
+    assert actions == ["session.open"] and not switch.auth_attempts
+
+    page.locator("#queryPassword").fill(switch.password)
+    page.locator("#queryPassword").press("Enter")
+
+    review = page.locator("#hostReview")
+    expect(review).to_contain_text(f"127.0.0.1:{switch.port}", timeout=45000)
+    expect(page.locator("#queryPassword")).to_have_value("")
+    assert not switch.auth_attempts
+    assert actions == ["session.open", "session.open", "ports.query"]
+    review.locator("input").check()
+    review.get_by_role("button", name="선택한 지문 승인").click()
+    expect(page.locator("#portTable")).to_contain_text("8.1 W", timeout=45000)
+    assert switch.auth_attempts
+    expect(page.locator("#sessionChip")).to_contain_text(switch.username)
+
+    page.locator("#portLiveTab").click()
+    submit.click()
+    expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=45000)
+    expect(dialog).to_be_hidden()
+    expect(targets).to_have_value(original_targets)
+    assert actions == ["session.open", "session.open", "ports.query", "ports.query"]
+    page.remove_listener("request", record_action)
+
+
 def exercise(page, switch):
     issues = []
     page.on("pageerror", lambda error: issues.append(str(error)))
@@ -71,21 +149,7 @@ def exercise(page, switch):
     page.locator("#acceptTargets").click()
     expect(page.locator(".matrix-tile")).to_have_count(1)
     expect(page.locator("#selectedCount")).to_contain_text("선택 0개")
-    page.locator('nav a[href="#connect"]').click()
-    page.locator("#username").fill(switch.username)
-    page.locator("#password").fill(switch.password)
-    page.locator("#loginForm .primary").click()
-    expect(page.locator("#connectionState")).to_contain_text(switch.username)
-    page.locator("#trustTargets").fill(f"127.0.0.1:{switch.port}")
-    page.locator("#inspectForm button").click()
-    expect(page.locator("#trustResult")).to_contain_text("SHA256:")
-    page.locator("#trustResult").get_by_role("button", name="지문 검토").click()
-    page.get_by_role("button", name="이 지문 승인").click()
-    expect(page.locator("#trustResult")).to_contain_text("등록된 키")
-    page.locator('nav a[href="#ports"]').click()
-    page.locator("#portLiveTab").click()
-    page.locator("#queryForm .primary").click()
-    expect(page.locator("#portTable")).to_contain_text("8.1 W", timeout=45000)
+    query_with_inline_credentials(page, switch)
     page.locator("#portLiveTab").click()
     tile = page.locator(".matrix-tile")
     expect(tile).to_have_count(1)
@@ -162,7 +226,7 @@ def main():
             proc.terminate()
             proc.wait(timeout=15)
     print(
-        "PASS target row editor, Excel append/replace validation, matrix, selection, live SSH and targeted refresh"
+        "PASS target editor, matrix, inline SSH credentials, cancel, host trust, query and refresh"
     )
 
 
