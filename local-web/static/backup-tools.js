@@ -77,7 +77,7 @@
   }
 
   function historyButton(row) {
-    if (!row.folder_id) return '—';
+    if (!row.folder_id || location.protocol==='https:') return '—';
     const btn = button('파일 위치 열기',()=>run('history.open-folder',{folder_id:row.folder_id}));
     btn.dataset.job = '';
     return btn;
@@ -114,11 +114,9 @@
     ['historyTable','최근 작업','작업별 상태와 생성 파일을 확인합니다.'],['backupHistoryTable','백업 보고서','저장된 보고서의 장비별 결과를 확인합니다.'],
     ['controlHistoryTable','포트 변경 기록','단일 및 일괄 제어의 기록을 확인합니다.']
   ]);
-  register('관제·비교·제어','static/index.html',[
+  register('관제·제어','static/index.html',[
     ['portMonitorTab','관제','포트별 관측값을 확인하고 제어할 포트를 선택합니다.'],
     ['portReviewTab','우선 확인','전력 상태를 점검할 포트를 확인합니다.'],
-    ['portCompareTab','변화 비교','두 시점의 포트별 변화를 확인합니다.'],
-    ['openPortCsv','CSV 열기','기존 프로그램에서 저장한 조회 CSV를 한 개 또는 두 개 엽니다.'],
     ['queryForm','실시간 조회','스위치 주소와 포트를 입력하고 관제 화면에서 조회를 시작합니다.'],['queryTargets','조회 대상','여러 스위치의 포트 범위를 입력합니다.'],
     ['targetOptions','대상 목록 관리','조회 대상을 편집하거나 프로필로 불러오고 저장합니다.'],
     ['controlMode','제어 방식','단일 또는 일괄 제어를 선택합니다.'],
@@ -130,13 +128,13 @@
     ['pasteText','로그 붙여넣기','스위치 출력 텍스트를 입력합니다.'],['cards','세 가지 상태','전력 및 링크 상태별 수량을 표시합니다.'],
     ['rows','포트별 상태','포트별 마지막 전력 및 링크 상태를 표시합니다.'],['detail','포트 이벤트 상세','선택한 포트의 마지막 근거 이벤트를 확인합니다.']
   ],'logViewer');
-  register('관제·비교·제어','static/csv.html',[
+  register('관제·제어','static/matrix.html',[
     ['search','결과 검색','장비나 포트 또는 AP 이름으로 관측값을 찾습니다.'],
     ['device','스위치 필터','한 스위치의 포트로 결과를 좁힙니다.'],['status','포트 결과 필터','전력 상태와 조회·설정 조건으로 포트를 좁힙니다.'],
     ['matrix','포트 매트릭스','포트별 상태를 한눈에 표시합니다.'],['tbody','포트별 조회 결과','포트별 관측값을 보고 실시간 제어 대상을 선택합니다.'],
     ['detail','선택 포트 상세','선택한 포트의 판정 근거를 표시합니다.'],
     ['controlObservedBatch','선택 포트 제어','체크한 실시간 포트의 제어 도구를 엽니다.']
-  ],'csvViewer');
+  ],'matrixViewer');
 
   const dock = elem('aside'); dock.id = 'uiInspectorDock'; dock.hidden = true;
   const modal = elem('dialog'); modal.id = 'uiInspectorDialog';
@@ -218,7 +216,7 @@
   }
   bind(document,'');
   const embedded = new WeakSet();
-  for (const frame of [$('logViewer'),$('csvViewer')]) {
+  for (const frame of [$('logViewer'),$('matrixViewer')]) {
     function attach() {
       const doc = frame.contentDocument;
       if (doc && !embedded.has(doc)) { embedded.add(doc); bind(doc,frame.id); }

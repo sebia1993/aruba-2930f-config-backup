@@ -1,4 +1,4 @@
-/* Apply the same switch-only display rules to query events and saved CSV rows. */
+/* Classify observed switch power and LLDP evidence. */
 (() => {
   'use strict';
 
@@ -28,11 +28,6 @@
     return Number.isFinite(value) && value >= 0 ? value : null;
   }
 
-  function decoded(value) {
-    if (typeof value !== 'string') return value;
-    try { return JSON.parse(value); } catch { return null; }
-  }
-
   function namedAccessPoint(name, model = '', description = '') {
     if (!name || /^(?:[-?–—]+|n\/?a|none|null|undefined|unknown|unnamed|no name|not (?:available|reported|specified)|LLDP (?:pending|failed|cancelled)|이름 없음|이웃 없음|미수집|미확인|확인 불가)$/i.test(name)) return '';
     if (/^(?:[\da-f]{2}[:-]){5}[\da-f]{2}$|^(?:[\da-f]{4}\.){2}[\da-f]{4}$|^[\da-f]{12}$|^(?:\d{1,3}\.){3}\d{1,3}$|^[\da-f]*:[\da-f:]+$/i.test(name)) return '';
@@ -46,16 +41,11 @@
   }
 
   function accessPointName(row) {
-    if (text(row.lldp_error_code) || (Object.hasOwn(row, 'lldp_status') && token(row.lldp_status) !== 'ok')) return '';
-    if (Object.hasOwn(row, 'lldp_neighbors')) {
-      const neighbors = decoded(row.lldp_neighbors);
-      if (!Array.isArray(neighbors) || neighbors.length !== 1) return '';
-      const neighbor = neighbors[0];
-      return namedAccessPoint(text(neighbor?.system_name), text(neighbor?.model), text(neighbor?.system_description));
-    }
-    // Early CSVs stored only LLDP names. A single AP-style name is the only AP evidence there.
-    const legacyName = text(row.ap_names);
-    return /\||\s\/\s/.test(legacyName) ? '' : namedAccessPoint(legacyName);
+    if (text(row.lldp_error_code) || token(row.lldp_status) !== 'ok') return '';
+    const neighbors = row.lldp_neighbors;
+    if (!Array.isArray(neighbors) || neighbors.length !== 1) return '';
+    const neighbor = neighbors[0];
+    return namedAccessPoint(text(neighbor?.system_name), text(neighbor?.model), text(neighbor?.system_description));
   }
 
   function supplyProblem(row) {
@@ -63,11 +53,10 @@
     if (['warning', 'off', 'searching', 'error', 'unsupported'].includes(status)) {
       return text(row.assessment_reason) || '스위치 전력 진단에서 공급 이상을 관측했습니다.';
     }
-    const evidence = decoded(row.power_evidence);
+    const evidence = row.power_evidence;
     if (Array.isArray(evidence?.issues) && evidence.issues.length) {
       return '스위치가 보고한 전력 근거에 충돌하거나 해석할 수 없는 값이 있습니다.';
     }
-    // Older query exports store these diagnostic causes in the assessment reason.
     if (status === 'unknown' && /해석 불가 또는 서로 충돌|전원 협상 근거가 서로 다릅니다|전원 공급 방식 근거가 서로 충돌/.test(text(row.assessment_reason))) {
       return text(row.assessment_reason);
     }
@@ -92,9 +81,7 @@
     if (!row || token(row.status) !== 'ok' || text(row.error_code)) {
       return result('unclassified', text(row?.message) || '성공한 스위치 전력 조회 결과가 없습니다.');
     }
-    // Exports predating the completion column only contained final query results.
-    if ((Object.hasOwn(row, 'complete') && row.complete !== true && !['yes', 'true'].includes(token(row.complete))) ||
-        token(row.lldp_status) === 'pending') {
+    if (row.complete !== true || token(row.lldp_status) === 'pending') {
       return result('unclassified', '이 포트의 조회가 완료되지 않았습니다.');
     }
     watts = measurement(row.watts);

@@ -72,8 +72,8 @@ def merge_targets(targets: Sequence[PoETarget]) -> tuple[PoETarget, ...]:
     return tuple(merged.values())
 
 
-def _check_quotes(text: str, delimiter: str) -> None:
-    # csv.reader(strict=True) still permits a bare quote in an unquoted cell.
+def _check_quotes(text: str) -> None:
+    # The spreadsheet dialect still permits a bare quote in an unquoted cell.
     # Reject it rather than silently changing a pasted target/label.
     state = "start"
     for character in text:
@@ -83,7 +83,7 @@ def _check_quotes(text: str, delimiter: str) -> None:
         elif state == "closed":
             if character == '"':
                 state = "quoted"
-            elif character == delimiter or character in "\r\n":
+            elif character in "\t\r\n":
                 state = "start"
             else:
                 raise ValueError("표의 따옴표 형식이 올바르지 않습니다.")
@@ -91,7 +91,7 @@ def _check_quotes(text: str, delimiter: str) -> None:
             if state != "start":
                 raise ValueError("표의 따옴표 형식이 올바르지 않습니다.")
             state = "quoted"
-        elif character == delimiter or character in "\r\n":
+        elif character in "\t\r\n":
             state = "start"
         else:
             state = "unquoted"
@@ -121,12 +121,16 @@ def _is_header(row: list[str]) -> bool:
     return all(cell.strip().casefold() in names for cell, names in zip(row, selected, strict=True))
 
 
-def _parse_table(text: str, delimiter: str) -> tuple[PoETarget, ...]:
-    _check_quotes(text, delimiter)
+def parse_pasted_targets(text: str) -> tuple[PoETarget, ...]:
+    """Parse tab-separated cells copied directly from a spreadsheet."""
+    if not isinstance(text, str) or len(text) > MAX_PASTE_CHARACTERS:
+        raise ValueError("붙여넣기는 최대 100,000자입니다.")
+    text = text.removeprefix("\ufeff")
+    _check_quotes(text)
     try:
         rows = [
             row
-            for row in csv.reader(io.StringIO(text, newline=""), delimiter=delimiter, strict=True)
+            for row in csv.reader(io.StringIO(text, newline=""), dialect="excel-tab", strict=True)
             if row
         ]
     except csv.Error as exc:
@@ -160,34 +164,6 @@ def _parse_table(text: str, delimiter: str) -> tuple[PoETarget, ...]:
             raise ValueError(f"{line_number}행: {exc}") from exc
         parsed.append(target)
     return merge_targets(parsed)
-
-
-def _has_unquoted_tab(text: str) -> bool:
-    """Classify Excel TSV without mistaking tabs inside quoted CSV labels."""
-    in_quotes = False
-    index = 0
-    while index < len(text):
-        character = text[index]
-        if character == '"':
-            if in_quotes and index + 1 < len(text) and text[index + 1] == '"':
-                index += 2
-                continue
-            in_quotes = not in_quotes
-        elif character == "\t" and not in_quotes:
-            return True
-        index += 1
-    return False
-
-
-def parse_pasted_targets(text: str) -> tuple[PoETarget, ...]:
-    """Validate the complete TSV or quoted CSV before returning any targets."""
-    if not isinstance(text, str) or len(text) > MAX_PASTE_CHARACTERS:
-        raise ValueError("붙여넣기는 최대 100,000자입니다.")
-    text = text.removeprefix("\ufeff")
-    # Excel clipboard data uses tabs even when the interface cell has commas.
-    # Never reinterpret an invalid TSV block as comma-separated CSV.
-    delimiter = "\t" if _has_unquoted_tab(text) else ","
-    return _parse_table(text, delimiter)
 
 
 def _atomic_write_bytes(path: Path, content: bytes) -> None:

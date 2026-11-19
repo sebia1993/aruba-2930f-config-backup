@@ -58,7 +58,7 @@ def tabs_and_windows(page, url, _first, _second, _shots, backup_folder):
     expect(root.locator("#version")).to_contain_text("v")
 
     # Exercise more than Chromium's six HTTP/1 connections to one origin.
-    routes = ("/csv", "/logs", "/", "/csv", "/logs", "/", "/csv")
+    routes = ("/matrix", "/logs", "/", "/matrix", "/logs", "/", "/matrix")
     tabs = []
     for path in routes:
         tab = context.new_page()
@@ -66,18 +66,18 @@ def tabs_and_windows(page, url, _first, _second, _shots, backup_folder):
         tabs.append(tab)
     assert root.evaluate("fetch('/api/bootstrap').then(r => r.ok)")
 
-    csv_tab = tabs.pop()
-    frozen = context.new_cdp_session(csv_tab)
+    matrix_tab = tabs.pop()
+    frozen = context.new_cdp_session(matrix_tab)
     frozen.send("Page.setWebLifecycleState", {"state": "frozen"})
     for tab in tabs:
         tab.close()
     root.close()
     # Outlive even the initial 20-second script-attachment window. Only an open viewer keeps it alive.
     time.sleep(22)
-    assert http.get("/health")["instance"] == instance, "The frozen CSV viewer was still open"
+    assert http.get("/health")["instance"] == instance, "The frozen port matrix was still open"
     frozen.send("Page.setWebLifecycleState", {"state": "active"})
-    expect(csv_tab.locator("#sourceName")).to_have_text("CSV 미선택")
-    csv_tab.close()
+    expect(matrix_tab.locator("#sourceName")).to_have_text("조회 결과 대기")
+    matrix_tab.close()
 
     # Reopen inside the grace period. No dashboard or iframe is needed for a direct viewer.
     logs = context.new_page()

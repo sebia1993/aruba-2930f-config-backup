@@ -21,7 +21,7 @@ def first_use_keys(page, url, first, second, shots, output):
     page.locator('nav a[href="#ports"]').click()
     page.locator("#queryTargets").fill(other + " 1")
     page.locator("#queryForm button.primary").click()
-    observed = page.frame_locator("#csvViewer").locator("#tbody")
+    observed = page.frame_locator("#matrixViewer").locator("#tbody")
     expect(observed).to_contain_text("8.1 W", timeout=90000)
     page.reload()
     expect(observed).to_contain_text("8.1 W", timeout=30000)

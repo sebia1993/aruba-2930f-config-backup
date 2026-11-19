@@ -24,16 +24,17 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.4.8"
+VERSION = "1.5.0"
 STATIC = {
     "/": "index.html",
     "/logs": "logs.html",
-    "/csv": "csv.html",
+    "/matrix": "matrix.html",
     "/power-matrix.js": "power-matrix.js",
     **{
         "/static/" + name: name
         for name in (
             "app.js",
+            "lan.js",
             "browser-presence.js",
             "style.css",
             "embed.css",
@@ -92,9 +93,12 @@ class Handler(BaseHTTPRequestHandler):
             # The presence stream ends when the client closes its TCP connection, even
             # if no unload event runs or the browser stops scheduling background tabs.
             with suppress(OSError):
+                self.connection.settimeout(None)
                 self.connection.recv(1)
 
     def _trusted_host(self):
+        if self.server.is_lan:
+            return self.headers.get_all("Host") == [self.server.authority]
         port = self.server.server_port
         return self.headers.get("Host") in {f"127.0.0.1:{port}", f"localhost:{port}"}
 
@@ -135,20 +139,31 @@ class Handler(BaseHTTPRequestHandler):
                 dict(service="aruba2930f-local", version=VERSION, instance=app.instance)
             )
         if path.startswith("/start/"):
-            if not secrets.compare_digest(path[7:].encode(), app.launch.encode()):
+            valid = (
+                app.consume(path[7:].encode())
+                if app.is_lan
+                else secrets.compare_digest(path[7:].encode(), app.launch.encode())
+            )
+            if not valid:
                 return self._fail(
-                    403, "실행 링크가 만료되었습니다. Start-Local-Web.cmd를 다시 여세요."
+                    403,
+                    "LAN 초대 링크가 만료되었거나 이미 사용됐습니다. 호스트에서 새 링크를 발급하세요."
+                    if app.is_lan
+                    else "실행 링크가 만료되었습니다. Start-Local-Web.cmd를 다시 여세요.",
                 )
             self._headers(
                 303,
                 "text/plain",
                 **{
                     "Location": "/",
-                    "Set-Cookie": f"{app.cookie_name}={app.cookie}; HttpOnly; SameSite=Strict; Path=/",
+                    "Set-Cookie": f"{app.cookie_name}={app.cookie}; HttpOnly; SameSite=Strict; Path=/"
+                    + ("; Secure" if app.is_lan else ""),
                 },
             )
             return
         if not self._signed_in():
+            if app.is_lan:
+                return self._fail(403, "호스트의 LAN 공유에서 발급한 초대 링크로 접속하세요.")
             if path == "/":
                 page = """<!doctype html><html lang=ko><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Aruba 2930F 로컬 접속</title><main style="max-width:42rem;margin:12vh auto;padding:2rem;font:1.15rem/1.8 system-ui"><h1>2930F 로컬 스위치 관리</h1><p>이 브라우저에서 관리 화면을 처음 열 때는 배포 폴더의 <strong>Start-Local-Web.cmd</strong>를 실행하세요. 기본 브라우저에서 이 PC의 관리 화면이 열립니다.</p></main></html>""".encode()
                 self._headers(200, "text/html; charset=utf-8", len(page))
@@ -158,7 +173,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path in STATIC:
                 if (
-                    path in {"/", "/csv", "/logs"}
+                    path in {"/", "/matrix", "/logs"}
                     and self.headers.get("Sec-Fetch-Mode") == "navigate"
                     and self.headers.get("Sec-Fetch-Dest") == "document"
                 ):
@@ -170,10 +185,13 @@ class Handler(BaseHTTPRequestHandler):
                         token=app.token,
                         version=VERSION,
                         instance=app.instance,
+                        lanClient=app.is_lan,
                         session=app.jobs.operations.session_summary(),
                         busyJob=app.jobs.active,
                     )
                 )
+            elif path == "/api/sharing" and not app.is_lan:
+                self._json(app.sharing.status(interfaces=True))
             elif path == "/api/history":
                 self._json({"items": app.jobs.history()})
             elif path == "/api/workspace":
@@ -197,7 +215,11 @@ class Handler(BaseHTTPRequestHandler):
             not self._trusted_host()
             or not self._signed_in()
             or self.headers.get("Sec-Fetch-Site") == "cross-site"
-            or (origin is not None and origin != "http://" + self.headers.get("Host", ""))
+            or (
+                origin is not None
+                and origin
+                != ("https://" if app.is_lan else "http://") + self.headers.get("Host", "")
+            )
             or not secrets.compare_digest(token.encode(), app.token.encode())
         ):
             return self._fail(403, "로컬 브라우저 세션을 다시 여세요.")
@@ -211,7 +233,29 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("입력 형식을 확인하세요.")
-            if path == "/api/jobs":
+            if app.is_lan:
+                if path in {"/api/shutdown", "/api/open-folder"} or path.startswith("/api/sharing"):
+                    return self._fail(403, "이 작업은 서버를 실행한 PC에서 사용할 수 있습니다.")
+                if path == "/api/jobs":
+                    action, body = data.get("action"), data.get("body")
+                    if action in ("backup.pick-directory", "history.open-folder") or (
+                        action in ("backup.run", "backup.history")
+                        and isinstance(body, dict)
+                        and body.get("output_directory")
+                    ):
+                        return self._fail(403, "LAN 접속에서는 서버의 기본 백업 폴더를 사용하세요.")
+            if path == "/api/sharing/enable":
+                try:
+                    result = app.sharing.enable(data.get("address"))
+                except OSError:
+                    return self._fail(409, "LAN 주소와 TCP 포트 18766 사용 여부를 확인하세요.")
+                self._json(result)
+            elif path == "/api/sharing/renew":
+                self._json(app.sharing.renew())
+            elif path == "/api/sharing/stop":
+                app.sharing.close()
+                self._json({"active": False})
+            elif path == "/api/jobs":
                 self._json({"id": app.jobs.submit(data.get("action"), data.get("body"))}, 202)
             elif re.fullmatch("/api/jobs/" + KEY + "/cancel", path):
                 self._json(app.jobs.cancel(path.split("/")[3]))
@@ -247,6 +291,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class LocalServer(ThreadingHTTPServer):
+    is_lan = False
     # Chrome loads the dashboard scripts, styles and embedded viewer concurrently.
     request_queue_size = 64
 
@@ -359,7 +404,10 @@ def start(directory, port, no_browser):
                 raise
             server = LocalServer(("127.0.0.1", 0), Handler)
         with server:
+            from localweb.sharing import Sharing
+
             server.jobs = Jobs(directory)
+            server.sharing = Sharing(server, directory)
             server.launch, server.cookie, server.token = (
                 secrets.token_urlsafe(32) for _ in range(3)
             )
@@ -379,6 +427,7 @@ def start(directory, port, no_browser):
                     webbrowser.open(f"http://127.0.0.1:{server.server_port}/start/{server.launch}")
                 server.serve_forever(poll_interval=0.2)
             finally:
+                server.sharing.close()
                 state(directory).unlink(missing_ok=True)
 
 

@@ -1,6 +1,5 @@
 """Desktop target editor and native matrix parity on local, offline inputs."""
 
-import csv
 import json
 import tempfile
 import unittest
@@ -9,7 +8,7 @@ from pathlib import Path
 from threading import Event
 
 from localweb.operations import Operations
-from localweb.port_tools import matrix_fields, matrix_observation
+from localweb.port_tools import matrix_observation
 
 from aruba2930f_backup.models import DeviceTarget
 from aruba2930f_backup.poe_power import (
@@ -21,7 +20,6 @@ from aruba2930f_backup.poe_power import (
     PowerEvidence,
 )
 from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
-from aruba2930f_backup.poe_query_report import write_query_csv
 from aruba2930f_backup.port_control import PortSnapshot
 
 
@@ -58,6 +56,8 @@ class TargetToolTests(unittest.TestCase):
         seeded = self.ops._inventory
         for bad in (
             {"targets": "not-a-switch 2"},
+            {"targets": "ip,ssh_port,interfaces,label\n192.0.2.5,22,1,라벨"},
+            {"targets": '192.0.2.5,22,"1,2",라벨'},
             {"rows": [{"ip": "192.0.2.7\n192.0.2.8", "interfaces": "3"}]},
             {"rows": [{"ip": "192.0.2.7", "ssh_port": 0, "interfaces": "4"}]},
             {"targets": "192.0.2.7 2", "mode": "bad"},
@@ -67,7 +67,7 @@ class TargetToolTests(unittest.TestCase):
             self.assertEqual(self.ops._inventory, seeded)
         self.assertEqual(original["groups"][0]["interfaces"], ["1", "2"])
 
-    def test_live_observation_and_export_fields_use_native_state(self):
+    def test_live_observation_uses_native_state(self):
         group = PoETarget(DeviceTarget("192.0.2.5", 2222), ("1/1",), "창고")
         for complete, expected in [(True, "unknown"), (False, "loading")]:
             native = PoEQueryResult(group, "1/1", QueryStatus.FAILED, complete=complete)
@@ -75,16 +75,19 @@ class TargetToolTests(unittest.TestCase):
             self.assertEqual(live["matrix_state"], expected)
             self.assertEqual(live["interface"], "1/1")
             self.assertEqual(live["ssh_port"], 2222)
-            self.assertEqual({k: live[k] for k in matrix_fields(native)}, matrix_fields(native))
+            self.assertIs(live["complete"], complete)
 
-    def test_live_progress_preserves_csv_measurement_supply_and_neighbor_evidence(self):
+    def test_live_rows_and_progress_share_measurement_supply_and_neighbor_evidence(self):
         target = DeviceTarget("192.0.2.5")
         group = PoETarget(target, ("1",))
         snapshot = PortSnapshot(
             target, "1", "switch", "2930F", True, "Down", True, "Delivering", 1.2, ""
         )
         neighbor = LLDPNeighbor(
-            system_name="회의실", model="AP-535", system_description="Aruba AP-535"
+            system_name="=회의실",
+            model="AP-535",
+            system_description="Aruba AP-535",
+            power=PowerEvidence(requested_watts=Decimal("20.25")),
         )
         native = PoEQueryResult(
             group,
@@ -102,30 +105,15 @@ class TargetToolTests(unittest.TestCase):
             ),
         )
         live = matrix_observation(native)
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "query.csv"
-            write_query_csv(path, [native])
-            with path.open(encoding="utf-8-sig", newline="") as handle:
-                (saved,) = csv.DictReader(handle)
+        self.ops.last_results = (native,)
+        (final,) = self.ops._matrix_rows()
+        self.assertEqual(live, {k: final[k] for k in live})
         self.assertIs(live["complete"], True)
-        self.assertEqual(saved["complete"], "yes")
-        self.assertEqual(live["watts"], float(saved["watts"]))
+        self.assertEqual(live["watts"], 1.2)
         self.assertIs(live["poe_enabled"], True)
-        self.assertEqual(saved["poe_enabled"], "yes")
-        for key in (
-            "status",
-            "poe_status",
-            "lldp_status",
-            "lldp_error_code",
-            "assessment_status",
-            "assessment_reason",
-            "requested_watts",
-            "allocated_watts",
-        ):
-            self.assertEqual(live[key], saved[key])
-        (saved_neighbor,) = json.loads(saved["lldp_neighbors"])
-        (live_neighbor,) = live["lldp_neighbors"]
-        self.assertEqual(live_neighbor, {key: saved_neighbor[key] for key in live_neighbor})
-        self.assertEqual(
-            list(live["power_evidence"]["issues"]), json.loads(saved["power_evidence"])["issues"]
-        )
+        self.assertEqual(live["requested_watts"], "20")
+        self.assertEqual(live["allocated_watts"], "10")
+        data = json.loads(json.dumps(live))
+        self.assertEqual(data["power_evidence"]["issues"], ["충돌"])
+        self.assertEqual(data["lldp_neighbors"][0]["system_name"], "=회의실")
+        self.assertEqual(data["lldp_neighbors"][0]["power"]["requested_watts"], "20.25")

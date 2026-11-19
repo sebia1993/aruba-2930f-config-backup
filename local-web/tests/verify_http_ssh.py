@@ -6,12 +6,12 @@ release. ARUBA_WEB_PYTHON can select its bundled runtime/python.exe.
 
 from __future__ import annotations
 
-import csv
 import http.cookiejar
 import io
 import json
 import logging
 import os
+import site
 import subprocess
 import sys
 import tempfile
@@ -196,10 +196,9 @@ def exercise(http, switch):
     row = ports["rows"][0]
     assert row["status"] == "ok" and row["eligibleOff"], (row["status"], row["message"])
     assert row["link_status"] == "Up" and float(row["watts"]) == 8.1
-    text = http.download(ports["files"][0]).decode("utf-8-sig")
-    saved = next(csv.DictReader(io.StringIO(text)))
-    assert saved["interface"] == "1" and "fixture-ap" in saved["ap_names"]
-    assert saved["link_status"] == "Up" and saved["enabled"] == "yes"
+    assert not ports.get("files")
+    assert row["interface"] == "1" and row["enabled"] is True
+    assert [n["system_name"] for n in row["lldp_neighbors"]] == ["fixture-ap"]
     assert switch.commands.count("show interfaces status") == 1
     profile = http.job("profiles.export", targets=address + " 1")["files"][0]
     profile_text = http.download(profile).decode("utf-8")
@@ -281,6 +280,10 @@ def main():
             APPDATA=str(roaming),
             HOME=str(profile),
         )
+        if python == Path(sys.executable):
+            environment["PYTHONPATH"] = os.pathsep.join(
+                filter(None, [site.getusersitepackages(), environment.get("PYTHONPATH")])
+            )
         command = [
             str(python),
             "-B",
@@ -322,7 +325,7 @@ def main():
                 assert switch.password not in log.read_text(encoding="utf-8")
             print(
                 f"PASS {info['version']} HTTP + real loopback SSH: trust boundary, backup, downloads, "
-                "live logging, AP-535 query/CSV, profiles, confirmed OFF/ON, replay rejection, "
+                "live logging, AP-535 live query, profiles, confirmed OFF/ON, replay rejection, "
                 "audit history, session close and server shutdown."
             )
         finally:

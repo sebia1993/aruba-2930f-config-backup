@@ -1,6 +1,5 @@
 """Offline exercise of the same web operations, exporters and native parsers used on site."""
 
-import csv
 import json
 import secrets
 import shutil
@@ -401,7 +400,7 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual(history[299]["hostname"], "edge299")
         self.assertEqual(history[-1]["run"], "2020-03-15/000001")
 
-    def test_port_query_uses_native_evidence_and_csv_and_session_invalidation(self):
+    def test_port_query_uses_native_evidence_without_generating_files(self):
         self.session.read_interfaces.return_value = (
             "Port Type | Alert Enabled Status Mode\n24 100/1000T | No Yes Down Auto"
         )
@@ -421,22 +420,19 @@ class OperationsTests(unittest.TestCase):
         (row,) = response["rows"]
         self.assertEqual(
             (row["ip"], row["ssh_port"], row["status"], row["interface"], row["watts"]),
-            (self.target.ip, "2222", "ok", "24", "13.2"),
+            (self.target.ip, 2222, "ok", "24", 13.2),
         )
         self.assertIn("sample-ap", row["ap_names"])
         self.assertIn("poe_off", row["eligible_operations"])
         self.assertEqual(row["link_status"], "Up")
         self.assertIsNotNone(self.ops.last_results[0].snapshot)
-        path = self.base / self.call("ports.export")["files"][0]["id"]
-        with path.open(encoding="utf-8-sig", newline="") as stream:
-            (native,) = csv.DictReader(stream)
-        self.assertEqual(native["watts"], "13.2")
-        self.assertNotIn("eligible_operations", native)
+        self.assertNotIn("files", response)
+        self.assertFalse((self.base / "outputs").exists())
+        with self.assertRaises(ValueError):
+            self.call("ports.export")
         self.call("session.close")
         self.assertEqual(self.ops.last_results, ())
         self.assertEqual(self.ops.session_summary(), {"active": False, "username": ""})
-        with self.assertRaises(ValueError):
-            self.call("ports.export")
 
     def test_link_sample_and_completion_timestamps_follow_the_independent_reads(self):
         self.session.read_interfaces.return_value = (
@@ -483,15 +479,7 @@ class OperationsTests(unittest.TestCase):
                     self.assertEqual(
                         datetime.fromisoformat(row["lldp_observed_at"]).second, 10 + number
                     )
-                    self.assertEqual(row["watts"], "2.0")
-                with (self.base / response["files"][0]["id"]).open(
-                    encoding="utf-8-sig", newline=""
-                ) as stream:
-                    reader = csv.DictReader(stream)
-                    self.assertEqual(reader.fieldnames[-1], "link_observed_at")
-                    self.assertEqual(
-                        [r["link_observed_at"] for r in reader], ["" if rejected else completed, ""]
-                    )
+                    self.assertEqual(row["watts"], 2.0)
 
     def test_display_inspection_preserves_physical_link_without_authorizing_bad_poe(self):
         self.session.read_interfaces.return_value = (

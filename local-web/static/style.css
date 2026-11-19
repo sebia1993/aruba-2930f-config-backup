@@ -127,10 +127,8 @@ dialog::backdrop { background: #030c17bc; }
 .key-list code { overflow-wrap:anywhere }
 
 .port-workspace-bar { margin-bottom: 12px; }
-.port-workspace-bar .primary { margin-inline-start: auto; }
 .port-workspace-bar button[aria-pressed="true"] { border-color: var(--teal); color: var(--teal); }
-#liveResultsBar { margin: 0 0 12px; }
-#csvViewer { border: 1px solid var(--line); border-radius: 12px; }
+#matrixViewer { border: 1px solid var(--line); border-radius: 12px; }
 #portMonitor,#liveScope { margin-bottom: 16px; }
 #portLiveControl .panelbody { grid-template-columns: minmax(0,1fr); }
 .control-target { margin: 0; color: var(--teal); overflow-wrap: anywhere; }

@@ -4,11 +4,12 @@ import json
 import os
 import re
 import site
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -97,7 +98,7 @@ def assert_theme_action(page, mode):
 def verify_standalone_themes(page):
     viewer = page.context.browser.new_page(storage_state=page.context.storage_state())
     try:
-        for path in ("/logs", "/csv"):
+        for path in ("/logs", "/matrix"):
             viewer.goto(urljoin(page.url, path))
             assert_theme_action(viewer, "dark")
             toggle = viewer.locator("#themeToggle")
@@ -111,10 +112,43 @@ def verify_standalone_themes(page):
         viewer.close()
 
 
+def verify_retired_port_files(page, data_folder):
+    # Simulate an upgrade with a real pre-existing handle, without touching the user's files.
+    old = data_folder / "outputs" / "prior-release" / "port-query.csv"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b"ip,interface\r\n")
+    handle = "0" * 31 + "1"
+    with closing(sqlite3.connect(data_folder / "web-history.sqlite")) as database, database:
+        database.execute(
+            "INSERT INTO downloads (id,path) VALUES (?,?)",
+            (handle, str(old.relative_to(data_folder))),
+        )
+        files = json.dumps([{"name": old.name, "id": handle}])
+        for job_id, action in (("old-export", "ports.export"), ("old-query", "ports.query")):
+            database.execute(
+                "INSERT INTO jobs(id,action,state,summary,files) VALUES(?,?,?,?,?)",
+                (job_id, action, "done", "이전 조회", files),
+            )
+    for path in ("/csv", "/static/csv.html", "/download/" + handle):
+        assert page.request.get(urljoin(page.url, path)).status == 404
+    token = page.request.get(urljoin(page.url, "/api/bootstrap")).json()["token"]
+    response = page.request.post(
+        urljoin(page.url, "/api/jobs"),
+        headers={"X-Local-Token": token},
+        data={"action": "ports.export", "body": {}},
+    )
+    assert response.status == 400
+    history = page.request.get(urljoin(page.url, "/api/history")).json()["items"]
+    assert all(item["action"] != "ports.export" for item in history)
+    assert next(item["files"] for item in history if item["id"] == "old-query") == []
+    assert old.is_file()
+
+
 def exercise(page, url, switch, second_switch, shots, backup_directory):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(url)
+    verify_retired_port_files(page, backup_directory.parent)
     expect(page.locator("#version")).to_contain_text("v1.")
     logs = page.frame_locator("#logViewer")
     expect(logs.locator("#sourceSummary")).to_have_text("로그 미선택")
@@ -142,9 +176,9 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     if shots:
         page.screenshot(path=shots / "02-mobile-log-dashboard.png")
 
-    # Opening the lazy CSV viewer after a switch and reloading should keep both viewers in sync.
+    # Opening the live matrix after a switch and reloading should keep both viewers in sync.
     nav("ports")
-    matrix = page.frame_locator("#csvViewer")
+    matrix = page.frame_locator("#matrixViewer")
     expect(matrix.locator("html")).to_have_attribute("data-theme", "light")
     page.reload()
     assert_theme_action(page, "light")
@@ -203,44 +237,37 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
         report.click()
     assert report_event.value.path().read_bytes()[:2] == b"PK"
     nav("ports")
-    expect(page.get_by_role("link", name="관제·비교·제어", exact=True)).to_have_count(1)
+    expect(page.get_by_role("link", name="관제·제어", exact=True)).to_have_count(1)
     expect(page.locator('nav a[href="#csv"]')).to_have_count(0)
-    csv_frame = page.frame_locator("#csvViewer")
-    expect(csv_frame.locator("#matrix [data-port-key]")).to_have_count(0)
+    matrix_frame = page.frame_locator("#matrixViewer")
+    expect(matrix_frame.locator("#sourceBar")).to_be_visible()
+    expect(matrix_frame.locator('input[type="file"]')).to_have_count(0)
+    expect(page.locator('input[type="file"][accept*="csv" i]')).to_have_count(0)
+    expect(matrix_frame.locator("#matrix [data-port-key]")).to_have_count(0)
     page.locator("#queryTargets").fill(address + " 1")
     page.locator("#queryForm .primary").click()
-    expect(csv_frame.locator("#tbody")).to_be_visible(timeout=90000)
-    expect(csv_frame.locator("#tbody")).to_contain_text("fixture-ap")
-    expect(csv_frame.locator("#matrix [data-port-key]")).to_have_attribute("data-state", "normal")
-    expect(page.locator("#csvViewer")).to_be_visible()
-    expect(csv_frame.locator("#tbody")).to_contain_text("8.1 W")
-    csv_frame.locator("#tbody").get_by_role("button", name=re.compile("상세 보기")).click()
-    expect(csv_frame.locator("#detail")).to_contain_text("fixture-ap")
+    expect(matrix_frame.locator("#tbody")).to_be_visible(timeout=90000)
+    expect(matrix_frame.locator("#tbody")).to_contain_text("fixture-ap")
+    expect(matrix_frame.locator("#matrix [data-port-key]")).to_have_attribute(
+        "data-state", "normal"
+    )
+    expect(page.locator("#matrixViewer")).to_be_visible()
+    expect(matrix_frame.locator("#tbody")).to_contain_text("8.1 W")
+    matrix_frame.locator("#tbody").get_by_role("button", name=re.compile("상세 보기")).click()
+    expect(matrix_frame.locator("#detail")).to_contain_text("fixture-ap")
     page.locator("#refreshSwitch").click()
     expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
-    expect(page.locator("#csvViewer")).to_be_visible()
-    csv_frame.locator("#status").select_option("off")
-    expect(csv_frame.locator("#tbody tr[data-port-key]")).to_have_count(0)
-    csv_frame.locator("#status").select_option("all")
-    with page.expect_download() as output:
-        page.locator('#queryFiles a[download$=".csv"]').click()
-    csv_data = output.value.path().read_bytes()
-    assert "fixture-ap" in csv_data.decode("utf-8-sig")
+    expect(page.locator("#matrixViewer")).to_be_visible()
+    matrix_frame.locator("#status").select_option("off")
+    expect(matrix_frame.locator("#tbody tr[data-port-key]")).to_have_count(0)
+    matrix_frame.locator("#status").select_option("all")
     if shots:
         page.screenshot(path=shots / "03-live-port-query.png")
-    expect(csv_frame.locator("#tbody")).to_contain_text("fixture-ap", timeout=20000)
+    expect(matrix_frame.locator("#tbody")).to_contain_text("fixture-ap", timeout=20000)
     page.locator("#portReviewTab").click()
-    expect(csv_frame.locator("#extraView")).to_be_visible()
+    expect(matrix_frame.locator("#extraView")).to_be_visible()
     page.locator("#portMonitorTab").click()
-    with page.expect_file_chooser() as comparison_event:
-        page.locator("#portCompareTab").click()
-    comparison_event.value.set_files(
-        {"name": "earlier.csv", "mimeType": "text/csv", "buffer": csv_data}
-    )
-    expect(csv_frame.locator("h1")).to_contain_text("비교")
-    expect(csv_frame.locator("#extraView")).to_contain_text("변화 목록")
-    page.locator("#showMatrix").click()
-    expect(page.locator("#csvViewer")).to_be_visible()
+    expect(page.locator("#matrixViewer")).to_be_visible()
     page.locator("#selectEligible").click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     with click_quick_poe(page, "poe_on", [(address, "1")]):
@@ -262,7 +289,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
             page, address, "미측정" if expected else "8.1 W", "8.1 W" if expected else "미측정"
         )
         assert switch.poe_enabled is expected
-        expect(page.locator("#csvViewer")).to_be_visible()
+        expect(page.locator("#matrixViewer")).to_be_visible()
     page.locator("#operation").select_option("poe_off")
     page.locator("#selectEligible").click()
     page.locator("#preview").click()
@@ -276,7 +303,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
     assert not switch.poe_enabled
     expect_power_result(page, address, "8.1 W", "미측정")
-    expect(page.locator("#csvViewer")).to_be_visible()
+    expect(page.locator("#matrixViewer")).to_be_visible()
     page.locator("#controlMode").select_option("single")
     page.locator("#singleIP").fill(address)
     page.locator("#singlePort").fill("1")
@@ -310,6 +337,8 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     logs.locator("#navAll").click()
     nav("history")
     expect(page.locator("#historyTable")).to_contain_text("구성 백업")
+    expect(page.locator("#historyTable")).to_contain_text("포트 조회")
+    expect(page.locator('#historyTable a[download$=".csv" i]')).to_have_count(0)
     page.locator("#historyTable").get_by_role("button", name="결과 폴더 열기").first.click()
     expect(page.locator("#controlHistory")).to_be_visible()
     page.locator("#controlHistory").click()
@@ -440,7 +469,7 @@ def run_browser_case(case, *, switch_factory=MonitorFixture):
 def main():
     run_browser_case(exercise)
     print(
-        "PASS Chrome UI: local launch, three log states, themes, mobile layout, host trust, XLSX and CSV downloads, live matrix, CSV comparison, confirmed batch/single SSH writes on loopback, live logs, history, session close and shutdown."
+        "PASS Chrome UI: local launch, three log states, themes, mobile layout, host trust, XLSX downloads, live matrix and review, confirmed batch/single SSH writes on loopback, live logs, history, session close and shutdown."
     )
 
 

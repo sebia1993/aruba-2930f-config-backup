@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import csv
-import io
 import re
 import tempfile
 import threading
@@ -38,7 +36,6 @@ from aruba2930f_backup.poe_query_models import (
     PoETarget,
     QueryStatus,
 )
-from aruba2930f_backup.poe_query_report import query_csv_record, write_query_csv
 from aruba2930f_backup.poe_targets import (
     MAX_PASTE_CHARACTERS,
     MAX_PROFILE_BYTES,
@@ -64,7 +61,7 @@ from aruba2930f_backup.validation import require_valid_prompt, validate_device_i
 from .backup_destination import copy_backup_files, selected_directory
 from .backup_history import backup_history
 from .backup_tools import BackupProgress, HistoryFolders, pick_directory
-from .port_tools import group_targets, matrix_fields, matrix_observation, preview_targets
+from .port_tools import group_targets, matrix_observation, preview_targets, target_table
 
 POWER_SETTLE_SECONDS = 3
 MAX_LOG_BATCH_BYTES = 8 * 1024 * 1024
@@ -395,8 +392,6 @@ class Operations:
             return self._query(
                 _groups(body), self.credentials, cancel, refresh=action == "ports.refresh"
             )
-        if action == "ports.export":
-            return self._export_query(with_rows=False)
         if action == "backup.run":
             return self._backup(body, self.credentials, cancel)
         if action == "logs.query":
@@ -433,7 +428,7 @@ class Operations:
         for row in observed:
             if row.complete and row.status is QueryStatus.OK and row.snapshot:
                 self.unverified_controls.discard((row.group.target, row.interface))
-        result = self._export_query(with_rows=True)
+        result = {"rows": self._matrix_rows()}
         if not refresh:
             result["groups"] = self.inventory_view()
         return result
@@ -576,12 +571,7 @@ class Operations:
             for key in registered:
                 if outcomes[key] == "unverified":
                     self.unverified_controls.add(key)
-            try:
-                result.update(self._export_query(with_rows=True))
-            except OSError, ValueError:
-                # A CSV filesystem error must not hide actual readings or resurrect an old CSV.
-                result.update(rows=self._matrix_rows(), files=[])
-                result["powerRefresh"]["message"] = "전력 조회 결과 CSV를 저장하지 못했습니다."
+            result["rows"] = self._matrix_rows()
         return result
 
     def _merge_query_results(self, groups, observed, cancelled):
@@ -658,24 +648,7 @@ class Operations:
             path = Path(directory) / "targets.json"
             path.write_text(text.removeprefix("\ufeff"), encoding="utf-8")
             groups = load_target_profile(path)
-        table = io.StringIO(newline="")
-        writer = csv.writer(table, dialect="excel-tab")
-        writer.writerow(["IP", "ssh_port", "interfaces", "label"])
-        for group in groups:
-            writer.writerow(
-                [group.target.ip, group.target.port, ",".join(group.interfaces), group.label]
-            )
-        return {"targets": table.getvalue()}
-
-    def _export_query(self, *, with_rows: bool) -> dict:
-        if not self.last_results:
-            raise ValueError("먼저 스위치 포트를 조회하세요.")
-        path = self._run_dir() / "port-query.csv"
-        write_query_csv(path, self.last_results)
-        result = {"files": [self._file(path)]}
-        if with_rows:
-            result["rows"] = self._matrix_rows()
-        return result
+        return {"targets": target_table(groups)}
 
     def _matrix_rows(self):
         rows = []
@@ -683,8 +656,7 @@ class Operations:
             key = native.group.target, native.interface
             locked = key in self.unverified_controls
             allowed = [] if locked or key in self._unreported_ports else _eligible(native)
-            values = query_csv_record(native)
-            values.update(matrix_fields(native))
+            values = matrix_observation(native)
             values.update(
                 eligible_operations=allowed, eligibleOff=PortAction.POE_OFF.value in allowed
             )
