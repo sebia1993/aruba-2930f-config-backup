@@ -9,6 +9,7 @@ from browser_qa import (
     enter_ssh_credentials,
     expect_power_result,
     open_port_controls,
+    open_target_editor,
     run_browser_case,
 )
 from playwright.sync_api import expect
@@ -76,6 +77,15 @@ def verify_viewport_controls(page, view, endpoint, other_endpoint):
         filter_toggle = view.locator("#shortFilterToggle")
         if search.is_hidden():
             page.mouse.click(*hit_point(filter_toggle))
+        if filter_toggle.is_visible():
+            expect(view.locator("#filterOptionsToggle")).to_be_hidden()
+            for selector in ("#site", "#zoom", "#clearFilters"):
+                expect(view.locator(selector)).to_be_visible()
+        else:
+            advanced = view.locator("#filterOptionsToggle")
+            advanced.click()
+            expect(view.locator("#clearFilters")).to_be_visible()
+            advanced.click()
         page.mouse.click(*hit_point(search))
         search.fill(other_endpoint)
         expect(tiles).to_have_count(1)
@@ -178,7 +188,19 @@ def select_measured_port(page, matrix_view, changed, available, untouched_switch
 def leave_failed_port_inspection_for_batch(page, matrix_view, failed, available):
     page.locator("#matrixView").click()
     matrix_view.locator(f'#matrix [data-port-key="{failed}/1"]').click()
-    matrix_view.locator("#inspectObservedPort").click()
+    expect(matrix_view.locator("#inspectObservedPort, #reviewObservedPort")).to_have_count(0)
+    inspect = page.locator("#portActionStrip").get_by_role(
+        "button", name="현재 상태 조회", exact=True
+    )
+    expect(inspect).to_be_enabled()
+    expect(page.get_by_role("button", name="현재 상태 조회", exact=True)).to_have_count(1)
+    with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")) as req:
+        inspect.click()
+    ip, ssh_port = failed.rsplit(":", 1)
+    assert req.value.post_data_json == {
+        "action": "control.inspect",
+        "body": {"targets": [{"ip": ip, "sshPort": int(ssh_port), "port": "1"}]},
+    }
     mode = page.locator("#controlMode")
     expect(mode).to_have_value("single", timeout=60000)
     expect(mode).to_be_disabled()
@@ -238,24 +260,24 @@ def exercise(page, url, switch, second, shots, _backup):
     ports_menu.click()
     expect(ports_menu).to_have_attribute("href", "#ports")
     expect(page.locator("#crumb")).to_have_text("포트·PoE 관리")
-    combined = page.locator("#portMonitorTab")
-    expect(combined).to_have_accessible_name("관제")
+    review = page.locator("#portReviewTab")
+    expect(review).to_have_attribute("aria-pressed", "false")
+    expect(page.locator("#portMonitorTab")).to_have_count(0)
     workspace = page.locator('[data-page="ports"]')
     expect(workspace.get_by_role("heading", name="포트·PoE 관리", exact=True)).to_have_count(1)
     expect(workspace.locator("#portLiveTab")).to_have_count(0)
     expect(workspace.get_by_role("button", name="실시간 조회", exact=True)).to_have_count(0)
     expect(workspace.locator("#queryForm")).to_be_visible()
     expect(workspace.locator("#queryTargets")).to_be_editable()
-    target_options = workspace.locator("#targetOptions > summary")
-    target_options.click()
+    open_target_editor(page)
     with page.expect_file_chooser() as picker:
         page.locator("[data-import=queryTargets]").click()
     picker.value.set_files({"name": "targets.csv", "mimeType": "text/csv", "buffer": b"ip,port"})
-    expect(page.locator("#statusText")).to_contain_text("허용 형식")
+    expect(page.locator("#targetMessage")).to_contain_text("허용 형식")
     expect(page.locator("#queryTargets")).to_have_value("")
+    page.locator("#targetClose").click()
     page.locator("#dismissStatus").click()
-    target_options.click()
-    for name in ("관제", "우선 확인", "포트 조회"):
+    for name in ("우선 확인", "포트 조회"):
         expect(workspace.get_by_role("button", name=name, exact=True)).to_have_count(1)
     for selector in (
         "#openPortCsv",
@@ -313,7 +335,7 @@ def exercise(page, url, switch, second, shots, _backup):
     tiles = matrix_view.locator("#matrix [data-port-key]")
     expect(tiles).to_have_count(2, timeout=90000)
     verify_viewport_controls(page, matrix_view, *addresses)
-    expect(combined).to_have_attribute("aria-pressed", "true")
+    expect(review).to_have_attribute("aria-pressed", "false")
     expect(page.locator("#batchControls")).to_be_hidden()
     checkboxes = matrix_view.locator("#tbody input[data-control-key]")
     expect(checkboxes).to_have_count(2)
@@ -324,11 +346,14 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#queryForm")).to_be_visible()
     expect(page.locator("#matrixViewer")).to_be_visible()
     expect(page.locator("#queryPorts")).to_be_enabled()
-    expect(page.locator("#portReviewTab")).to_be_enabled()
-    page.locator("#portReviewTab").click()
+    expect(review).to_be_enabled()
+    review.click()
+    expect(review).to_have_attribute("aria-pressed", "true")
     expect(matrix_view.locator("#extraView")).to_be_visible()
     expect(page.locator("#queryForm")).to_be_visible()
-    page.locator("#portMonitorTab").click()
+    review.click()
+    expect(review).to_have_attribute("aria-pressed", "false")
+    expect(matrix_view.locator("#extraView")).to_be_hidden()
 
     # Phone-sized users can explicitly pick and unpick a batch without opening the table.
     resize_workspace(page, 390, 844)
@@ -475,7 +500,7 @@ def exercise(page, url, switch, second, shots, _backup):
         after_write = fixture.commands.index(off_command) + 1
         assert fixture.commands[after_write:].count(power_read) >= 2
     expect(page.locator("#matrixViewer")).to_be_visible()
-    expect(combined).to_have_attribute("aria-pressed", "true")
+    expect(review).to_have_attribute("aria-pressed", "false")
     expect(page.locator("#selectedCount")).to_have_text("선택 0개")
     failed_row = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"]')
     ready_row = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"]')

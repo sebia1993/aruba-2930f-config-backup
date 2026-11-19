@@ -134,7 +134,7 @@ def exercise(page, url, switch, _second, _shots, _backup):
     expect(page.locator("#matrixWorkspace #controlHeading")).to_be_visible()
     expect(page.locator("#controlPanel")).not_to_have_attribute("open", "")
     assert "configure terminal" not in switch.commands
-    page.locator("#portMonitorTab").click()
+    page.locator("#portReviewTab").click()
     matrix.locator("#status").select_option("normal")
     expect(result_tiles).to_have_count(1)
     result_tiles.click()
@@ -158,7 +158,7 @@ def exercise(page, url, switch, _second, _shots, _backup):
         expect(current).to_have_attribute("data-state", "unclassified")
         expect(tiles.nth(1)).to_have_attribute("data-state", "limited")
         expect(page.locator("#queryTargets")).not_to_be_editable()
-        expect(page.locator("[data-import=queryTargets]")).to_be_disabled()
+        expect(page.locator("#manageTargets")).to_be_disabled()
         expect(page.locator("#matrixViewer")).to_be_hidden()
         current.click()
         detail = page.locator("#matrixDetails")

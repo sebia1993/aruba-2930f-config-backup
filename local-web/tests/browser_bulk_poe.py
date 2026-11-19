@@ -9,6 +9,7 @@ from browser_qa import (
     enter_ssh_credentials,
     expect_power_result,
     open_port_controls,
+    open_target_editor,
     run_browser_case,
 )
 from playwright.sync_api import expect
@@ -185,10 +186,9 @@ def run_range(page, url, switch, second, shots, output):
     # Registration is offline. The first quick action asks for the account in place.
     address = f"127.0.0.1:{switch.port}"
     page.locator("#queryTargets").fill(address + " 2")
-    page.locator("#targetOptions > summary").click()
-    page.locator("#targetVerify").click()
+    open_target_editor(page)
+    page.locator("#verifyEditor").click()
     page.locator("#acceptTargets").click()
-    page.locator("#targetOptions > summary").click()
     open_port_controls(page)
     page.get_by_role("button", name="범위 전체 선택", exact=True).click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")

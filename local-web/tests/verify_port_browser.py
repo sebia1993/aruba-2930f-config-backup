@@ -9,7 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from browser_qa import open_port_controls
+from browser_qa import open_port_controls, open_target_editor
 from playwright.sync_api import expect, sync_playwright
 from verify_http_ssh import MonitorFixture
 
@@ -112,9 +112,11 @@ def exercise(page, switch):
     page.on("pageerror", lambda error: issues.append(str(error)))
     page.locator('nav a[href="#ports"]').click()
     expect(page.locator("#queryForm")).to_be_visible()
-    expect(page.locator("#targetRows")).to_be_hidden()
-    page.locator("#targetOptions > summary").click()
-    page.locator("#targetRows").click()
+    expect(page.locator("#manageTargets")).to_be_visible()
+    expect(page.locator("#targetOptions, #targetRows, #targetPaste, #targetVerify")).to_have_count(
+        0
+    )
+    open_target_editor(page, "rows")
     page.locator('#editTargetRows input[data-field="ip"]').fill("127.0.0.1")
     page.locator('#editTargetRows input[data-field="interfaces"]').fill("1")
     page.locator("#advancedTargets").check()
@@ -131,9 +133,65 @@ def exercise(page, switch):
     page.locator("#matrixSize").select_option("large")
     expect(page.locator("#matrixGroups")).to_have_attribute("data-zoom", "large")
     source = page.locator("#queryTargets").input_value()
+    open_target_editor(page)
+    draft = page.locator("#editorTargets")
+    expect(draft).to_have_value(source)
+    draft.fill("192.0.2.45 1")
+    page.locator("#verifyEditor").click()
+    expect(page.locator("#acceptTargets")).to_be_enabled()
+    draft.fill("192.0.2.46 2")
+    expect(page.locator("#acceptTargets")).to_be_disabled()
+    page.locator("#targetClose").click()
+    expect(page.locator("#queryTargets")).to_have_value(source)
+    expect(page.locator(".matrix-tile")).to_have_count(1)
+    # File imports operate on the editor draft until the operator reviews and applies it.
+    open_target_editor(page)
+    page.locator("#exportProfile").click()
+    saved_profile = page.locator("#targetEditor #profileFiles a").first
+    expect(saved_profile).to_be_visible()
+    with page.expect_download() as download:
+        saved_profile.click()
+    profile = Path(download.value.path()).read_bytes()
+    importer = page.locator("#targetEditor [data-import=queryTargets]")
+    candidate = "192.0.2.45 2-3"
+    for apply in (False, True):
+        with page.expect_file_chooser() as picker:
+            importer.click()
+        picker.value.set_files(
+            {"name": "targets.txt", "mimeType": "text/plain", "buffer": candidate.encode()}
+        )
+        expect(draft).to_have_value(candidate)
+        expect(page.locator("#queryTargets")).to_have_value(source)
+        expect(page.locator(".matrix-tile")).to_have_count(1)
+        if apply:
+            page.locator("#verifyEditor").click()
+            page.locator("#acceptTargets").click()
+        else:
+            page.locator("#targetClose").click()
+            expect(page.locator("#queryTargets")).to_have_value(source)
+            open_target_editor(page)
+    expect(page.locator(".matrix-tile")).to_have_count(2)
+    applied_text = page.locator("#queryTargets").input_value()
+    open_target_editor(page)
+    with page.expect_file_chooser() as picker:
+        importer.click()
+    picker.value.set_files(
+        {"name": "targets.json", "mimeType": "application/json", "buffer": profile}
+    )
+    expect(draft).to_have_value(source)
+    expect(page.locator("#queryTargets")).to_have_value(applied_text)
+    expect(page.locator(".matrix-tile")).to_have_count(2)
+    page.locator("#verifyEditor").click()
+    expect(page.locator("#targetPreview")).to_contain_text("교육동")
+    expect(page.locator("#targetPreview")).to_contain_text(str(switch.port))
+    page.locator("#acceptTargets").click()
+    expect(page.locator("#targetEditor")).to_be_hidden()
+    expect(page.locator("#queryTargets")).to_have_value(source)
+    expect(page.locator(".matrix-tile")).to_have_count(1)
     bulk = "\n".join(f"192.0.{n // 250 + 1}.{n % 250 + 1} 1-48" for n in range(300))
     page.locator("#queryTargets").fill(bulk)
-    page.locator("#targetVerify").click()
+    open_target_editor(page)
+    page.locator("#verifyEditor").click()
     expect(page.locator("#targetMessage")).to_contain_text("300대 · 14400개")
     page.locator("#acceptTargets").click()
     expect(page.locator(".matrix-tile")).to_have_count(192)
@@ -144,11 +202,12 @@ def exercise(page, switch):
     expect(page.locator("#matrixDetails")).to_be_visible()
     assert page.evaluate("scrollY === 0 && document.documentElement.scrollWidth <= innerWidth")
     page.locator("#queryTargets").fill(source)
-    page.locator("#targetVerify").click()
+    open_target_editor(page)
+    page.locator("#verifyEditor").click()
     expect(page.locator("#targetMessage")).to_contain_text("1대 · 1개")
     page.locator("#acceptTargets").click()
     expect(page.locator(".matrix-tile")).to_have_count(1)
-    page.locator("#targetPaste").click()
+    open_target_editor(page, "paste")
     page.locator("#pasteMode").select_option("append")
     page.locator("#pasteTargets").fill("192.0.2.2\t1/1,1/2\n192.0.2.2\t1/2")
     page.locator("#verifyEditor").click()
@@ -160,14 +219,14 @@ def exercise(page, switch):
     page.locator("#inventorySearch").fill("교육동")
     expect(page.locator(".matrix-tile")).to_have_count(1)
     page.locator("#inventorySearch").fill("")
-    page.locator("#targetPaste").click()
+    open_target_editor(page, "paste")
     page.locator("#pasteTargets").fill("bad\t99")
     page.locator("#verifyEditor").click()
     expect(page.locator("#targetMessage")).not_to_have_text("")
     expect(page.locator("#acceptTargets")).to_be_disabled()
     page.locator("#targetClose").click()
     expect(page.locator(".matrix-tile")).to_have_count(3)
-    page.locator("#targetRows").click()
+    open_target_editor(page, "rows")
     page.locator("#editTargetRows tr").filter(
         has=page.locator('input[data-field="ip"]')
     ).last.get_by_role("button", name="삭제").click()
@@ -176,7 +235,6 @@ def exercise(page, switch):
     page.locator("#acceptTargets").click()
     expect(page.locator(".matrix-tile")).to_have_count(1)
     expect(page.locator("#selectedCount")).to_contain_text("선택 0개")
-    page.locator("#targetOptions > summary").click()
     expect(page.locator("#queryTargets")).to_be_editable()
     query_with_inline_credentials(page, switch)
     matrix_view = page.frame_locator("#matrixViewer")
@@ -188,7 +246,7 @@ def exercise(page, switch):
         expect(detail).to_contain_text(fact)
     page.locator("#portReviewTab").click()
     expect(matrix_view.locator("#extraView .dr-list button")).to_have_count(0)
-    page.locator("#portMonitorTab").click()
+    page.locator("#portReviewTab").click()
     tile.click()
     open_port_controls(page)
     page.locator("#refreshPorts").click()
