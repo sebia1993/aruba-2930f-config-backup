@@ -99,7 +99,7 @@ def query_with_inline_credentials(page, switch):
     expect(page.locator('a[href="#connect"]')).to_have_count(0)
     expect(page.locator('[data-page="connect"]')).to_be_hidden()
 
-    submit.click()
+    page.get_by_role("button", name="전체 재조회", exact=True).click()
     expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=45000)
     expect(dialog).to_be_hidden()
     expect(targets).to_have_value(original_targets)
