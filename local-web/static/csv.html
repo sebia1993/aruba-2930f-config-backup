@@ -855,7 +855,7 @@ window.PortViews = (() => {
   function needsRefresh(row) { return liveSelectionId() && row.queryStatus==='ok' && excludedPorts.has(row.key); }
   function labelTile(tile,row) {
     const parts=[row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status],row.apName];
-    if (needsRefresh(row)) parts.push(refreshNotice);
+    if (row.unobserved || needsRefresh(row)) parts.push(refreshNotice);
     const label=parts.filter(Boolean).join(' · ');
     tile.setAttribute('aria-label',label);
     tile.title=label+'\n'+row.reason;
@@ -1335,7 +1335,10 @@ window.PortViews = (() => {
           file.expiredLive=true;
           file.filename='이전 실시간 조회 결과';
         }
-        if (live.length) { updateSource(); showView(state.view); }
+        if (live.length) {
+          if (state.rows.some(row=>row.unobserved)) setDataset();
+          updateSource(); showView(state.view);
+        }
       }
     };
     document.querySelector('.sidebar').hidden=true;
