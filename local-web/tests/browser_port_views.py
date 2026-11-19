@@ -4,7 +4,7 @@ import sys
 
 from browser_power_matrix import PowerMatrixSwitch
 from browser_qa import enter_ssh_credentials, open_port_controls, run_browser_case
-from browser_unified_controls import resize_workspace
+from browser_unified_controls import hit_point, resize_workspace
 from playwright.sync_api import expect
 
 HEADINGS = ["포트 번호", "전력 판정", "실측 W", "LLDP AP 이름"]
@@ -25,7 +25,11 @@ def assert_table_fits(page, frame):
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     for selector in (".tablewrap", "html"):
         assert frame.locator(selector).evaluate("e => e.scrollWidth <= e.clientWidth + 1"), selector
-    assert frame.locator(".resulttable th[scope=col]").all_text_contents() == HEADINGS
+    headings = frame.locator(".resulttable th[scope=col]")
+    assert headings.all_text_contents() == HEADINGS
+    for heading in headings.all():
+        expect(heading).to_be_in_viewport(ratio=1)
+        hit_point(heading)
     assert frame.locator("#tbody tr[data-port-key]").evaluate_all(
         "rows => rows.length > 0 && rows.every(r => r.cells.length === 4)"
     )

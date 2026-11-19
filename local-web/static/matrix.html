@@ -281,6 +281,8 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .embedded .table-foot{padding:5px 9px}
 .embedded .detail-actions .btn{padding:4px 9px;min-height:32px}
 .embedded #portListPane{order:3;flex:1 1 100%;min-width:0}
+.embedded #tableTitle{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.embedded #portListPane>.panel-head{justify-content:flex-end}
 .resulttable{min-width:0;table-layout:fixed}
 .resulttable .port-col{width:19%}.resulttable .power-state-col{width:24%}.resulttable .watts-col{width:17%}
 .resulttable .result-group{cursor:default;background:var(--surface2)}
@@ -336,6 +338,8 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   .embedded .resulttable .port-cell{gap:0}
   .embedded .resulttable .port-check,.embedded .resulttable .row-select{min-height:44px;min-width:44px}
   .embedded .resulttable input[type=checkbox]{width:20px;height:20px;margin:0}
+  /* The iframe scrolls the results on phones. Let its viewport anchor the sticky column headings. */
+  .embedded #portListPane,.embedded section[aria-labelledby=matrixTitle]{overflow:clip}
   .embedded .tablewrap{max-height:none;overflow:visible}
 }
 
@@ -1066,16 +1070,19 @@ window.PortViews = (() => {
   function revealPort(element) {
     if (!element) return;
     const wrap=element.closest('.tablewrap');
-    if (wrap && wrap.scrollHeight>wrap.clientHeight) {
+    const header=wrap ? element.closest('table').tHead.offsetHeight : 0;
+    const innerScroll=wrap && wrap.scrollHeight>wrap.clientHeight;
+    if (innerScroll) {
       const bounds=wrap.getBoundingClientRect(), rect=element.getBoundingClientRect();
-      const top=bounds.top+element.closest('table').tHead.offsetHeight;
+      const top=bounds.top+header;
       if (rect.top<top) wrap.scrollTop+=rect.top-top;
       else if (rect.bottom>bounds.bottom) wrap.scrollTop+=rect.bottom-bounds.bottom;
     }
     // Scroll only the embedded results, keeping the host controls in place.
     const rect=element.getBoundingClientRect(), dock=el('detailTitle').closest('section');
     const bottom=getComputedStyle(dock).position==='sticky' ? Math.min(innerHeight,dock.getBoundingClientRect().top) : innerHeight;
-    if (rect.top<0) window.scrollBy({top:rect.top,behavior:'instant'});
+    const top=innerScroll ? 0 : header;
+    if (rect.top<top) window.scrollBy({top:rect.top-top,behavior:'instant'});
     else if (rect.bottom>bottom) window.scrollBy({top:rect.bottom-bottom,behavior:'instant'});
   }
   function applyPresentation() {
