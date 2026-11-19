@@ -47,12 +47,11 @@ def assert_live_readings(page, switch, expected, *, poe_failed=None):
     open_port_controls(page)
     page.locator("#operation").select_option("poe_off")
     page.locator("#selectEligible").click()
+    page.locator("#listView").click()
     for port, link in expected.items():
         table_row = matrix_view.locator(f'#tbody tr[data-port-key="{endpoint}/{port}"]')
         state = "unclassified" if port == poe_failed else "normal"
         expect(table_row.locator(".pillstat." + state)).to_be_visible()
-        visible_link = "미확인" if link == "확인 불가" else link
-        expect(table_row.get_by_role("cell", name=visible_link, exact=True)).to_be_visible()
         checkbox = table_row.get_by_role("checkbox")
         if port == poe_failed:
             expect(checkbox).to_be_disabled()
@@ -61,6 +60,10 @@ def assert_live_readings(page, switch, expected, *, poe_failed=None):
             expect(checkbox).to_be_checked()
         table_row.locator("button.row-select").click()
         expect(matrix_view.locator("#detail")).to_contain_text(f"인터페이스 {port}")
+        link_field = matrix_view.locator("#detail .dfield").filter(
+            has=matrix_view.get_by_text("관측 당시 링크", exact=True)
+        )
+        expect(link_field.locator(".data")).to_have_text("미확인" if link == "확인 불가" else link)
     page.locator("#clearSelection").click()
     query = page.evaluate("fetch('/api/workspace').then(r => r.json()).then(w => w.query)")
     assert not query.get("files")
@@ -79,6 +82,7 @@ def assert_live_readings(page, switch, expected, *, poe_failed=None):
             assert row["status"] == "ok" and float(row["watts"]) == 8 and row["poe_enabled"] is True
             assert row["enabled"] is (port != "10")
 
+    page.locator("#matrixView").click()
     for port, link in expected.items():
         tile = matrix_view.locator(f'#matrix [data-port-key="{endpoint}/{port}"]')
         expect(tile).to_have_attribute(

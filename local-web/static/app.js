@@ -262,6 +262,12 @@ function updatePortActions() {
   const inspected=!!currentInspection() && !inventory;
   $('matrixViewer').hidden=inventory;
   $('portMonitor').classList.toggle('has-data',!!source?.hasData);
+  const showViews=!!ui.liveId && source?.liveId===ui.liveId;
+  const list=showViews && source.presentation==='list';
+  $('portPresentation').hidden=!showViews;
+  $('matrixView').setAttribute('aria-pressed',String(!list));
+  $('listView').setAttribute('aria-pressed',String(list));
+  $('matrixWorkspaceTitle').textContent=list ? '포트별 조회 결과' : '포트 상태 매트릭스';
   for (const [name,id] of Object.entries(monitorTabs)) $(id).setAttribute('aria-pressed',String(view===name));
   $('portReviewTab').disabled=!source?.hasData || inventory;
   $('portChanges').disabled=$('portReviewTab').disabled || view!=='overview';
@@ -271,6 +277,8 @@ function updatePortActions() {
   window.portTools?.showInventory(inventory);
   updateControlTarget();
 }
+$('matrixView').onclick=()=>monitor()?.setPresentation('matrix');
+$('listView').onclick=()=>monitor()?.setPresentation('list');
 for (const [view,id] of Object.entries(monitorTabs)) {
   $(id).onclick=()=>{
     if (!displayingInventory()) monitor()?.navigate(view);
@@ -722,6 +730,7 @@ function queryPorts(targets) {
   return run('ports.query',{targets},result=>{
     window.portTools.acceptQuery(result.groups);
     receivePorts(result,true);
+    monitor()?.setPresentation('matrix');
     if (ui.rows.some(row=>row.status==='ok')) {
       $('editQueryTargets').hidden=false;
       setQueryExpanded(false);
@@ -931,7 +940,7 @@ $('preview').onclick = () => {
     targets = [{ip,port}];
   } else {
     targets = matrixControlTargets();
-    if (!targets.length) { notify('매트릭스에서 제어할 포트를 선택하세요.',true); return; }
+    if (!targets.length) { notify('제어할 포트를 선택하세요.',true); return; }
   }
   window.controlTools.clearQuickResult();
   $('controlResult').replaceChildren(); $('controlResult').hidden = true;

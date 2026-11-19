@@ -139,6 +139,7 @@ def exercise_port_off(page, switch, address):
     switch.draws = {"1": 5, "2": 7}
     page.locator("#queryPorts").click()
     expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
+    page.locator("#listView").click()
     table = page.frame_locator("#matrixViewer").locator("#tbody")
     first = table.locator(f'tr[data-port-key="{address}/1"] input')
     second = table.locator(f'tr[data-port-key="{address}/2"] input')
@@ -164,6 +165,7 @@ def exercise_port_off(page, switch, address):
     switch.linked.clear()
     page.locator("#queryPorts").click()
     expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
+    page.locator("#listView").click()
     open_port_controls(page)
     page.locator("#clearSelection").click()
     first.check()

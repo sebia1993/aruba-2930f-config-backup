@@ -47,7 +47,7 @@ def hit_point(locator):
 def verify_viewport_controls(page, view, endpoint, other_endpoint):
     # Locator.click() and .check() can silently scroll both frame and outer page.
     # Use viewport hit tests and physical clicks to exercise the no-scroll workflow.
-    card = page.get_by_role("region", name="포트 상태 매트릭스", exact=True)
+    card = page.locator("#matrixWorkspace")
     options = card.locator("#controlPanel")
     heading = options.locator("summary")
     search = view.locator("#search")
@@ -176,6 +176,7 @@ def select_measured_port(page, matrix_view, changed, available, untouched_switch
 
 
 def leave_failed_port_inspection_for_batch(page, matrix_view, failed, available):
+    page.locator("#matrixView").click()
     matrix_view.locator(f'#matrix [data-port-key="{failed}/1"]').click()
     matrix_view.locator("#inspectObservedPort").click()
     mode = page.locator("#controlMode")
@@ -185,6 +186,7 @@ def leave_failed_port_inspection_for_batch(page, matrix_view, failed, available)
     expect(page.locator("#singlePort")).not_to_be_editable()
     expect(page.locator("#liveScope")).to_be_hidden()
 
+    page.locator("#listView").click()
     matrix_view.locator(f'#tbody tr[data-port-key="{available}/1"] input').check()
     expect(mode).to_have_value("batch")
     expect(mode).to_be_enabled()
@@ -200,6 +202,7 @@ def verify_rejected_draft_and_failed_read(page, view, addresses, first, second):
     targets = edit_query_targets(page)
     submit = page.locator("#queryPorts")
     rows = view.locator("#tbody tr[data-port-key]")
+    page.locator("#listView").click()
     origin = rows.get_by_role("checkbox")
     origin.check()
     baseline = [len(fixture.commands) for fixture in (first, second)]
@@ -217,6 +220,7 @@ def verify_rejected_draft_and_failed_read(page, view, addresses, first, second):
     submit.click()
     expect(rows).to_have_attribute("data-port-key", addresses[1] + "/2", timeout=60000)
     expect(rows).to_have_count(1)
+    page.locator("#listView").click()
     expect(rows.get_by_role("checkbox")).to_be_disabled()
     expect(page.locator("#selectedCount")).to_have_text("선택 0개")
     open_port_controls(page)
@@ -265,7 +269,7 @@ def exercise(page, url, switch, second, shots, _backup):
     ):
         expect(workspace.locator(selector)).to_have_count(0)
     expect(page.locator("#portControlTab")).to_have_count(0)
-    card = workspace.get_by_role("region", name="포트 상태 매트릭스", exact=True)
+    card = workspace.locator("#matrixWorkspace")
     expect(card.locator("#matrixViewer")).to_have_count(1)
     expect(card.locator("#portActionStrip, #matrixFeedback")).to_have_count(2)
     expect(workspace.get_by_text("포트 제어", exact=True)).to_have_count(0)
@@ -313,7 +317,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#batchControls")).to_be_hidden()
     checkboxes = matrix_view.locator("#tbody input[data-control-key]")
     expect(checkboxes).to_have_count(2)
-    expect(matrix_view.locator("#tbody")).to_be_visible()
+    expect(matrix_view.locator("#tbody")).to_be_hidden()
     expect(page.locator("#matrixGroups")).to_be_hidden()
     for selector in ("#navReview", "#navCompare", "#navOverview", "#openButton", "#addButton"):
         expect(matrix_view.locator(selector)).to_be_hidden()
@@ -413,6 +417,7 @@ def exercise(page, url, switch, second, shots, _backup):
     matrix_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]').click()
     expect(page.locator("#controlTarget")).to_contain_text(addresses[0])
     expect(second_checkbox).not_to_be_checked()
+    page.locator("#listView").click()
     second_checkbox.check()
     expect(page.locator("#selectedCount")).to_have_text("선택 2개")
     expect(page.locator("#quickResult")).to_be_hidden()
@@ -490,17 +495,19 @@ def exercise(page, url, switch, second, shots, _backup):
     page.set_viewport_size({"width": 1440, "height": 960})
     # Reload keeps the failed endpoint distinguishable from B's measured 0 W.
     page.reload()
-    expect(failed_row.get_by_role("checkbox")).to_be_disabled(timeout=30000)
+    page.locator("#listView").click(timeout=30000)
+    expect(failed_row.get_by_role("checkbox")).to_be_disabled()
     expect(failed_row).not_to_contain_text("8.1 W")
     expect(ready_row).to_contain_text("0 W")
     key = addresses[0] + "/1"
+    page.locator("#matrixView").click()
     matrix_view.locator(f'#matrix [data-port-key="{key}"]').click()
     untouched_commands = len(second.commands)
     open_port_controls(page)
     with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")) as req:
         page.locator("#refreshPorts").click()
     assert req.value.post_data_json["body"]["targets"] == addresses[0] + " 1"
-    expect(failed_row.get_by_role("checkbox")).to_be_enabled(timeout=60000)
+    expect(failed_row.locator("input")).to_be_enabled(timeout=60000)
     assert len(second.commands) == untouched_commands
 
     # The control verification sees 8.1 W, the first independent reading sees 0 W,

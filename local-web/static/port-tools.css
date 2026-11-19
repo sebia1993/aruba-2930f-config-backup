@@ -27,8 +27,11 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 #matrixWorkspace {display:flex;flex-direction:column;min-height:0;min-width:0;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
 #portMonitor {min-width:0;min-height:0;margin:0}
 #portLiveControl {position:relative;flex:none;min-width:0;border-bottom:1px solid var(--stroke)}
-.matrix-control-head {display:flex;align-items:center;gap:8px;min-height:38px;padding:4px 5.7rem 4px 12px}
+.matrix-control-head {display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-height:38px;padding:4px 5.7rem 4px 12px}
 .matrix-control-head h2 {line-height:1.3}
+#portPresentation {display:inline-flex;min-width:0;gap:2px}
+#portPresentation button {white-space:nowrap;padding:5px 9px}
+#portPresentation button[aria-pressed="true"] {background:var(--active);border-color:var(--teal);color:var(--teal)}
 #selectedCount {font-size:12px;font-weight:650;color:var(--teal);white-space:nowrap}
 #controlHeading {position:absolute;top:0;right:6px;display:list-item;padding:8px 7px;color:var(--teal);border-radius:6px}
 #controlPanel .panelbody {display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;max-height:30dvh;overflow:auto;padding:8px 12px;border-top:1px solid var(--stroke);background:var(--surface2)}
@@ -65,11 +68,12 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   #monitorInventory {overflow:auto}
 }
 @media(max-width:800px), (pointer:coarse) {
-  .port-workspace-bar button,.query-commands button,#controlHeading,.port-action-strip button {min-height:44px}
+  .port-workspace-bar button,.query-commands button,#controlHeading,.port-action-strip button,#portPresentation button {min-height:44px}
   .matrix-control-head {min-height:44px}
   #controlHeading {padding:10px 7px}
 }
 @media(max-width:800px) {
+  .matrix-control-head:has(#portPresentation:not([hidden])) h2 {position:absolute;width:1px;height:1px;white-space:nowrap;overflow:hidden;clip-path:inset(50%)}
   .port-query-input {align-items:stretch;flex-direction:column;gap:3px}
   .port-query-input > div {display:flex;align-items:baseline;gap:4px 8px;flex-wrap:wrap}
   .port-query-input label {font-size:12px}

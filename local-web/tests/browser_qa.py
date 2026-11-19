@@ -86,7 +86,7 @@ def click_quick_poe(page, operation, targets, *, touch=False):
     try:
         name = "PoE ON 즉시 실행" if operation == "poe_on" else "PoE OFF 즉시 실행"
         with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")):
-            card = page.get_by_role("region", name="포트 상태 매트릭스", exact=True)
+            card = page.locator("#matrixWorkspace")
             button = card.get_by_role("button", name=name, exact=True)
             if touch:
                 button.tap()
@@ -302,7 +302,8 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(matrix_frame.locator("#matrix [data-port-key]")).to_have_count(0)
     page.locator("#queryTargets").fill(address + " 1")
     page.locator("#queryForm .primary").click()
-    expect(matrix_frame.locator("#tbody")).to_be_visible(timeout=90000)
+    page.locator("#listView").click(timeout=90000)
+    expect(matrix_frame.locator("#tbody")).to_be_visible()
     expect(matrix_frame.locator("#tbody")).to_contain_text("fixture-ap")
     expect(matrix_frame.locator("#matrix [data-port-key]")).to_have_attribute(
         "data-state", "normal"

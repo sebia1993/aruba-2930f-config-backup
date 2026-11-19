@@ -137,6 +137,7 @@ def exercise(page, url, switch, other, shots, _backup):
         "show cable-diagnostics 2"
     ]
     ports.click()
+    page.locator("#listView").click()
     matrix.locator(f'#tbody tr[data-port-key="{endpoint}/1"] input').check()
     cable.click()
 

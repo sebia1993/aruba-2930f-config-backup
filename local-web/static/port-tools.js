@@ -200,7 +200,7 @@
     const keys=ui.selected.size ? ui.selected : focusKey ? new Set([focusKey]) : null;
     const chosen=keys ? items.map(g=>({...g,interfaces:g.interfaces.filter(p=>keys.has(address(g)+'|'+p))})).filter(g=>g.interfaces.length) : items;
     const count=targetCount(chosen);
-    const label=keys ? '포트 상태 매트릭스에서 선택한 대상' : '포트·PoE 관리의 전체 조회 대상';
+    const label=keys ? '포트·PoE 관리에서 선택한 대상' : '포트·PoE 관리의 전체 조회 대상';
     if (keys && count!==keys.size) return {label:'포트·PoE 관리에서 포트를 다시 선택하세요.', targets:''};
     return {label, groups:chosen, targets:chosen.map(g=>address(g)+' '+g.interfaces.join(',')).join('\n')};
   }

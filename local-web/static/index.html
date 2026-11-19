@@ -92,7 +92,14 @@
       </div>
       <section class="port-station" id="matrixWorkspace" aria-labelledby="matrixWorkspaceTitle">
         <div id="portLiveControl">
-          <div class="matrix-control-head"><h2 id="matrixWorkspaceTitle">포트 상태 매트릭스</h2><span id="selectedCount" aria-live="polite" hidden>선택 0개</span></div>
+          <div class="matrix-control-head">
+            <h2 id="matrixWorkspaceTitle">포트 상태 매트릭스</h2>
+            <div id="portPresentation" role="group" aria-label="조회 결과 표시 방식" hidden>
+              <button type="button" id="matrixView" aria-pressed="true" aria-controls="portMonitor">매트릭스</button>
+              <button type="button" id="listView" aria-pressed="false" aria-controls="portMonitor">결과 목록</button>
+            </div>
+            <span id="selectedCount" aria-live="polite" hidden>선택 0개</span>
+          </div>
           <details id="controlPanel"><summary id="controlHeading">제어 옵션</summary><div class="panelbody">
             <div class="bar"><label>제어 방식<select id="controlMode"><option value="batch">조회 결과에서 선택</option><option value="single" selected>단일 포트 직접 지정</option></select></label><label>작업<select id="operation"><option value="poe_off">PoE 전원 OFF</option><option value="poe_on">PoE 전원 ON</option><option value="disable">포트 비활성화 (Disable)</option><option value="enable">포트 활성화 (Enable)</option></select></label></div>
             <div id="batchControls" hidden><label>선택 범위<select id="selectionScope"><option value="filtered">검색 결과</option><option value="switch">현재 스위치</option><option value="all">조회된 전체</option></select></label><button type="button" id="selectVisible">범위 전체 선택</button><button type="button" id="selectEligible">제어 가능 포트만 선택</button><button type="button" id="clearSelection">선택 해제</button></div>
