@@ -147,7 +147,10 @@ def run_range(page, url, switch, second, shots, output):
             page.locator("#operation").select_option("poe_off")
             page.locator("#selectEligible").click()
             expect(page.locator("#selectedCount")).to_have_text("선택 1개")
-            expect(page.locator(f'#portTable tr[data-key="{address}|1"] input')).to_be_checked()
+            row = page.frame_locator("#csvViewer").locator(
+                f'#tbody tr[data-port-key="{address}/1"]'
+            )
+            expect(row.get_by_role("checkbox")).to_be_checked()
             page.get_by_role("button", name="범위 전체 선택", exact=True).click()
             baseline = len(switch.commands)
             with click_quick_poe(page, "poe_off", targets):

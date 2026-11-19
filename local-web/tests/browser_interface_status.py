@@ -49,22 +49,20 @@ def assert_display_and_export(page, switch, expected, *, poe_failed=None):
     page.locator("#operation").select_option("poe_off")
     page.locator("#selectEligible").click()
     for port, link in expected.items():
-        table_row = page.locator(f'#portTable tr[data-key="{endpoint}|{port}"]')
-        expect(table_row.locator("td").nth(7)).to_have_text(
-            "미확인" if link == "확인 불가" else link
-        )
-        expect(table_row.locator(".power-badge")).to_have_attribute(
-            "data-state", "unclassified" if port == poe_failed else "normal"
-        )
+        table_row = csv_view.locator(f'#tbody tr[data-port-key="{endpoint}/{port}"]')
+        state = "unclassified" if port == poe_failed else "normal"
+        expect(table_row.locator(".pillstat." + state)).to_be_visible()
+        visible_link = "미확인" if link == "확인 불가" else link
+        expect(table_row.get_by_role("cell", name=visible_link, exact=True)).to_be_visible()
+        checkbox = table_row.get_by_role("checkbox")
         if port == poe_failed:
-            expect(table_row.locator("input[type=checkbox]")).to_be_disabled()
+            expect(checkbox).to_be_disabled()
         if port == poe_failed or link != "Up":
-            expect(table_row.locator("input[type=checkbox]")).not_to_be_checked()
+            expect(checkbox).not_to_be_checked()
         elif port != "10":
-            expect(table_row.locator("input[type=checkbox]")).to_be_checked()
-        table_row.get_by_role("button", name="상세 보기").click()
-        live_time = page.locator("#detailFields dt").filter(has_text="링크 관측 시각")
-        expect(live_time).to_have_count(int(link in ("Up", "Down")))
+            expect(checkbox).to_be_checked()
+        table_row.locator("button.row-select").click()
+        expect(csv_view.locator("#detail")).to_contain_text(f"인터페이스 {port}")
     page.locator("#clearSelection").click()
     with page.expect_download() as handle:
         page.locator('#queryFiles a[download$=".csv"]').click()
@@ -85,7 +83,6 @@ def assert_display_and_export(page, switch, expected, *, poe_failed=None):
             )
             assert row["enabled"] == ("no" if port == "10" else "yes")
 
-    page.locator("#showMatrix").click()
     for port, link in expected.items():
         tile = csv_view.locator(f'#matrix [data-port-key="{endpoint}/{port}"]')
         expect(tile).to_have_attribute(
@@ -125,16 +122,16 @@ def exercise(page, url, switch, _other, _shots, _backup):
         start=2,
     ):
         switch.reject_status = index == 3
-        page.locator("#portLiveTab").click()
-        page.locator("#switchFilter").select_option(f"127.0.0.1:{switch.port}")
+        page.frame_locator("#csvViewer").locator("#device").select_option(
+            f"127.0.0.1:{switch.port}"
+        )
         page.locator("#refreshSwitch").click()
         expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
         assert switch.commands.count("show interfaces status") == index
         assert_display_and_export(page, switch, expected)
     switch.reject_status = False
     switch.reject_poe = True
-    page.locator("#portLiveTab").click()
-    page.locator('.matrix-tile[data-key$="|10"]').click()
+    page.frame_locator("#csvViewer").locator('#matrix [data-port-key$="/10"]').click()
     page.locator("#refreshPorts").click()
     expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
     assert switch.commands.count("show interfaces status") == 4

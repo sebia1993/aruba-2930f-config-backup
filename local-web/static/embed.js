@@ -21,10 +21,6 @@
       const error = document.getElementById("fileError");
       parent.postMessage({type:"aruba-log-loaded",ok:error.hidden,message:error.hidden ? "" : error.textContent},location.origin);
     }
-    if (message?.type === "aruba-live-matrix" && location.pathname === "/csv"
-        && typeof message.fileId === "string" && /^[a-f0-9]{32}$/.test(message.fileId)) {
-      window.PortMonitor?.loadLive(message.fileId);
-    }
   });
   parent.postMessage({type:"aruba-viewer-ready",view:location.pathname.slice(1)}, location.origin);
 })();

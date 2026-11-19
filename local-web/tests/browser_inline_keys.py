@@ -26,9 +26,10 @@ def first_use_keys(page, url, first, second, shots, output):
     page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(other + " 1")
     page.locator("#queryForm button.primary").click()
-    expect(page.locator("#portTable")).to_contain_text("8.1 W", timeout=90000)
+    observed = page.frame_locator("#csvViewer").locator("#tbody")
+    expect(observed).to_contain_text("8.1 W", timeout=90000)
     page.reload()
-    expect(page.locator("#portTable")).to_contain_text("8.1 W", timeout=30000)
+    expect(observed).to_contain_text("8.1 W", timeout=30000)
     assert str(second.port) in page.locator("#queryTargets").input_value()
     # A different key on the same endpoint must not replace the original pin.
     saved_fingerprint = second.host_key.fingerprint

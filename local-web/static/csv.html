@@ -154,9 +154,9 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .dgrid{min-width:0}.detail-name{white-space:normal;overflow-wrap:anywhere}
 #detail{scroll-margin-top:12px}.row-select:focus-visible{outline-offset:0}
 .control-picks{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:9px 15px;border-bottom:1px solid var(--stroke);font-size:11px}
-.control-picks label{display:flex;align-items:center;gap:6px;cursor:pointer}
-.control-picks input{accent-color:var(--teal)}.control-picks .btn{margin-left:auto}
+.control-picks .btn{margin-left:auto}
 .resulttable .control-cell{width:42px;text-align:center}.detail-actions .btn{justify-self:start}
+.filterbar select{max-width:100%}.more-facts{margin-top:14px}.more-facts summary{cursor:pointer;color:var(--sub);font-weight:650}.more-facts .dgrid{margin-top:10px}.dfield .data{overflow-wrap:anywhere}
 #dataMode:not(.pending){color:var(--teal)}.rightcol,.leftcol{min-width:0}
 @media(max-width:780px){.rightcol{grid-row:auto}.layout{display:flex;flex-direction:column}.leftcol,.rightcol{width:100%}.filterbar select{min-width:0}.filterbar .search{min-width:min(100%,240px)}}
 @media(max-width:600px){.nav .navtxt{display:inline}.nav button{padding:0 7px;gap:6px}.table-head-tools{flex-wrap:wrap}.table-head-tools .count{white-space:nowrap}.notice-l{flex-wrap:wrap}.topbar{gap:5px}.heading-actions{width:100%}}
@@ -221,7 +221,8 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
    <div class="filterbar">
     <label class="search"><svg fill="none" stroke="currentColor"><use href="#i-search"/></svg><input type="search" id="search" placeholder="스위치 Hostname / IP / 포트 / LLDP AP 검색" aria-label="스위치 및 포트 검색" autocomplete="off"></label>
     <select id="site" aria-label="사업장 필터"><option value="all">전체 사업장</option></select>
-    <select id="status" aria-label="전력 상태 필터"><option value="all">전체 포트</option><option value="unpowered" data-power-label="unpowered"></option><option value="limited" data-power-label="limited"></option><option value="normal" data-power-label="normal"></option></select>
+    <select id="device" aria-label="스위치 필터" hidden><option value="">전체 스위치</option></select>
+    <select id="status" aria-label="포트 결과 필터"><option value="all">전체 포트</option><optgroup label="전력 판정"><option value="unpowered" data-power-label="unpowered"></option><option value="limited" data-power-label="limited"></option><option value="normal" data-power-label="normal"></option></optgroup><optgroup label="조회·설정"><option value="failed">조회 실패</option><option value="off">PoE 설정 OFF</option><option value="disabled">포트 Disable</option></optgroup></select>
     <span class="filter-help"><label for="zoom">블록 크기</label><input id="zoom" type="range" min="15" max="31" value="19" aria-label="블록 크기"><span id="zoomValue">19px</span></span>
     <button id="clearFilters" class="btn ghost">필터 초기화</button>
    </div>
@@ -232,8 +233,8 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       <div class="matrix-footer"><div class="legend" aria-label="PoE 전력 범례"><span><i class="swatch unpowered"></i><b data-power-label="unpowered"></b></span><span><i class="swatch limited"></i><b data-power-label="limited"></b></span><span><i class="swatch normal"></i><b data-power-label="normal"></b></span></div><span class="matrix-note">점선 테두리는 전력 미측정</span></div>
      </section>
      <section class="panel" aria-labelledby="tableTitle"><div class="panel-head"><div><h2 id="tableTitle">포트별 조회 결과</h2><div class="panel-sub">포트를 선택하면 해당 장비의 조회 결과를 확인할 수 있습니다</div></div><div class="table-head-tools"><span class="count" id="tableCount">—</span><select id="sort" aria-label="결과 정렬"><option value="natural">IP·포트 순</option><option value="issues">전력 점검 우선</option><option value="power">전력 높은 순</option></select></div></div>
-      <div class="control-picks" id="controlPicks" hidden><label><input type="checkbox" id="selectFilteredPorts">검색 결과 전체 선택</label><span id="controlPickCount" role="status"></span><button type="button" class="btn" id="controlObservedBatch" disabled>선택 포트 제어</button></div>
-      <div class="tablewrap"><table class="resulttable"><thead><tr><th scope="col" class="control-cell" id="controlColumn" hidden>선택</th><th>스위치 Hostname</th><th>IP</th><th>Port</th><th>전력 판정</th><th>실측 전력</th><th>PoE 공급 상태</th><th>LLDP AP 이름</th></tr></thead><tbody id="tbody"></tbody></table></div>
+      <div class="control-picks" id="controlPicks" hidden><span id="controlPickCount" role="status"></span><button type="button" class="btn" id="controlObservedBatch" disabled>선택 포트 제어</button></div>
+      <div class="tablewrap"><table class="resulttable"><thead><tr><th scope="col" class="control-cell" id="controlColumn" hidden>선택</th><th>스위치 Hostname</th><th>IP</th><th>Port</th><th>전력 판정</th><th>실측 전력</th><th>PoE 공급 상태</th><th>LLDP AP 이름</th><th data-embedded-column hidden>관측 링크</th><th data-embedded-column hidden>조회 결과</th><th data-embedded-column hidden>관측 시각</th></tr></thead><tbody id="tbody"></tbody></table></div>
       <div class="table-foot"><span id="tableRange">—</span><div class="paginate"><button id="prevPage" aria-label="이전 페이지">이전</button><span id="pageNum">1 / 1</span><button id="nextPage" aria-label="다음 페이지">다음</button></div></div>
      </section>
     </div>
@@ -409,7 +410,7 @@ $('themeDark').addEventListener('click', () => applyTheme('dark'));
     const lldp = v("lldp_status").toLowerCase();
     const neighbor = neighbors(v("lldp_neighbors"),v("ap_names"),lldp);
     const row = {
-      key:ip + ":" + sshPort + "/" + port, ip, sshPort, port,
+      key:ip + ":" + sshPort + "/" + port, ip, sshPort, port, raw,
       hostname:v("hostname") || unknown, site:v("site") || v("site_name") || v("사업장") || "사업장 미지정",
       label:v("label"), model:v("model"), link,
       reportedLink:link === "미확인" ? rawLink : link,
@@ -589,14 +590,15 @@ window.PortViews = (() => {
   function searchText(row) {
     return [row.hostname,row.ip,row.sshPort,row.port,row.label,row.site,row.ap,row.apName,labels[row.status],row.reason].join(' ').toLocaleLowerCase('ko-KR');
   }
-  function toolbar(host,onBack,onSwap) {
+  function toolbar(host,onBack,onSwap,onReplace) {
     installStyles();
     const container = el('div','csv-drill');
     const actions = el('nav','dr-back');
     actions.setAttribute('aria-label','보기 전환');
     if (onSwap) actions.append(button('btn','비교 순서 바꾸기',onSwap));
-    actions.append(button('btn','관제 화면으로',onBack));
-    container.append(actions);
+    if (onReplace) actions.append(button('btn','다른 CSV와 비교',onReplace));
+    if (onBack) actions.append(button('btn','관제 화면으로',onBack));
+    if (actions.childElementCount) container.append(actions);
     host.replaceChildren(container);
     return container;
   }
@@ -787,8 +789,8 @@ window.PortViews = (() => {
     clock.dateTime = date.toISOString();
     return clock;
   }
-  function renderCompare(host,diff,beforeName,afterName,onBack,onSwap,times={},addAction) {
-    const container = toolbar(host,onBack,onSwap);
+  function renderCompare(host,diff,beforeName,afterName,onBack,onSwap,times={},addAction,onReplace) {
+    const container = toolbar(host,onBack,onSwap,onReplace);
     const sources = el('div','dr-sources');
     for (const [label,name,stamp] of [['기준 CSV',beforeName,times.beforeTime],['비교 CSV',afterName,times.afterTime]]) {
       const src = el('div','dr-src');
@@ -817,13 +819,14 @@ window.PortViews = (() => {
   'use strict';
   const el = id => document.getElementById(id);
   const statusNames = window.PowerMatrix.labels;
-  const collectionNames = {ok:'완료', failed:'실패', cancelled:'취소', pending:'대기', unsupported:'미지원'};
+  const collectionNames = {ok:'완료', failed:'실패', cancelled:'취소', pending:'대기', unsupported:'미지원', refresh_pending:'재조회 필요'};
   const severity = {unpowered:0, limited:1, normal:2, unclassified:3};
   const collator = new Intl.Collator('ko', {numeric:true, sensitivity:'base'});
   const pageSize = 18;
   const state = {current:null, before:null, diff:[], view:'overview', rows:[], found:[],
     selected:null, page:0, issueRows:[], lookup:new Map(), tileByKey:new Map()};
   let importVersion = 0;
+  let userRevision = 0;
   let searchFrame = 0;
   const embedded=parent!==window && location.pathname==='/csv' && new URLSearchParams(location.search).get('embedded')==='1';
   let checkedPorts=new Set(), excludedPorts=new Set();
@@ -868,26 +871,39 @@ window.PortViews = (() => {
   }
   function setDataset() {
     checkedPorts.clear(); excludedPorts.clear();
-    state.rows = [...state.current.rows].sort(portOrder);
+    const missing=liveSelectionId()?state.current.unobserved:[];
+    state.rows = [...state.current.rows,...(missing||[])].sort(portOrder);
     state.lookup = new Map(state.rows.map(row => [row.key,row]));
     const sites = [...new Set(state.rows.map(row => row.site))];
     el('site').replaceChildren(option('', '전체 사업장'), ...sites.map(site => option(site,site)));
+    const devices=new Map(state.rows.map(row=>[endpoint(row),row.hostname]));
+    el('device').replaceChildren(option('','전체 스위치'),...Array.from(devices,([address,name])=>option(address,name+' · '+address)));
     clearFilters();
     state.selected = null;
+    filterRows();
   }
   function clearFilters() {
     el('search').value = '';
     el('site').value = '';
+    el('device').value = '';
     el('status').value = 'all';
     el('sort').value = 'natural';
     state.page = 0;
   }
   function filterRows() {
     const site = el('site').value;
+    const device = el('device').value;
     const status = el('status').value;
     const query = el('search').value.trim().toLowerCase();
-    state.found = state.rows.filter(row => (!site || site === row.site) && (status === 'all' || status === row.status)
-      && (!query || [row.hostname,endpoint(row),row.port,row.apName,row.ap,row.site,row.label].some(value => String(value).toLowerCase().includes(query))));
+    function matchesStatus(row) {
+      if (status==='failed') return row.queryStatus==='failed' || row.lldp==='failed';
+      if (status==='off') return row.poe==='OFF';
+      if (status==='disabled') return row.admin==='Disable';
+      return status==='all' || row.status===status;
+    }
+    state.found = state.rows.filter(row => (!site || site === row.site) && (!device || device===endpoint(row)) && matchesStatus(row)
+      && (!query || [row.hostname,endpoint(row),row.port,row.apName,row.ap,row.site,row.label,row.poeStatus,row.link,row.reportedLink,
+        row.assessmentModel,row.diagnosis,row.raw.message,statusNames[row.status]].some(value => String(value||'').toLowerCase().includes(query))));
     state.issueRows = state.found.filter(isIssue).sort((a,b) => severity[a.status]-severity[b.status]);
     if (!state.found.some(row => row.key === state.selected)) {
       state.selected = (state.issueRows[0] || state.found[0])?.key ?? null;
@@ -896,14 +912,18 @@ window.PortViews = (() => {
   function renderMetrics() {
     const counts = {unpowered:0,limited:0,normal:0,unclassified:0};
     const equipment = new Set();
-    for (const row of state.found) { counts[row.status]++; equipment.add(endpoint(row)); }
+    let unobserved=0;
+    for (const row of state.found) {
+      equipment.add(endpoint(row));
+      if (row.unobserved) unobserved++; else counts[row.status]++;
+    }
     function count(id,n,unit='') { el(id).replaceChildren(document.createTextNode(n.toLocaleString('ko-KR')),node('span',unit,'suffix')); }
     count('mSwitch',equipment.size,'대');
-    count('mPorts',state.found.length,'개');
+    count('mPorts',state.found.length-unobserved,'개');
     count('mUnpowered',counts.unpowered);
     count('mLimited',counts.limited);
     count('mNormal',counts.normal);
-    el('mUnclassified').textContent = '전력 미측정 ' + counts.unclassified.toLocaleString('ko-KR') + '개';
+    el('mUnclassified').textContent = '전력 미측정 ' + counts.unclassified.toLocaleString('ko-KR') + '개'+(unobserved?' · 재조회 필요 '+unobserved+'개':'');
   }
   function renderMatrix() {
     const groups = new Map();
@@ -962,6 +982,11 @@ window.PortViews = (() => {
     const row = state.lookup.get(state.selected);
     const box = el('detail');
     if (!row) { box.replaceChildren(node('div','표시할 포트가 없습니다.','empty')); return; }
+    if (row.unobserved) {
+      box.replaceChildren(node('div',row.hostname,'detail-name'),node('div',endpoint(row)+' · 포트 '+row.port,'detail-address'),
+        node('p',row.reason,'detail-foot'),node('p','체크한 포트가 없으면 ‘선택 포트 재조회’로 이 포트를 조회할 수 있습니다.','detail-foot'));
+      return;
+    }
     const badges=node('div',null,'badges');
     badges.append(node('span',statusNames[row.status],'badge '+row.status),node('span','인터페이스 '+row.port,'badge'));
     const fields = node('div',null,'dgrid');
@@ -974,6 +999,9 @@ window.PortViews = (() => {
     if (row.link === '미확인' && row.reportedLink) values.push(['링크 원문',row.reportedLink]);
     if (row.linkObserved) values.push(['링크 관측 시각',timeText(row.linkObserved)]);
     if (row.label) values.push(['장비 라벨',row.label]);
+    for (const [key,name] of [['model','스위치 모델'],['sku','스위치 SKU'],['software_version','스위치 소프트웨어'],['hostname_source','호스트 이름 수집 출처']]) {
+      if (row.raw[key]) values.push([name,row.raw[key]]);
+    }
     for (const [name,value] of values) {
       const cell=node('div',null,name==='관측 시각'?'dfield wide':'dfield');
       cell.append(node('label',name),node('div',value || '기록 없음','data'));
@@ -983,6 +1011,24 @@ window.PortViews = (() => {
     reason.append(node('strong','전력 판정 근거'),document.createTextNode(row.reason || '기록 없음'));
     box.replaceChildren(node('div',row.hostname,'detail-name'),
       node('div',endpoint(row)+' · '+row.site,'detail-address'),badges,node('div',null,'detail-divider'),fields,reason);
+    const extra=node('div',null,'dgrid');
+    for (const [key,name] of Object.entries({finished_at:'조회 종료',error_code:'오류 코드',message:'메시지',
+      poe_finished_at:'PoE 조회 종료',complete:'조회 완결',lldp_observed_at:'LLDP 관측 시각',lldp_error_code:'LLDP 오류 코드',
+      lldp_message:'LLDP 메시지',lldp_neighbors:'LLDP 이웃',power_evidence:'전력 근거',assessment_status:'협상 상태',
+      assessment_label:'전력 협상 판정',assessment_reason:'협상 판정 근거',assessment_model:'AP 모델',assessment_model_source:'모델 근거',
+      requested_watts:'요청 전력 (W)',allocated_watts:'할당 전력 (W)',negotiation:'전력 협상',port_poe_state:'포트 전력 상태',
+      port_poe_explanation:'전력 상세',reference_id:'PoE 판정 기준',reference_url:'판정 자료 주소'})) {
+      const value=row.raw[key];
+      if (!value) continue;
+      const cell=node('div',null,'dfield wide');
+      cell.append(node('label',name),node('div',key.endsWith('_at')?timeText(value):value,'data'));
+      extra.append(cell);
+    }
+    if (extra.childElementCount) {
+      const more=node('details',null,'more-facts');
+      more.append(node('summary','수집 세부 정보'),extra);
+      box.append(more);
+    }
     addPortAction(box,row,'inspectObservedPort');
   }
   let observedAction=null;
@@ -1035,12 +1081,6 @@ window.PortViews = (() => {
     const live=!!liveSelectionId();
     el('controlPicks').hidden=el('controlColumn').hidden=!live;
     if (!live) return;
-    const eligible=state.found.filter(canCheck);
-    const covered=eligible.filter(row=>checkedPorts.has(row.key)).length;
-    const all=el('selectFilteredPorts');
-    all.disabled=controlsBusy || !eligible.length;
-    all.checked=eligible.length>0 && eligible.length===covered;
-    all.indeterminate=covered>0 && covered<eligible.length;
     el('controlPickCount').textContent='선택 '+checkedPorts.size+'개';
     el('controlObservedBatch').disabled=controlsBusy || !checkedPorts.size;
     for (const input of el('tbody').querySelectorAll('input[data-control-key]')) {
@@ -1067,13 +1107,10 @@ window.PortViews = (() => {
       if (row) labelPortAction(action,row);
     }
   }
-  function checkRows(rows,checked) {
-    if (controlsBusy) return;
-    for (const row of rows) {
-      if (!canCheck(row)) continue;
-      if (checked) checkedPorts.add(row.key); else checkedPorts.delete(row.key);
-      state.tileByKey.get(row.key)?.classList.toggle('for-action',checked);
-    }
+  function checkRow(row,checked) {
+    if (controlsBusy || !canCheck(row)) return;
+    if (checked) checkedPorts.add(row.key); else checkedPorts.delete(row.key);
+    state.tileByKey.get(row.key)?.classList.toggle('for-action',checked);
     renderChecks();
     parent.postMessage({type:'aruba-port-checks'},location.origin);
   }
@@ -1101,10 +1138,16 @@ window.PortViews = (() => {
       const power=node('td');
       power.append(node('span',statusNames[row.status],'pillstat '+row.status));
       tr.append(hostname,node('td',endpoint(row)),node('td',row.port),power,node('td',watts(row)),
-        node('td',row.poeStatus),node('td',row.apName || '—'));
+        node('td',row.poeStatus || '—'),node('td',row.apName || '—'));
+      if (embedded) tr.append(node('td',row.link || '—'),
+        node('td',collectionNames[row.queryStatus] || row.queryStatus),node('td',timeText(row.observed)));
       frag.append(tr);
     }
-    if (!sorted.length) { const tr=node('tr'), td=node('td','일치하는 포트가 없습니다.'); td.colSpan=liveSelectionId()?8:7; tr.append(td); frag.append(tr); }
+    if (!sorted.length) {
+      const tr=node('tr'), td=node('td','일치하는 포트가 없습니다.');
+      td.colSpan=7+(embedded?3:0)+(liveSelectionId()?1:0);
+      tr.append(td); frag.append(tr);
+    }
     el('tbody').replaceChildren(frag);
     renderChecks();
     el('pageNum').textContent=(state.page+1)+' / '+max;
@@ -1126,7 +1169,9 @@ window.PortViews = (() => {
     if (scroll) el('detailTitle').scrollIntoView({block:'center'});
   }
   function renderOverview() {
-    filterRows(); renderMetrics(); renderMatrix(); renderIssues(); renderDetail(); renderTable();
+    filterRows(); renderMetrics(); renderMatrix();
+    if (!embedded) renderIssues();
+    renderDetail(); renderTable();
   }
   function showView(view, scopedRows) {
     state.view=view;
@@ -1143,27 +1188,30 @@ window.PortViews = (() => {
       const nav=el(id); nav.classList.toggle('active',view===target);
       if(view===target) nav.setAttribute('aria-current','page'); else nav.removeAttribute('aria-current');
     }
+    if (embedded) parent.postMessage({type:'aruba-port-view'},location.origin);
     if (!state.current) return;
+    const back=embedded?null:()=>openView('overview');
     if (isOverview) { extra.replaceChildren(); renderOverview(); }
     else if (isReview) {
-      window.PortViews.renderReview(extra,scopedRows||state.rows,()=>openView('overview'),key=>{
+      window.PortViews.renderReview(extra,scopedRows||state.rows,back,key=>{
         if (!state.found.some(r=>r.key===key)) clearFilters();
         state.selected=key; showView('overview'); selectPort(key,true);
       },addPortAction);
     } else {
       window.PortViews.renderCompare(extra,state.diff,state.before.filename,state.current.filename,
-        ()=>openView('overview'),()=>{
+        back,()=>{
+          userRevision++;
           [state.before,state.current]=[state.current,state.before];
           state.diff=window.PortCsv.compare(state.before,state.current);
           setDataset(); updateSource(); showView('compare');
-        }, {beforeTime:state.before.latestObserved, afterTime:state.current.latestObserved},addPortAction);
+        }, {beforeTime:state.before.latestObserved, afterTime:state.current.latestObserved},addPortAction,embedded?()=>el('addCsv').click():null);
     }
   }
   function openView(view, rows) { showView(view,rows); window.scrollTo({top:0,behavior:'instant'}); }
   function updateSource() {
     const file=state.current;
     el('sourceName').textContent=file.filename;
-    let hint='비교할 CSV를 추가하면 두 시점의 변화를 확인할 수 있습니다.';
+    let hint=embedded?'변화 비교에서 다른 시점의 CSV를 선택할 수 있습니다.':'비교할 CSV를 추가하면 두 시점의 변화를 확인할 수 있습니다.';
     if (file.expiredLive) hint='이전 조회 시점의 관측값입니다. 현재 상태는 포트를 다시 조회해 확인하세요.';
     if (state.before) {
       hint='관제 화면은 비교 CSV를 표시합니다.';
@@ -1191,7 +1239,7 @@ window.PortViews = (() => {
     }
     return window.PortCsv.parse(text,file.name);
   }
-  async function importFiles(files, append, liveId) {
+  async function importFiles(files, append, liveId, liveRows=[], stillCurrent=()=>true, unobserved=[]) {
     if (!files.length && !liveId) return;
     const version=++importVersion;
     const error=el('fileError');
@@ -1207,8 +1255,21 @@ window.PortViews = (() => {
         try { return await readSnapshot(file); }
         catch (e) { throw new Error(file.name+' · '+e.message); }
       }));
-      if (version!==importVersion) return;
-      if (liveId) snapshots[0].liveId=liveId;
+      if (version!==importVersion || (liveId && !stillCurrent())) return;
+      if (liveId) {
+        const live=snapshots[0];
+        live.liveId=liveId;
+        live.unobserved=unobserved.map(target=>({...target,key:targetKey(target),hostname:target.label || target.ip,
+          site:'사업장 미지정',raw:{},status:'unclassified',queryStatus:'refresh_pending',unobserved:true,
+          reason:'재조회 필요 · 등록한 포트에 현재 사용할 수 있는 조회값이 없습니다.'}));
+        const identities=new Map(liveRows.map(row=>[row.ip+':'+Number(row.ssh_port||22)+'/'+row.interface,row]));
+        for (const row of live.rows) {
+          const record=identities.get(row.key);
+          if (record) for (const field of ['hostname_source','sku','software_version']) {
+            if (record[field]) row.raw[field]=record[field];
+          }
+        }
+      }
       const liveComparison=append && state.current?.liveId;
       if (append && state.current) snapshots=liveComparison?[snapshots[0],state.current]:[state.current,snapshots[0]];
       if (snapshots.length===2 && !liveComparison) {
@@ -1221,21 +1282,41 @@ window.PortViews = (() => {
       Object.assign(state,{before,current,diff});
       setDataset(); updateSource(); openView(before?'compare':'overview');
     } catch (e) {
-      if (version!==importVersion) return;
+      if (version!==importVersion || (liveId && !stillCurrent())) return;
       error.textContent='CSV를 열 수 없습니다. '+e.message;
       error.hidden=false;
+      if (embedded) parent.postMessage({type:'aruba-port-file-error',message:error.textContent},location.origin);
       error.scrollIntoView({block:'nearest'});
     }
   }
   function readSelection(input, append) {
     const files=Array.from(input.files);
     input.value='';
+    if (files.length) userRevision++;
     importFiles(files,append);
+  }
+  function navigate(view) {
+    if (view==='overview') openView(view);
+    else if (view==='review' && state.current) openView(view,state.found);
+    else if (view==='compare') {
+      if (state.before) openView(view);
+      else el(state.current?'addCsv':'openCsv').click();
+    }
+  }
+  function monitorScope() {
+    if (state.view!=='overview' || state.before || !(liveSelectionId() || state.current?.expiredLive)) return null;
+    const target=({ip,sshPort,port})=>({ip,sshPort,port});
+    const current=state.lookup.get(state.selected);
+    return {liveId:liveSelectionId() || null,current:current?target(current):null,device:el('device').value,rows:state.found.map(target)};
   }
   if (embedded) {
     window.PortMonitor={
-      loadLive: id=>importFiles([],false,id),
-      source: ()=>({hasData:!!state.current,liveId:state.before?null:state.current?.liveId,
+      loadLive: (id,rows,stillCurrent,unobserved)=>importFiles([],false,id,rows,stillCurrent,unobserved),
+      userRevision: ()=>userRevision,
+      openCsv: ()=>el('openCsv').click(),
+      navigate,
+      scope:monitorScope,
+      source: ()=>({hasData:!!state.current,view:state.view,liveId:state.before?null:state.current?.liveId,
         expiredLive:!state.before && !!state.current?.expiredLive}),
       selected:selectedActionRow,
       batch:controlBatch,
@@ -1257,17 +1338,19 @@ window.PortViews = (() => {
         if (live.length) { updateSource(); showView(state.view); }
       }
     };
-    el('selectFilteredPorts').addEventListener('change',event=>{
-      if (liveSelectionId()) checkRows(state.found,event.target.checked);
-    });
+    document.querySelector('.sidebar').hidden=true;
+    document.querySelector('.heading').hidden=true;
+    el('issuesTitle').closest('section').hidden=true;
+    el('device').hidden=false;
+    for (const column of document.querySelectorAll('[data-embedded-column]')) column.hidden=false;
     el('tbody').addEventListener('change',event=>{
       const key=event.target.dataset.controlKey;
-      if (liveSelectionId() && state.lookup.has(key)) checkRows([state.lookup.get(key)],event.target.checked);
+      if (liveSelectionId() && state.lookup.has(key)) checkRow(state.lookup.get(key),event.target.checked);
     });
     el('controlObservedBatch').addEventListener('click',()=>{
       if (controlBatch()?.rows.length) parent.postMessage({type:'aruba-observed-batch'},location.origin);
     });
-    el('openButton').hidden=true;
+    el('sourceName').textContent='조회 결과 대기';
     el('sourceHint').textContent='실시간 조회를 실행하거나 저장한 조회 CSV를 여세요. 두 시점을 선택하면 포트별 변화가 표시됩니다.';
   }
   for (const label of document.querySelectorAll('[data-power-label]')) label.textContent = statusNames[label.dataset.powerLabel];
@@ -1277,11 +1360,7 @@ window.PortViews = (() => {
   el('addCsv').addEventListener('change',()=>readSelection(el('addCsv'),true));
   el('navOverview').addEventListener('click',()=>openView('overview'));
   el('navReview').addEventListener('click',()=>openView('review'));
-  el('navCompare').addEventListener('click',()=>{
-    if (state.before) openView('compare');
-    else if (state.current) el('addCsv').click();
-    else el('openCsv').click();
-  });
+  el('navCompare').addEventListener('click',()=>navigate('compare'));
   for(const id of ['priorityButton','allIssues']) el(id).addEventListener('click',()=>openView('review',state.found));
   for(const id of ['matrix','issues','tbody']) el(id).addEventListener('click',event=>{
     if (event.target.closest('input[data-control-key]')) return;
@@ -1292,7 +1371,7 @@ window.PortViews = (() => {
   el('search').addEventListener('input',()=>{
     cancelAnimationFrame(searchFrame); searchFrame=requestAnimationFrame(filtersChanged);
   });
-  for(const id of ['site','status']) el(id).addEventListener('change',filtersChanged);
+  for(const id of ['site','device','status']) el(id).addEventListener('change',filtersChanged);
   el('clearFilters').addEventListener('click',()=>{clearFilters();renderOverview();});
   el('sort').addEventListener('change',()=>{state.page=0;renderTable();});
   el('prevPage').addEventListener('click',()=>{state.page--;renderTable();});

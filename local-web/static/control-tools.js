@@ -40,9 +40,9 @@
     quickResult.hidden = true;
     quickResult.replaceChildren();
   }
-  function showQuickResult(result,cancelled,restored=false) {
+  function showQuickResult(result,cancelled,restored=false,canDisplay) {
     finishProgress();
-    if (!restored && Array.isArray(result.rows)) receivePorts(result);
+    if (!restored && Array.isArray(result.rows)) receivePorts(result,canDisplay);
     if (!result.operation) return;
     const state = result.operation==='poe_off' ? 'OFF' : 'ON';
     const title = 'PoE ' + state + ' 즉시 실행';
@@ -67,7 +67,8 @@
     finishProgress();
     $('controlResult').replaceChildren(); $('controlResult').hidden = true;
     const requestId = crypto.randomUUID().replaceAll('-','');
-    run('control.quick-execute',{operation,targets,requestId},showQuickResult);
+    const canDisplay=capturePortIntent();
+    run('control.quick-execute',{operation,targets,requestId},(result,cancelled)=>showQuickResult(result,cancelled,false,canDisplay));
   }
   batch.append(liveButton('quickOff','PoE OFF 즉시 실행',()=>requestQuick('poe_off')),
                liveButton('quickOn','PoE ON 즉시 실행',()=>requestQuick('poe_on')));

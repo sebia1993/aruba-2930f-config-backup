@@ -1,5 +1,7 @@
 """Verify the CSV viewer starts empty and shows only the selected query exports."""
 
+from threading import Event
+from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from browser_qa import run_browser_case
@@ -7,11 +9,17 @@ from playwright.sync_api import expect
 from verify_http_ssh import Http
 
 
-def assert_empty(view):
-    expect(view.locator("#sourceName")).to_have_text("CSV 미선택")
-    expect(view.locator("#openButton")).to_be_enabled()
-    expect(view.locator("#addButton")).to_be_disabled()
-    expect(view.locator("#navReview")).to_be_disabled()
+def assert_empty(view, *, standalone=True):
+    expect(view.locator("#sourceName")).to_have_text(
+        "CSV 미선택" if standalone else "조회 결과 대기"
+    )
+    if standalone:
+        expect(view.locator("#openButton")).to_be_visible()
+        expect(view.locator("#addButton")).to_be_disabled()
+        expect(view.locator("#navReview")).to_be_disabled()
+    else:
+        for selector in ("#openButton", "#addButton", "#navOverview", "#navReview", "#navCompare"):
+            expect(view.locator(selector)).to_be_hidden()
     expect(view.locator("#overviewRoot")).to_be_hidden()
     expect(view.locator("#matrix [data-port-key]")).to_have_count(0)
     expect(view.locator("#tbody tr")).to_have_count(0)
@@ -47,10 +55,42 @@ def assert_comparison(view, earlier, later):
 
 def assert_historical_context(page, view):
     expect(page.locator("#csvViewer")).to_be_visible()
-    expect(page.locator("#portMonitorTab")).to_have_attribute("aria-pressed", "true")
+
     expect(page.locator("#controlPanel")).to_be_hidden()
     expect(page.locator("#controlSourceHint")).to_be_visible()
     expect(view.locator("#controlObservedBatch")).to_be_hidden()
+    expect(view.locator("#tbody input[data-control-key]:visible")).to_have_count(0)
+    expect(page.locator("#quickOff")).to_be_hidden()
+
+
+def open_comparison_during_query(page, switch, view, earlier, later):
+    reading, resume = Event(), Event()
+    respond = switch._respond
+
+    def wait_for_csv(channel, command):
+        if command == "show power-over-ethernet 1":
+            reading.set()
+            assert resume.wait(30), (
+                "Browser did not finish opening comparison while query was active"
+            )
+        return respond(channel, command)
+
+    with patch.object(switch, "_respond", wait_for_csv):
+        try:
+            page.locator("#queryPorts").click()
+            assert reading.wait(30), "Live query did not reach the selected switch port"
+            with page.expect_file_chooser() as picker:
+                page.locator("#openPortCsv").click()
+            picker.value.set_files([earlier, later])
+            assert_comparison(view, earlier, later)
+            assert_historical_context(page, view)
+        finally:
+            resume.set()
+        expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=60000)
+    expect(page.locator("#portCompareTab")).to_have_attribute("aria-pressed", "true")
+    assert_comparison(view, earlier, later)
+    assert_historical_context(page, view)
+    page.get_by_role("button", name="최근 실시간 조회 보기", exact=True).click()
 
 
 def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
@@ -58,7 +98,8 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     expect(page.locator("#inspectSingle")).to_have_count(1)
     page.get_by_role("link", name="포트 관제·제어").click()
     embedded = page.frame_locator("#csvViewer")
-    assert_empty(embedded)
+    assert_empty(embedded, standalone=False)
+    expect(page.locator("#portReviewTab")).to_be_disabled()
     page.evaluate("location.hash = 'csv'")
     expect(page.locator('[data-page="ports"]')).to_be_visible()
     expect(page.locator("#csvViewer")).to_be_visible()
@@ -98,11 +139,38 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     assert_comparison(direct, earlier, later)
     expect(direct.locator("#compareObservedPort")).to_have_count(0)
 
+    # A registered but unqueried port and a pair of CSVs are distinct data sources.
+    # Importing history must leave the pending target intact without changing its power state.
+    start = len(switch.commands)
+    address = f"127.0.0.1:{switch.port}"
+    page.locator("#portLiveTab").click()
+    page.locator("#queryTargets").fill(address + " 2")
+    page.locator("#targetVerify").click()
+    page.locator("#acceptTargets").click()
+    page.locator("#portMonitorTab").click()
+    pending = page.locator(f'.matrix-tile[data-key="{address}|2"]')
+    expect(pending).to_be_visible()
+    expect(pending).to_have_attribute("data-phase", "pending")
+    expect(page.locator("#csvViewer")).to_be_hidden()
+
     with page.expect_file_chooser() as parent_selection:
         page.locator("#openPortCsv").click()
     parent_selection.value.set_files([later, earlier])
     assert_comparison(embedded, earlier, later)
+    expect(page.locator("#portCompareTab")).to_have_attribute("aria-pressed", "true")
     assert_historical_context(page, embedded)
+    switch_source = page.locator("#showMatrix")
+    expect(switch_source).to_have_accessible_name("등록 포트 보기")
+    switch_source.click()
+    expect(pending).to_be_visible()
+    expect(pending).to_have_attribute("data-state", "unclassified")
+    expect(page.locator("#csvViewer")).to_be_hidden()
+    expect(switch_source).to_have_accessible_name("열어 둔 CSV 보기")
+    switch_source.click()
+    expect(pending).to_be_hidden()
+    assert_comparison(embedded, earlier, later)
+    assert_historical_context(page, embedded)
+    assert len(switch.commands) == start
     embedded.locator("#openCsv").set_input_files([later, invalid])
     expect(embedded.locator("#fileError")).to_contain_text(invalid["name"])
     assert_comparison(embedded, earlier, later)
@@ -115,6 +183,11 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     embedded.locator("#openCsv").set_input_files(earlier)
     expect(embedded.locator("#sourceName")).to_have_text(earlier["name"])
     expect(embedded.locator("#tbody")).to_contain_text("8.1 W")
+    expect(page.locator("#portMonitorTab")).to_have_attribute("aria-pressed", "true")
+    page.locator("#portReviewTab").click()
+    expect(embedded.locator("#extraView")).to_contain_text("점검 목록")
+    expect(page.locator("#portReviewTab")).to_have_attribute("aria-pressed", "true")
+    page.locator("#portMonitorTab").click()
     assert_historical_context(page, embedded)
     embedded.locator("#matrix [data-port-key]").click()
     command_count = len(switch.commands)
@@ -141,14 +214,16 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     assert "show power-over-ethernet 1" in inspected and "configure terminal" not in inspected
     page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1")
-    page.locator("#queryForm .primary").click()
+    open_comparison_during_query(page, switch, embedded, earlier, later)
     expect(embedded.locator("#sourceName")).to_have_text("실시간 조회 결과.csv", timeout=60000)
     expect(embedded.locator("#overviewRoot")).to_be_visible()
     # A disabled port without a measured wattage is a neutral cell.
     expect(embedded.locator("#matrix [data-port-key]")).to_have_attribute(
         "data-state", "unclassified"
     )
-    embedded.locator("#addCsv").set_input_files(earlier)
+    with page.expect_file_chooser() as compare_file:
+        page.locator("#portCompareTab").click()
+    compare_file.value.set_files(earlier)
     assert_comparison(embedded, earlier, {"name": "실시간 조회 결과.csv"})
     assert_historical_context(page, embedded)
     baseline_commands = len(switch.commands)

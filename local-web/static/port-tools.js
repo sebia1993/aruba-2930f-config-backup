@@ -3,27 +3,24 @@
   const raw = $('queryTargets');
   const jobText = {'targets.preview':'대상 목록 검증', 'targets.apply':'대상 목록 적용'};
   Object.assign(jobNames,jobText);
-  Object.assign(labels,{hostname_source:'호스트 이름 수집 출처',sku:'스위치 SKU',software_version:'스위치 소프트웨어',
-    reference_id:'PoE 판정 기준',reference_url:'판정 자료 주소'});
   let groups = [], preview = null, page = 0, focused = '', live = new Map(), loading = new Set();
-  let matrixJob = '', attention = false, registeredText = '', progressGroups = null;
+  let matrixJob = '', registeredText = '', progressGroups = null;
   const pageSize = 192;
-  const marked = new Set(['unpowered','limited']);
   const noPowerData = PowerMatrix.classify({});
   const phaseLabels = {pending:'조회 대기',loading:'조회 중',stale:'재조회 필요'};
   const phaseReasons = {pending:'이 포트의 관측값이 없습니다.',loading:'조회가 완료되면 전력을 판정합니다.',stale:'유효한 최신 관측값이 없습니다. 현재 전력 상태를 다시 조회하세요.'};
   const cmp = new Intl.Collator('en',{numeric:true}).compare;
-  const form = $('queryForm');
   const matrix = document.createElement('article');
   matrix.className = 'panel port-matrix-panel';
-  matrix.innerHTML = '<header><h2>등록 포트 매트릭스</h2><div class="tools"><button type="button" id="matrixPriority" aria-pressed="false">우선 확인</button><label>크기 <select id="matrixSize"><option value="small">작게</option><option value="medium" selected>보통</option><option value="large">크게</option></select></label></div></header><div class="panelbody"><p id="matrixCounts" class="hint"></p><div id="matrixGroups"></div><div id="matrixPager" class="bar" hidden><button type="button" id="matrixPrev">이전</button><span id="matrixPage"></span><button type="button" id="matrixNext">다음</button></div><div id="matrixDetails" hidden></div></div>';
-  form.closest('article').after(matrix);
+  matrix.hidden = true;
+  matrix.innerHTML = '<header><h2>조회 대상 및 진행 상태</h2><div class="tools"><label>등록 포트 검색 <input id="inventorySearch" type="search" placeholder="장비, 주소, 포트"></label><label>크기 <select id="matrixSize"><option value="small">작게</option><option value="medium" selected>보통</option><option value="large">크게</option></select></label></div></header><div class="panelbody"><p id="matrixCounts" class="hint"></p><div id="matrixGroups"></div><div id="matrixPager" class="bar" hidden><button type="button" id="matrixPrev">이전</button><span id="matrixPage"></span><button type="button" id="matrixNext">다음</button></div><div id="matrixDetails" hidden></div></div>';
+  $('monitorInventory').append(matrix);
 
   // Keep the three measured states visible even when a filter has an empty result.
   const legend = elem('div',undefined,'matrix-legend');
   legend.id = 'matrixLegend';
   legend.setAttribute('aria-label','전력 판정 범례');
-  for (const state of powerStates) {
+  for (const state of ['unpowered','limited','normal']) {
     const entry = elem('span',PowerMatrix.labels[state],'power-badge');
     entry.dataset.state=state;
     entry.append(elem('b','0'));
@@ -133,9 +130,10 @@
     $('acceptTargets').disabled = true;
     await run('targets.apply',accepted.groups.length ? {targets:accepted.targets} : {rows:[]},r=>{
       groups = stableGroups(r.groups); registeredText = raw.value = r.targets;
-      focused = ''; page = 0; live.clear(); loading.clear(); attention = false; clearPorts();
+      ui.inventoryRequested=groups.length>0;
+      focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
       $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
-      $('targetCount').textContent = groups.length + '대 · ' + targetCount(groups) + '포트 등록';
+      $('targetCount').textContent = groups.length + '대 · ' + targetCount(groups) + '포트 등록 · 관제에서 포트 선택';
       editor.close(); renderMatrix();
     });
     if (editor.open && preview === accepted) {
@@ -144,7 +142,7 @@
   };
   raw.addEventListener('input',()=>{
     if (raw.value === registeredText) return;
-    groups=[]; registeredText=''; live.clear(); loading.clear(); focused=''; attention=false; page=0;
+    groups=[]; registeredText=''; live.clear(); loading.clear(); focused=''; $('inventorySearch').value=''; page=0;
     clearPorts(); $('targetCount').textContent = '입력한 목록은 검증 또는 조회 시 적용됩니다.';
   });
 
@@ -162,6 +160,14 @@
   function invalidatedKeys() {
     return new Set(ui.rows.filter(row=>row.refreshInvalidated).map(portKey));
   }
+  function unobservedTargets() {
+    const observed=new Set(ui.rows.map(portKey));
+    const missing=[];
+    for (const g of inventory()) for (const port of g.interfaces) {
+      if (!observed.has(address(g)+'|'+port)) missing.push({ip:g.ip,sshPort:Number(g.ssh_port||22),port,label:g.label});
+    }
+    return missing;
+  }
   function checkedTargets() {
     const checked = [], blocked = invalidatedKeys();
     for (const g of inventory()) for (const port of g.interfaces) {
@@ -170,20 +176,47 @@
     }
     return checked;
   }
+  function currentScope() {
+    if (!ui.matrixFile || ui.portView==='live') return null;
+    const scope=monitor()?.scope();
+    return scope?.liveId===ui.matrixFile ? scope : null;
+  }
+  function currentKey() {
+    if (!ui.matrixFile) return focused;
+    const scope=currentScope();
+    const current=scope ? scope.current : monitor()?.selected();
+    return current ? portKey({ip:current.ip,ssh_port:current.sshPort,interface:current.port}) : '';
+  }
   function currentAddress() {
-    const chosen=focused || ui.detail || '';
-    return $('switchFilter').value || chosen.split('|')[0];
+    return currentScope()?.device || currentKey().split('|')[0];
   }
   function scopeKeys() {
-    const scope=$('selectionScope').value, device=currentAddress();
-    if(scope==='switch'&&!device){notify('스위치 필터 또는 포트 상세에서 현재 장비를 선택하세요.',true);return null;}
+    const range=$('selectionScope').value, scope=currentScope();
+    const device=range==='switch' && currentAddress();
+    if (range==='switch' && !device) {
+      notify('스위치 필터 또는 포트 상세에서 현재 장비를 선택하세요.',true);
+      return null;
+    }
+    if (ui.matrixFile) {
+      const available=ui.rows.filter(row=>row.status==='ok' && !row.controlUsed && !row.refreshInvalidated);
+      if (range==='filtered') {
+        if (!scope) {
+          notify('관제에서 검색할 포트를 표시하세요.',true);
+          return null;
+        }
+        const found=new Set(scope.rows.map(row=>portKey({ip:row.ip,ssh_port:row.sshPort,interface:row.port})));
+        return available.map(portKey).filter(key=>found.has(key));
+      }
+      return available.filter(row=>!device || endpoint(row)===device).map(portKey);
+    }
     const blocked=invalidatedKeys();
-    if(scope==='filtered')return entries().filter(item=>!blocked.has(item.key)).map(item=>item.key);
-    return inventory().filter(g=>scope!=='switch'||address(g)===device)
+    if (range==='filtered') return entries().filter(item=>!blocked.has(item.key)).map(item=>item.key);
+    return inventory().filter(g=>!device || address(g)===device)
       .flatMap(g=>g.interfaces.map(p=>address(g)+'|'+p)).filter(key=>!blocked.has(key));
   }
   function refreshTargets(bySwitch) {
-    const device=currentAddress(), current=focused || ui.detail;
+    const device=currentAddress(), current=currentKey();
+    if (current) focused=current;
     const lines=[];
     for(const g of inventory()) {
       const addr=address(g);
@@ -209,12 +242,13 @@
   }
   function entries() {
     const complete = new Map(ui.rows.map(r=>[portKey(r),r]));
-    const filters = portFilters();
+    const term = $('inventorySearch').value.trim().toLowerCase();
     const result = [];
     for (const g of inventory()) for (const port of g.interfaces) {
       const endpointKey=address(g), key=endpointKey+'|'+port;
       const record=complete.get(key), view=observation(key,record);
-      if (!matchesPortFilters({ip:g.ip,ssh_port:g.ssh_port,label:g.label,interface:port},view,filters)) continue;
+      if (term && ![endpointKey,g.label,port,view.row?.hostname,view.row?.ap_names,view.label]
+        .join(' ').toLowerCase().includes(term)) continue;
       result.push({g,port,key,record,view,row:view.row,state:view.power.state});
     }
     return result;
@@ -226,7 +260,8 @@
     const {g,port,key,view,row}=item;
     const title = elem('strong',(row?.hostname || g.label || g.ip)+' · '+address(g)+' / '+port);
     const facts = [];
-    if (view.power.watts != null) facts.push(view.power.watts+' W');
+    const draw=view.power.watts ?? row?.watts;
+    if (draw!=null && draw!=='') facts.push(draw+' W');
     if (row) facts.push('링크 ' + PowerMatrix.linkLabel(row.link_status));
     if (row?.link_observed_at) facts.push('링크 관측 시각 ' + dateText(row.link_observed_at));
     if (view.power.apName) facts.push(view.power.apName);
@@ -251,24 +286,25 @@
   }
   function selectItem(item) {
     focused=item.key;
-    if (item.record) {
-      const filtered=filteredRows(), index=filtered.findIndex(r=>portKey(r)===focused);
-      if(index>=0) portPage=Math.floor(index/portPageSize);
-      ui.detail=focused;renderPorts();showDetail(item.record);
-    } else renderMatrix();
+    renderMatrix();
+  }
+  function showInventory(visible) {
+    if (matrix.hidden===visible) {
+      matrix.hidden=!visible;
+      if (visible) renderMatrix();
+    }
   }
   function renderMatrix() {
-    const items=entries(), counts={};
-    const visible=attention ? items.filter(x=>marked.has(x.state)) : items;
+    if (matrix.hidden) return;
+    const visible=entries(), counts={};
     for(const item of visible) counts[item.state]=(counts[item.state]||0)+1;
     for(const badge of legend.children) badge.lastElementChild.textContent=counts[badge.dataset.state] || 0;
     const pages=Math.max(1,Math.ceil(visible.length/pageSize));
     page=Math.max(0,Math.min(page,pages-1));
     const start=page*pageSize, shown=visible.slice(start,start+pageSize);
-    const summary = [attention ? '우선 확인 '+visible.length+' / '+items.length+'포트' : '표시 '+visible.length+'포트'];
+    const summary = ['표시 '+visible.length+'포트'];
     if (counts.unclassified) summary.push('미분류 '+counts.unclassified);
-    $('matrixCounts').textContent = items.length ? summary.join(' · ') : (inventory().length ? '검색 조건에 맞는 포트가 없습니다.' : '검증한 스위치 목록을 적용하거나 포트를 조회하세요.');
-    $('matrixPriority').setAttribute('aria-pressed',String(attention));
+    $('matrixCounts').textContent = visible.length ? summary.join(' · ') : (inventory().length ? '검색 조건에 맞는 포트가 없습니다.' : '검증한 스위치 목록을 적용하거나 포트를 조회하세요.');
     $('matrixGroups').dataset.zoom=$('matrixSize').value;
     const nodes=[], grids=new Map();
     for(const item of shown) {
@@ -294,25 +330,15 @@
       tile.title=[addr+' / '+item.port,item.view.label,item.view.power.watts!=null ? item.view.power.watts+' W' : '',item.view.power.apName].filter(Boolean).join(' · ');
       tile.setAttribute('aria-label',tile.title); grids.get(addr).append(tile);
     }
-    if (attention && !shown.length) nodes.push(elem('p','현재 표시 범위에 우선 점검할 포트가 없습니다.','hint'));
     $('matrixGroups').replaceChildren(...nodes);
     $('matrixPager').hidden=pages<=1; $('matrixPage').textContent=(page+1)+' / '+pages;
     $('matrixPrev').disabled=page===0; $('matrixNext').disabled=page===pages-1;
     details(visible.find(x=>x.key===focused)); syncChecks();
   }
   $('matrixSize').onchange=()=>{$('matrixGroups').dataset.zoom=$('matrixSize').value;};
-  $('matrixPriority').onclick=()=>{attention=!attention;page=0;const first=entries().find(x=>marked.has(x.state));if (attention&&first) selectItem(first);else renderMatrix();};
+  $('inventorySearch').oninput=()=>{page=0;renderMatrix();};
   $('matrixPrev').onclick=()=>{page--;renderMatrix();};
   $('matrixNext').onclick=()=>{page++;renderMatrix();};
-  function selectDetail(row) {
-    focused=portKey(row);
-    const items=entries();
-    if(attention && !marked.has(items.find(x=>x.key===focused)?.state)) attention=false;
-    const list=attention ? items.filter(x=>marked.has(x.state)) : items;
-    const pos=list.findIndex(x=>x.key===focused);
-    if (pos>=0) page=Math.floor(pos/pageSize);
-    renderMatrix();
-  }
   function onJob(action,state,body) {
     if (action==='ports.query' || action==='ports.refresh') {
       matrixJob=state==='running' ? action : '';
@@ -355,8 +381,8 @@
     if(!Array.isArray(items) || !items.length) return;
     groups=stableGroups(items); registeredText=raw.value=targetsText;
     $('controlMode').value='batch'; $('controlMode').onchange();
-    $('targetCount').textContent=groups.length+'대 · '+targetCount(groups)+'포트 등록';
-    renderMatrix();
+    $('targetCount').textContent=groups.length+'대 · '+targetCount(groups)+'포트 등록 · 관제에서 포트 선택';
+    updatePortActions(); renderMatrix();
   }
   function reconcileRows(rows) {
     // A partial refresh export also contains earlier observations from other ports.
@@ -369,6 +395,7 @@
     });
     return reconciled.concat([...invalid.values()]);
   }
-  window.portTools={observation,reconcileRows,renderMatrix,selectDetail,syncChecks,onJob,onProgress,checkedTargets,scopeKeys,refreshTargets,restoreInventory};
-  renderMatrix();sync();
+  window.portTools={reconcileRows,renderMatrix,showInventory,currentKey,onJob,onProgress,checkedTargets,scopeKeys,unobservedTargets,
+    hasInventory:()=>groups.length>0 || ui.rows.length>0,refreshTargets,restoreInventory};
+  updatePortActions();sync();
 })();

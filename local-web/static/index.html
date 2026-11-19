@@ -50,18 +50,15 @@
     </section>
     <section data-page="ports" aria-label="포트 관제·제어" hidden>
       <div class="heading"><div><h1>포트 관제·제어</h1></div></div>
-      <div class="bar port-workspace-bar" aria-label="포트 작업">
-        <button type="button" id="portMonitorTab" aria-pressed="true" aria-controls="portMonitor portLiveControl">관제·비교·제어</button>
+      <div class="bar port-workspace-bar" role="group" aria-label="포트 작업">
+        <button type="button" id="portMonitorTab" aria-pressed="true" aria-controls="portMonitor">관제</button>
+        <button type="button" id="portReviewTab" aria-pressed="false" aria-controls="portMonitor" disabled>우선 확인</button>
+        <button type="button" id="portCompareTab" aria-pressed="false" aria-controls="portMonitor" disabled>변화 비교</button>
         <button type="button" id="portLiveTab" aria-pressed="false" aria-controls="portTargets">실시간 조회</button>
         <button type="button" class="primary" id="openPortCsv" disabled>CSV 열기</button>
-        <button type="button" id="jumpToControl" class="textbtn" aria-controls="portLiveControl">제어 도구로 이동 ↓</button>
       </div>
       <div class="bar" id="liveResultsBar" hidden><button type="button" id="showMatrix" hidden>최근 실시간 조회 보기</button><div id="queryFiles" class="filelinks"></div></div>
-      <div id="portMonitor"><iframe id="csvViewer" class="viewer" title="포트 관제 · 점검 목록 · 변화 비교" data-src="/csv?embedded=1"></iframe></div>
-      <section id="liveScope" class="panel" aria-label="실시간 포트 검색과 재조회" hidden><div class="panelbody">
-        <div class="bar filters"><label class="grow">결과 검색<input id="portSearch" type="search" placeholder="주소, 포트 또는 AP 이름"></label><label>스위치<select id="switchFilter"><option value="">전체 스위치</option></select></label><label>조회 필터<select id="portFilter"><option value="">전체 결과</option><optgroup label="전력 판정" id="powerFilterOptions"></optgroup><optgroup label="조회·설정"><option value="failed">조회 실패</option><option value="off">PoE 설정 OFF</option><option value="disabled">포트 Disable</option></optgroup></select></label></div>
-        <div class="bar"><button type="button" id="refreshPorts" data-live>선택 포트 재조회</button><button type="button" id="refreshSwitch" data-live>현재 스위치 재조회</button></div>
-      </div></section>
+      <div id="portMonitor"><iframe id="csvViewer" class="viewer" title="포트 관제 · 점검 목록 · 변화 비교" data-src="/csv?embedded=1"></iframe><div id="monitorInventory"></div></div>
       <div id="portTargets" hidden>
       <article class="panel"><header><h2>조회 대상</h2><span>스위치별 한 줄</span></header><form id="queryForm" class="panelbody">
         <label>스위치 주소와 포트 <textarea id="queryTargets" rows="3" placeholder="한 줄에 스위치 주소와 조회할 포트 목록을 입력하세요." required></textarea></label>
@@ -69,19 +66,15 @@
       </form></article>
       </div>
       <div id="portLiveControl">
-      <div class="bar control-header"><h2 id="controlHeading" tabindex="-1">포트 제어</h2><button type="button" id="returnToMonitor" class="textbtn">관제 화면으로 ↑</button></div>
       <p id="controlSourceHint" class="empty" hidden>저장한 관측값입니다. 매트릭스나 점검·비교 목록에서 포트를 선택하고 ‘이 포트 실시간 조회’를 누르면 현재 장비 상태를 확인하고 제어할 수 있습니다.</p>
-      <article class="panel" id="controlPanel"><header><h2>제어 대상과 작업</h2><span id="selectedCount" aria-live="polite">선택 0개</span></header><div class="panelbody">
+      <div id="liveScope" class="bar" hidden><button type="button" id="refreshPorts" data-live>선택 포트 재조회</button><button type="button" id="refreshSwitch" data-live>현재 스위치 재조회</button></div>
+      <article class="panel" id="controlPanel"><header><h2 id="controlHeading" tabindex="-1">포트 제어</h2><span id="selectedCount" aria-live="polite">선택 0개</span></header><div class="panelbody">
         <p id="controlTarget" class="control-target" hidden></p>
         <div class="bar"><label>제어 방식<select id="controlMode"><option value="batch">조회 결과에서 선택</option><option value="single" selected>단일 포트 직접 지정</option></select></label><label>작업<select id="operation"><option value="poe_off">PoE 전원 OFF</option><option value="poe_on">PoE 전원 ON</option><option value="disable">포트 비활성화 (Disable)</option><option value="enable">포트 활성화 (Enable)</option></select></label></div>
         <div id="batchControls" class="bar" hidden><label>선택 범위<select id="selectionScope"><option value="filtered">검색 결과</option><option value="switch">현재 스위치</option><option value="all">조회된 전체</option></select></label><button type="button" id="selectVisible">범위 전체 선택</button><button type="button" id="selectEligible">제어 가능 포트만 선택</button><button type="button" id="clearSelection">선택 해제</button></div>
         <div id="singleControls" class="bar"><label>스위치 주소<input id="singleIP" placeholder="스위치 IP 또는 IP:SSH포트"></label><label>포트<input id="singlePort" placeholder="인터페이스 번호"></label></div>
         <p id="controlHint" class="hint">직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.</p>
         <button id="preview" type="button" class="primary" data-live>제어 대상과 명령 검토</button><div id="controlResult" class="output" hidden></div>
-      </div></article>
-      <article id="controlRows" class="panel" hidden><header><h2>실시간 조회 포트 선택</h2></header><div class="panelbody">
-        <div class="tablebox" id="portTable"><p class="empty">조회한 포트가 없습니다.</p></div><div class="bar"><p id="rowSummary" class="hint"></p><button id="prevRows" type="button" hidden>이전</button><button id="nextRows" type="button" hidden>다음</button></div>
-        <details id="rowDetails" hidden><summary>선택한 포트 상세</summary><dl id="detailFields"></dl></details>
       </div></article>
       </div>
     </section>

@@ -127,15 +127,12 @@ dialog::backdrop { background: #030c17bc; }
 .key-list code { overflow-wrap:anywhere }
 
 .port-workspace-bar { margin-bottom: 12px; }
+.port-workspace-bar .primary { margin-inline-start: auto; }
 .port-workspace-bar button[aria-pressed="true"] { border-color: var(--teal); color: var(--teal); }
 #liveResultsBar { margin: 0 0 12px; }
-#portMonitor { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+#csvViewer { border: 1px solid var(--line); border-radius: 12px; }
 #portMonitor,#liveScope { margin-bottom: 16px; }
 #portLiveControl .panelbody { grid-template-columns: minmax(0,1fr); }
-.control-header { justify-content: space-between; margin-bottom: 10px; }
 .control-target { margin: 0; color: var(--teal); overflow-wrap: anywhere; }
 #controlHeading { scroll-margin-block-start: 16px; }
-#portMonitor:not(.has-data) .viewer { height: 250px; min-height: 0; }
-@media (max-width: 850px) {
-  #portMonitor:not(.has-data) .viewer { height: 320px; }
-}
+#portMonitor:not(.has-data) .viewer { height: var(--empty-view-height, 100px); min-height: 0; }

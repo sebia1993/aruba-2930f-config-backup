@@ -5,7 +5,7 @@
 
 ## 브라우저에서 사용하는 로컬 웹
 
-Windows x64용 로컬 웹 ZIP을 풀고 **Start-Local-Web.cmd**를 열면 기본 브라우저에서 AP 로그를 확인할 수 있습니다. **포트 관제·제어**에서는 실시간 조회와 CSV를 비교하고, 같은 화면에서 선택한 포트의 PoE와 관리 상태를 변경할 수 있습니다. [로컬 웹 사용 안내](local-web/README.md) · [웹 v1.4.2 다운로드](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/web-v1.4.2)
+Windows x64용 로컬 웹 ZIP을 풀고 **Start-Local-Web.cmd**를 열면 기본 브라우저에서 AP 로그를 확인할 수 있습니다. **포트 관제·제어**에서 실시간 조회와 CSV에 같은 관제 표를 사용합니다. 우선 확인과 변화 비교를 바로 열 수 있고, 관제 표에서 선택한 실시간 포트의 PoE와 관리 상태를 변경할 수 있습니다. [로컬 웹 사용 안내](local-web/README.md) · [웹 v1.4.3 다운로드](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/web-v1.4.3)
 
 ## Windows 데스크톱 프로그램
 
