@@ -1,6 +1,7 @@
 """Build the self-contained CPython/Windows release on a Windows x64 build host."""
 
 import argparse
+import ast
 import base64
 import csv
 import hashlib
@@ -11,6 +12,8 @@ import shutil
 import struct
 import subprocess
 import sys
+import tokenize
+from itertools import accumulate
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from urllib.request import urlopen
@@ -49,6 +52,51 @@ ATTRIBUTION = re.compile(
 SAMPLE_COMMENT = re.compile(
     rb"(?im)^[ \t]*#[^\n]*(?:\b(?:example|sample)\s*:|\b(?:\d{1,3}\.){3}\d{1,3}\b)"
 )
+DEVICE_EXAMPLE = re.compile(
+    r"(?im)(?<![\w/<])(?:SSH@)?[a-z][\w.@:/-]{0,70}(?:\([\w./-]+\))?[>#]"
+    r"(?:[ \t]*$|[ \t]*(?:show|display|login|enable|conf(?:ig)?|terminal|copy|write)\b)"
+    # ADVA FSP drivers document configuration sessions with arrow prompts, command
+    # blocks and sample network element paths instead of a shell '#' or '>'.
+    r"|^[ \t]*(?:[\w.:-]+-->[ \t]*\w|#CLI:PORT\b|configure (?:snmp|system|communication)[ \t]*$)"
+    r"|^[ \t]*>>>|\b(?:\d{1,3}\.){3}\d{1,3}\b|make_test_card"
+)
+# These pinned Rich modules have optional standalone demonstrations with generated
+# values. File-oriented formatters (JSON, Markdown, syntax, ANSI) stay executable.
+RICH_DEMO_MODULES = frozenset(
+    [
+        "__init__",
+        "_log_render",
+        "_ratio",
+        "_win32_console",
+        "_wrap",
+        "abc",
+        "align",
+        "console",
+        "highlighter",
+        "layout",
+        "live",
+        "logging",
+        "markup",
+        "padding",
+        "pager",
+        "panel",
+        "pretty",
+        "progress",
+        "progress_bar",
+        "prompt",
+        "repr",
+        "scope",
+        "segment",
+        "spinner",
+        "status",
+        "styled",
+        "table",
+        "text",
+        "traceback",
+        "tree",
+    ]
+)
+VENDOR_FIXTURES = {"rich/__main__.py", "ntc_templates/templates/bogus_for_testing.textfsm"}
 APP_TYPES = {"core": {".py"}, "localweb": {".py"}, "static": {".html", ".css", ".js"}}
 APP_FILES = (
     "server.py",
@@ -146,6 +194,56 @@ def template_rules(data):
     return COMMENT_BLOCK.sub(lambda match: match[0] if ATTRIBUTION.search(match[0]) else b"", data)
 
 
+def driver_source(data):
+    """Remove sample transcript paragraphs and comments without editing executable expressions."""
+    lines = data.splitlines(keepends=True)
+    offsets = list(accumulate(map(len, lines), initial=0))
+    edits = []
+    for expr in ast.walk(ast.parse(data)):
+        if not (
+            isinstance(expr, ast.Expr)
+            and isinstance(expr.value, ast.Constant)
+            and isinstance(expr.value.value, str)
+        ):
+            continue
+        doc = expr.value.value
+        paragraphs = re.split(r"\n[ \t]*\n", doc)
+        kept = [
+            part
+            for part in paragraphs
+            if not DEVICE_EXAMPLE.search(part) or ATTRIBUTION.search(part.encode())
+        ]
+        if len(kept) != len(paragraphs):
+            start = offsets[expr.lineno - 1] + expr.col_offset
+            end = offsets[expr.end_lineno - 1] + expr.end_col_offset
+            edits.append((start, end, repr("\n\n".join(kept)).encode()))
+    for token in tokenize.tokenize(io.BytesIO(data).readline):
+        if token.type != tokenize.COMMENT or not DEVICE_EXAMPLE.search(token.string):
+            continue
+        encoded = token.string.encode()
+        if not ATTRIBUTION.search(encoded):
+            line, col = token.start
+            start = offsets[line - 1] + len(lines[line - 1].decode()[:col].encode())
+            edits.append((start, start + len(encoded), b"#"))
+    for start, end, replacement in sorted(edits, reverse=True):
+        data = data[:start] + replacement + data[end:]
+    return data
+
+
+def rich_source(data, module):
+    if module in RICH_DEMO_MODULES:
+        # A pinned package may change over time: remove only the AST span of its
+        # standalone entry point, never functions or statements that follow it.
+        lines = data.splitlines(keepends=True)
+        for node in reversed(ast.parse(data).body):
+            if isinstance(node, ast.If) and ast.unparse(node.test) == "__name__ == '__main__'":
+                del lines[node.lineno - 1 : node.end_lineno]
+        data = b"".join(lines).rstrip() + b"\n"
+    if module == "console":
+        data = driver_source(data)  # Also remove the documentation for the omitted test card.
+    return data
+
+
 def runtime_content(path, rel):
     """Return replacement bytes for vendor documentation that contains synthetic observations."""
     if rel.parent.name.startswith("netmiko-") and rel.name == "METADATA":
@@ -153,11 +251,15 @@ def runtime_content(path, rel):
         start = original.index(b"### Getting Started:")
         end = original.index(b"## API-Documentation", start)
         return original[:start] + original[end:]
-    if rel.as_posix() == "rich/highlighter.py":
+    if rel.suffix == ".py" and rel.parts[0] in {"netmiko", "rich"}:
         original = path.read_bytes()
-        # The pinned Rich module ends with a standalone address/JSON demonstration.
-        start = original.index(b'\nif __name__ == "__main__":')
-        return original[:start].rstrip() + b"\n"
+        filtered = (
+            driver_source(original)
+            if rel.parts[0] == "netmiko"
+            else rich_source(original, rel.stem)
+        )
+        if filtered != original:
+            return filtered
     if rel.suffix == ".textfsm" and rel.parts[:2] == ("ntc_templates", "templates"):
         original = path.read_bytes()
         rules = template_rules(original)
@@ -176,7 +278,7 @@ def write_runtime(archive, root):
         member = "runtime/" + rel.as_posix()
         if rel.parts[0] == "packages":
             package_rel = PurePosixPath(*rel.parts[1:])
-            if dev_payload(package_rel):
+            if dev_payload(package_rel) or package_rel.as_posix() in VENDOR_FIXTURES:
                 updates[package_rel.as_posix()] = None
                 continue
             if file.name == "RECORD" and file.parent.name.endswith(".dist-info"):
@@ -210,6 +312,8 @@ def check_payload(path):
                 base != "runtime" and base not in APP_TYPES and name not in APP_FILES
             ):
                 raise ValueError(f"Development or operational data in release: {name}")
+            if name.removeprefix("runtime/packages/") in VENDOR_FIXTURES:
+                raise ValueError(f"Vendor demonstration or test fixture in release: {name}")
             if base in APP_TYPES:
                 tokens = re.split(r"[._-]", p.stem.lower())
                 if p.suffix.lower() not in APP_TYPES[base] or DEV_NAMES.intersection(tokens):
@@ -226,10 +330,17 @@ def check_payload(path):
             ):
                 raise ValueError(f"Sample device inventory in {name}")
             if (
-                name == "runtime/packages/rich/highlighter.py"
-                and b'if __name__ == "__main__"' in data
+                p.parts[:3] == ("runtime", "packages", "netmiko")
+                and p.suffix == ".py"
+                and driver_source(data) != data
             ):
-                raise ValueError(f"Address demonstration in {name}")
+                raise ValueError(f"Example device transcript in {name}")
+            if (
+                p.parts[:3] == ("runtime", "packages", "rich")
+                and p.suffix == ".py"
+                and rich_source(data, p.stem) != data
+            ):
+                raise ValueError(f"Unfiltered console demonstration in {name}")
             if p.suffix == ".textfsm" and SAMPLE_COMMENT.search(data):
                 raise ValueError(f"Sample CLI output in parser comments: {name}")
 
