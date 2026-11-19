@@ -63,7 +63,6 @@ from aruba2930f_backup.validation import require_valid_prompt, validate_device_i
 from .backup_destination import copy_backup_files, selected_directory
 from .backup_history import backup_history
 from .backup_tools import BackupProgress, HistoryFolders, pick_directory
-from .host_review import HostKeyReview
 from .port_tools import group_targets, matrix_fields, matrix_observation, preview_targets
 
 MAX_LOG_BATCH_BYTES = 8 * 1024 * 1024
@@ -167,6 +166,13 @@ def _abort_if_cancelled(cancel: threading.Event) -> None:
         raise CollectionFailure(ErrorCode.CANCELLED, "작업을 중지했습니다.")
 
 
+def first_use_host_key_policy(cancel: threading.Event):
+    def accept(check: HostKeyCheck) -> bool:
+        return check.state is HostKeyTrustState.UNKNOWN and not cancel.is_set()
+
+    return accept
+
+
 def _bounded_integer(body: dict, name: str, default: int, upper: int) -> int:
     value = body.get(name, default)
     if type(value) is not int or not 1 <= value <= upper:
@@ -206,8 +212,6 @@ class Operations:
         self._progress_lock = threading.Lock()
         self.progress: dict = {}
         self._backup_progress = None
-        self.host_review = HostKeyReview()
-        self._interactive_keys = False
         self._query_events = []
         self._query_targets = []
 
@@ -254,7 +258,6 @@ class Operations:
 
     def dispatch(self, action: str, body: dict, cancel: threading.Event) -> dict:
         _abort_if_cancelled(cancel)
-        self._interactive_keys = body.get("interactive_hostkeys") is True
         if action in {"targets.preview", "targets.apply"}:
             view = preview_targets(body, _groups)
             if action == "targets.apply":
@@ -388,9 +391,7 @@ class Operations:
             return self._logs(body, self.credentials, cancel)
         raise ValueError("지원하지 않는 작업입니다.")
 
-    def _query(
-        self, groups, credentials, cancel, *, refresh: bool, interactive_keys: bool | None = None
-    ) -> dict:
+    def _query(self, groups, credentials, cancel, *, refresh: bool) -> dict:
         if refresh:
             current = {g.target: g for g in self._inventory}
             for group in groups:
@@ -426,11 +427,10 @@ class Operations:
                     self.progress["completed"] + int(row.complete),
                 )
 
-        review_keys = self._interactive_keys if interactive_keys is None else interactive_keys
         observed = self.query_service.collect(
             groups,
             credentials,
-            approve_host_key=lambda c: review_keys and bool(self.host_review.ask([c], cancel)),
+            approve_host_key=first_use_host_key_policy(cancel),
             cancel_event=cancel,
             on_result=on_row,
         )
@@ -546,19 +546,31 @@ class Operations:
             if exc.code is not ErrorCode.CANCELLED:
                 raise
             checks = []
-        accepted = []
-        if self._interactive_keys:
-            unknown = [c for c in checks if c.state is HostKeyTrustState.UNKNOWN]
-            accepted = self.host_review.ask(unknown, cancel)
-            if accepted and not cancel.is_set():
-                self.collector.approve_host_keys(accepted)
-                approved_targets = {c.target for c in accepted}
-                checks = [
-                    replace(c, state=HostKeyTrustState.TRUSTED, message="장비 지문 승인 완료")
-                    if c.target in approved_targets
-                    else c
-                    for c in checks
-                ]
+        for index, check in enumerate(checks):
+            if cancel.is_set():
+                break
+            if check.target != targets[index]:
+                raise CollectionFailure(
+                    ErrorCode.HOST_KEY_REJECTED, "SSH 지문 조회 대상이 일치하지 않습니다."
+                )
+            if check.state is HostKeyTrustState.UNKNOWN:
+                try:
+                    self.host_key_store.approve([check])
+                    checks[index] = replace(
+                        check,
+                        state=HostKeyTrustState.TRUSTED,
+                        known_fingerprint=check.observation.fingerprint,
+                        message="장비 지문 자동 등록 완료",
+                    )
+                except CollectionFailure as exc:
+                    state = (
+                        HostKeyTrustState.CHANGED
+                        if exc.code is ErrorCode.HOST_KEY_CHANGED
+                        else HostKeyTrustState.REJECTED
+                    )
+                    checks[index] = replace(
+                        check, state=state, error_code=exc.code, message=exc.safe_message
+                    )
         observations = {check.target: check for check in checks}
         trusted = [c.target for c in checks if c.state is HostKeyTrustState.TRUSTED]
         progress.host_keys(checks)
@@ -705,13 +717,15 @@ class Operations:
                 observation = self.collector.host_key_probe.probe(
                     target, timeout=options.connect_timeout_seconds
                 )
-                if self._interactive_keys:
-                    check = self.host_key_store.check(observation)
-                    if check.state is HostKeyTrustState.UNKNOWN:
-                        accepted = self.host_review.ask([check], cancel)
-                        _abort_if_cancelled(cancel)
-                        if accepted:
-                            self.host_key_store.approve(accepted)
+                _abort_if_cancelled(cancel)
+                if observation.target != target:
+                    raise CollectionFailure(
+                        ErrorCode.HOST_KEY_REJECTED, "SSH 지문 조회 대상이 일치하지 않습니다."
+                    )
+                check = self.host_key_store.check(observation)
+                if check.state is HostKeyTrustState.UNKNOWN:
+                    _abort_if_cancelled(cancel)
+                    self.host_key_store.approve([check])
                 self.host_key_store.require_trusted(observation)
                 _abort_if_cancelled(cancel)
                 session = self.collector.session_factory.create(target, credentials, options)

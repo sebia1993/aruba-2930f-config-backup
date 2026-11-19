@@ -104,7 +104,6 @@ class OperationsTests(unittest.TestCase):
         self.factory.create.assert_not_called()
 
     def test_log_path_closes_after_model_check_and_preserves_switch_output(self):
-        self.approve()
         (row,) = self.call("logs.query", targets=self.target.endpoint)["logs"]
         self.assertEqual(row["text"], self.commands["show logging"])
         self.assertEqual(row["hostname"], "lab-edge")
@@ -113,6 +112,55 @@ class OperationsTests(unittest.TestCase):
             ["show version", "show modules", "show logging"],
         )
         self.session.close.assert_called_once()
+
+    def test_first_contact_pins_each_ssh_port_and_reuses_persisted_records(self):
+        second = DeviceTarget(self.target.ip, 2223)
+        original = self.probe.probe(self.target)
+        other = HostKeyObservation(second, "ssh-ed25519", sha256_fingerprint(b"other device key"))
+        self.probe.probe.side_effect = [original, other, other]
+        for device in (self.target, second):
+            (row,) = self.call("logs.query", targets=device.endpoint)["logs"]
+            self.assertEqual(row["status"], "success")
+        store = HostKeyStore(self.ops.host_key_store.path)
+        self.assertEqual(store.check(original).state, HostKeyTrustState.TRUSTED)
+        self.assertEqual(store.check(other).state, HostKeyTrustState.TRUSTED)
+        before = store.path.read_bytes()
+        (row,) = self.call("logs.query", targets=second.endpoint)["logs"]
+        self.assertEqual(row["status"], "success")
+        self.assertEqual(store.path.read_bytes(), before)
+
+    def test_cancel_during_first_probe_leaves_no_pin_or_authenticated_session(self):
+        def cancel_on_probe(target, **kwargs):
+            self.cancel.set()
+            return HostKeyObservation(target, "ssh-ed25519", self.fingerprint)
+
+        self.probe.probe.side_effect = cancel_on_probe
+        self.call("logs.query", targets=self.target.endpoint)
+        self.assertEqual(self.ops.host_key_store.list_approved(), ())
+        self.factory.create.assert_not_called()
+
+    def test_pin_write_failure_prevents_authentication(self):
+        with patch.object(
+            self.ops.host_key_store, "_write_endpoints", side_effect=OSError
+        ) as write:
+            (row,) = self.call("logs.query", targets=self.target.endpoint)["logs"]
+        write.assert_called_once()
+        self.assertEqual(row["status"], "failed")
+        self.assertEqual(self.ops.host_key_store.list_approved(), ())
+        self.factory.create.assert_not_called()
+
+    def test_unusable_or_misdirected_probe_never_authenticates_or_creates_a_pin(self):
+        for observation in (
+            HostKeyObservation(self.target, "ssh-ed25519", ""),
+            HostKeyObservation(DeviceTarget(self.target.ip, 22), "ssh-ed25519", self.fingerprint),
+        ):
+            with self.subTest(observation=observation):
+                self.probe.probe.side_effect = None
+                self.probe.probe.return_value = observation
+                (row,) = self.call("logs.query", targets=self.target.endpoint)["logs"]
+                self.assertEqual(row["status"], "failed")
+                self.assertEqual(self.ops.host_key_store.list_approved(), ())
+                self.factory.create.assert_not_called()
 
     def test_log_read_blocked_for_unsupported_switch(self):
         self.approve()
@@ -172,7 +220,6 @@ class OperationsTests(unittest.TestCase):
         self.assertFalse(self.call("hostkey.list")["keys"])
 
     def test_backup_files_report_and_secret_free_metadata(self):
-        self.approve()
         response = self.call(
             "backup.run", targets=self.target.endpoint, filename_mode="ip", max_attempts=1
         )
@@ -192,11 +239,15 @@ class OperationsTests(unittest.TestCase):
         for value in (self.login_password, self.enable_secret, "Running configuration:"):
             self.assertNotIn(value, metadata)
 
-    def test_unknown_key_does_not_start_authenticated_backup(self):
+    def test_changed_key_does_not_start_authenticated_backup_or_alter_pin(self):
+        self.approve()
+        original_key_store = self.ops.host_key_store.path.read_bytes()
+        self.fingerprint = sha256_fingerprint(b"replacement device key")
         response = self.call("backup.run", targets=self.target.endpoint, max_attempts=1)
         self.assertEqual(response["rows"][0]["status"], "failed")
         self.assertFalse(any(f["name"].endswith(".txt") for f in response["files"]))
         self.factory.create.assert_not_called()
+        self.assertEqual(self.ops.host_key_store.path.read_bytes(), original_key_store)
 
     def test_selected_backup_directory_exports_without_replacing_files(self):
         self.approve()
@@ -347,7 +398,6 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual(history[-1]["run"], "2020-03-15/000001")
 
     def test_port_query_uses_native_evidence_and_csv_and_session_invalidation(self):
-        self.approve()
         self.session.read_interfaces.return_value = (
             "Port Type | Alert Enabled Status Mode\n24 100/1000T | No Yes Up Auto"
         )

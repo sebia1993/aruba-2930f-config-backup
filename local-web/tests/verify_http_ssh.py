@@ -21,6 +21,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import paramiko
+
 from loopback_server import LoopbackArubaSSHServer
 
 
@@ -141,12 +143,11 @@ def exercise(http, switch):
     assert key["state"] == "unknown" and key["fingerprint"].startswith("SHA256:")
     assert not switch.auth_attempts, "Host-key inspection attempted authentication"
     http.job("hostkey.approve", endpoint=address, fingerprint="unexpected", expect_failure=True)
-    blocked = http.job("backup.run", targets=address, max_attempts=1, concurrency=1)
-    assert blocked["rows"][0]["status"] != "success" and not switch.auth_attempts
-    http.job("hostkey.approve", endpoint=address, fingerprint=key["fingerprint"])
-    assert http.job("hostkey.inspect", targets=address)["checks"][0]["state"] == "trusted"
     backup = http.job("backup.run", targets=address, max_attempts=1, concurrency=1)
     assert backup["rows"][0]["status"] == "success", backup["rows"][0].get("message")
+    assert http.job("hostkey.inspect", targets=address)["checks"][0]["state"] == "trusted"
+    (pin,) = http.job("hostkey.list")["keys"]
+    assert pin["endpoint"] == address and pin["fingerprint"] == key["fingerprint"]
     files = {Path(f["name"]).suffix: http.download(f) for f in backup["files"]}
     assert any(b"hostname edge-lab" in raw and b"vlan 1" in raw for raw in files.values())
     assert switch.pager_advances == 1
@@ -190,6 +191,17 @@ def exercise(http, switch):
     history = http.job("control.history")["rows"]
     assert {"poe_on", "poe_off"} <= {r["operation"] for r in history if r["status"] == "verified"}
     assert http.get("/api/history")["items"]
+    # A different key on this exact listening address must stop even cached-session operations.
+    auth_count, command_count = len(switch.auth_attempts), len(switch.commands)
+    switch.host_key = paramiko.RSAKey.generate(2048)
+    blocked = http.job("backup.run", targets=address, max_attempts=1, concurrency=1)
+    assert blocked["rows"][0]["status"] == "failed"
+    assert http.job("logs.query", targets=address)["logs"][0]["status"] == "failed"
+    changed = http.job("ports.refresh", targets=address + " 1")["rows"][0]
+    assert changed["error_code"] == "HOST_KEY_CHANGED"
+    http.job("control.inspect", targets=[target], expect_failure=True)
+    assert len(switch.auth_attempts) == auth_count and len(switch.commands) == command_count
+    assert http.job("hostkey.list")["keys"] == [pin]
     assert http.job("session.close")["connected"] is False
 
 

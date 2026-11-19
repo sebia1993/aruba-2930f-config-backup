@@ -71,15 +71,10 @@ def query_with_inline_credentials(page, switch):
     page.locator("#queryPassword").fill(switch.password)
     page.locator("#queryPassword").press("Enter")
 
-    review = page.locator("#hostReview")
-    expect(review).to_contain_text(f"127.0.0.1:{switch.port}", timeout=45000)
-    expect(page.locator("#queryPassword")).to_have_value("")
-    assert not switch.auth_attempts
-    assert actions == ["session.open", "session.open", "ports.query"]
-    review.locator("input").check()
-    review.get_by_role("button", name="선택한 지문 승인").click()
     expect(page.locator("#portTable")).to_contain_text("8.1 W", timeout=45000)
+    expect(page.locator("#queryPassword")).to_have_value("")
     assert switch.auth_attempts
+    assert actions == ["session.open", "session.open", "ports.query"]
     expect(page.locator("#sessionChip")).to_contain_text(switch.username)
 
     page.locator("#portLiveTab").click()

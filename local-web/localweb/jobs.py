@@ -140,20 +140,9 @@ class Jobs:
         with self.lock:
             item = self.recent[key]
             progress = self.operations.progress_snapshot() if self.active == key else {}
-            if self.active == key:
-                if item["action"] in {"ports.query", "ports.refresh"}:
-                    progress.update(self.operations.query_progress(after))
-                pending = self.operations.host_review.snapshot()
-                if pending:
-                    progress["hostKeys"] = pending
+            if self.active == key and item["action"] in {"ports.query", "ports.refresh"}:
+                progress.update(self.operations.query_progress(after))
             return dict(item, progress=progress)
-
-    def answer_hostkeys(self, key, body):
-        with self.lock:
-            if self.active != key or self.cancel_event.is_set():
-                raise KeyError(key)
-            self.operations.host_review.answer(body)
-        return {"received": True}
 
     def history(self):
         with closing(sqlite3.connect(self.db)) as db:
