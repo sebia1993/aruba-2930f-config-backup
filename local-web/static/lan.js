@@ -15,7 +15,7 @@
     $('lanRunning').hidden = !data.active;
     $('lanAccess').textContent = data.active ? 'LAN 공유 중' : 'LAN 공유';
     if (data.active) {
-      $('lanEndpoint').textContent = data.url + ' · 접속 허용 대역 ' + data.network;
+      $('lanEndpoint').textContent = '서버 주소 ' + data.url;
       $('lanLink').value = data.invitation || '';
       $('lanCopy').disabled = !data.invitation;
       $('lanFingerprint').textContent = data.fingerprint;
@@ -23,7 +23,7 @@
     } else {
       $('lanLink').value = '';
       if (data.interfaces) {
-        address.replaceChildren(...data.interfaces.map(n => new Option(n.address + '/' + n.prefix, n.address)));
+        address.replaceChildren(...data.interfaces.map(n => new Option(n.address, n.address)));
       }
       $('lanStart').disabled = !address.value;
       if (!address.value) message.textContent = '이 PC의 유선 또는 Wi-Fi 연결을 확인하세요.';

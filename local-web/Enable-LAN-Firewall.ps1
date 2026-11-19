@@ -5,26 +5,8 @@ param([switch]$Remove)
 $ErrorActionPreference = 'Stop'
 $ruleName = 'Aruba2930F.LocalWeb.LAN'
 $ruleGroup = 'Aruba 2930F Local Web'
-$ruleTitle = 'Aruba 2930F Local Web - same subnet HTTPS'
+$ruleTitle = 'Aruba 2930F Local Web - invited HTTPS access'
 $listenPort = 18766
-
-function Get-ConnectedSubnet([System.Net.IPAddress]$Address, [int]$Prefix) {
-    if ($Address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
-        $Prefix -lt 8 -or $Prefix -gt 31) {
-        throw 'Choose a connected IPv4 LAN interface in the application.'
-    }
-    $bytes = $Address.GetAddressBytes()
-    if ($bytes[0] -eq 0 -or $bytes[0] -eq 127 -or $bytes[0] -ge 224 -or
-        ($bytes[0] -eq 169 -and $bytes[1] -eq 254)) {
-        throw 'Choose a connected IPv4 LAN interface in the application.'
-    }
-    for ($offset = 0; $offset -lt $bytes.Count; $offset++) {
-        $bits = [Math]::Min(8, [Math]::Max(0, $Prefix - 8 * $offset))
-        $mask = 256 - [int][Math]::Pow(2, 8 - $bits)
-        $bytes[$offset] = [byte]($bytes[$offset] -band $mask)
-    }
-    return "$([System.Net.IPAddress]::new($bytes))/$Prefix"
-}
 
 function Assert-Administrator {
     $current = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -76,7 +58,6 @@ if ($interfaces.Count -ne 1) {
     throw 'The listening address must belong to exactly one connected interface.'
 }
 $nic = $interfaces[0]
-$subnet = Get-ConnectedSubnet $listener.Address $nic.PrefixLength
 $settings = @{
     Name = $ruleName
     PolicyStore = 'PersistentStore'
@@ -86,19 +67,19 @@ $settings = @{
     Protocol = 'TCP'
     LocalPort = $listenPort
     LocalAddress = $listener.Address
-    RemoteAddress = $subnet
+    RemoteAddress = 'Any'
     InterfaceAlias = $nic.InterfaceAlias
     Program = $listener.Program
     Profile = @('Domain', 'Private', 'Public')
     EdgeTraversalPolicy = 'Block'
 }
-$scope = "$($listener.Program) on $($nic.InterfaceAlias), $($listener.Address):$listenPort from $subnet"
-if ($PSCmdlet.ShouldProcess($scope, 'Allow same-subnet inbound HTTPS for Aruba 2930F Local Web')) {
+$scope = "$($listener.Program) on $($nic.InterfaceAlias), $($listener.Address):$listenPort from any IPv4 address"
+if ($PSCmdlet.ShouldProcess($scope, 'Allow inbound HTTPS for Aruba 2930F Local Web')) {
     Assert-Administrator
     if (Get-OwnedRule) {
-        Set-NetFirewallRule @settings
+        Set-NetFirewallRule @settings -NewDisplayName $ruleTitle
     } else {
         New-NetFirewallRule @settings -DisplayName $ruleTitle -Group $ruleGroup | Out-Null
     }
-    Write-Output "Allowed same-subnet HTTPS. Use this script with -Remove to remove the rule."
+    Write-Output "Allowed inbound HTTPS on the selected IPv4 interface. Use this script with -Remove to remove the rule."
 }
