@@ -49,6 +49,7 @@
     const row = $('editTargetRows').insertRow();
     for (const [field,value,label] of [['ip',group?.ip || '','스위치 IPv4'],['interfaces',group?.interfaces.join(',') || '','인터페이스 목록'],['ssh_port',group?.ssh_port || 22,'SSH 포트'],['label',group?.label || '','별칭']]) {
       const cell = row.insertCell();
+      cell.dataset.label=label;
       if (['ssh_port','label'].includes(field)) cell.className = 'advanced';
       const input = elem('input');
       input.value = value;
@@ -120,7 +121,7 @@
   $('addTargetRow').onclick = ()=>{const tr=addRow(); if (tr) {editorDirty();tr.querySelector('input').focus();}};
   $('readClipboard').onclick = async ()=>{
     try { $('pasteTargets').value = await navigator.clipboard.readText(); editorDirty(); }
-    catch { $('targetMessage').textContent = '입력란을 클릭하고 Ctrl+V로 붙여넣으세요.'; }
+    catch { $('targetMessage').textContent = '입력란의 붙여넣기 기능을 사용하세요.'; }
     $('pasteTargets').focus();
   };
   $('verifyEditor').onclick = ()=>{editorDirty();requestPreview(previewPayload(),showPreview);};

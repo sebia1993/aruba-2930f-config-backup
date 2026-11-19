@@ -258,6 +258,35 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   .embedded .matrix-area{order:-1;padding-top:5px}
 }
 
+
+/* The host and its iframe each respond to the space actually available. */
+@media(max-width:560px), (pointer:coarse){
+  .embedded .port-grid{gap:5px}
+  .embedded .port-tile{min-width:max(44px,var(--cell-size));min-height:max(44px,var(--cell-size));font-size:14px}
+  .embedded .port-tile:hover{transform:none}
+  .embedded .siteheading b,.embedded .port-identity{min-width:0;overflow-wrap:anywhere}
+  .embedded #overviewRoot .filterbar :is(.search,select,.btn),
+  .embedded :is(#shortFilterToggle,.detail-actions .btn,.control-picks .btn,.paginate button,.table-head-tools select){min-height:44px}
+  .embedded .search input,.embedded .filterbar select,.embedded .table-head-tools select{font-size:16px}
+  .embedded .port-facts>summary{min-height:44px;padding:11px 0}
+}
+@media(max-width:560px), (max-width:900px) and (pointer:coarse){
+  .embedded .tablewrap{max-height:none;overflow:visible}
+  .embedded .resulttable{display:block;min-width:0}
+  .embedded .resulttable thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  .embedded .resulttable tbody{display:block}
+  .embedded .resulttable tr[data-port-key]{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;padding:8px 12px 10px;border-bottom:1px solid var(--stroke)}
+  .embedded .resulttable td{display:block;padding:0;border:0;white-space:normal;overflow-wrap:anywhere;font-size:13px}
+  .embedded .resulttable td[data-label]::before{content:attr(data-label) / '';display:block;color:var(--muted);font-size:11px}
+  .embedded .resulttable .result-host{grid-row:1;grid-column:1/-1}
+  .embedded .resulttable tr:has(.control-cell) .result-host{padding-right:52px}
+  .embedded .resulttable .row-select{min-height:44px;font-size:14px}
+  .embedded .resulttable .control-cell{grid-row:1;grid-column:2;justify-self:end;align-self:start;z-index:1;width:auto}
+  .embedded .resulttable .port-check{display:grid;place-items:center;min-width:44px;min-height:44px;cursor:pointer}
+  .embedded .resulttable input[type=checkbox]{width:22px;height:22px;margin:0}
+  .embedded .resulttable td[colspan]{padding:12px}
+}
+
 </style>
 <link rel=stylesheet href=/static/embed.css><script src=/static/embed.js defer></script></head>
 <body>
@@ -886,16 +915,18 @@ window.PortViews = (() => {
     state.page=Math.max(0,Math.min(state.page,max-1));
     const start=state.page*pageSize;
     const frag=document.createDocumentFragment();
+    const live=!!liveSelectionId();
+    const headers=Array.from(el('tbody').closest('table').tHead.rows[0].cells,cell=>cell.textContent);
     for (const row of sorted.slice(start,start+pageSize)) {
       const tr=node('tr'); tr.dataset.portKey=row.key;
       tr.classList.toggle('selected',row.key===state.selected);
-      if (liveSelectionId()) {
-        const cell=node('td',null,'control-cell'), input=node('input');
+      if (live) {
+        const cell=node('td',null,'control-cell'), label=node('label',null,'port-check'), input=node('input');
         input.type='checkbox'; input.dataset.controlKey=row.key;
         input.setAttribute('aria-label',endpoint(row)+' 포트 '+row.port+' 제어 대상 선택');
-        cell.append(input); tr.append(cell);
+        label.append(input); cell.append(label); tr.append(cell);
       }
-      const hostname=node('td');
+      const hostname=node('td',null,'result-host');
       const pick=button(row.hostname,'row-select');
       pick.setAttribute('aria-label',row.hostname+' '+row.port+' 상세 보기');
       hostname.append(pick);
@@ -905,6 +936,13 @@ window.PortViews = (() => {
         node('td',row.poeStatus || '—'),node('td',row.apName || '—'));
       if (embedded) tr.append(node('td',row.link || '—'),
         node('td',collectionNames[row.queryStatus] || row.queryStatus),node('td',timeText(row.observed)));
+      if (embedded) {
+        for (const cell of tr.cells) {
+          if (!cell.classList.contains('control-cell') && cell!==hostname) {
+            cell.dataset.label=headers[cell.cellIndex+(live?0:1)];
+          }
+        }
+      }
       frag.append(tr);
     }
     if (!sorted.length) {
@@ -1080,8 +1118,17 @@ window.PortViews = (() => {
     };
     filterTools.append(el('site'),el('zoom').closest('.filter-help'),el('clearFilters'));
     el('status').after(toggle,filterTools);
-    Object.assign(el('zoom'),{min:24,max:40,value:27});
-    el('zoomValue').textContent=el('zoom').value+'px';
+    const touchLayout=window.matchMedia('(max-width:560px), (pointer:coarse)');
+    const sizes={compact:44,wide:27};
+    const sizeMode=()=>touchLayout.matches?'compact':'wide';
+    function configureZoom(){
+      Object.assign(el('zoom'),touchLayout.matches?{min:44,max:60}:{min:24,max:40});
+      el('zoom').value=sizes[sizeMode()];
+      applyZoom();
+    }
+    configureZoom();
+    touchLayout.addEventListener('change',configureZoom);
+    el('zoom').addEventListener('input',()=>{sizes[sizeMode()]=Number(el('zoom').value);});
     const bar=el('search').closest('.filterbar');
     bar.id='overviewFilters';
     const shortToggle=button('검색·필터','btn ghost');
@@ -1105,7 +1152,7 @@ window.PortViews = (() => {
   el('navReview').addEventListener('click',()=>openView('review'));
   for(const id of ['priorityButton','allIssues']) el(id).addEventListener('click',()=>openView('review',state.found));
   for(const id of ['matrix','issues','tbody']) el(id).addEventListener('click',event=>{
-    if (event.target.closest('input[data-control-key]')) return;
+    if (event.target.closest('.control-cell')) return;
     const item=event.target.closest('[data-port-key]');
     if(item) selectPort(item.dataset.portKey,id==='tbody'||window.matchMedia('(max-width:780px)').matches);
   });
@@ -1118,10 +1165,11 @@ window.PortViews = (() => {
   el('sort').addEventListener('change',()=>{state.page=0;renderTable();});
   el('prevPage').addEventListener('click',()=>{state.page--;renderTable();});
   el('nextPage').addEventListener('click',()=>{state.page++;renderTable();});
-  el('zoom').addEventListener('input',event=>{
-    const size=Number(event.target.value)+'px';
+  function applyZoom() {
+    const size=Number(el('zoom').value)+'px';
     document.documentElement.style.setProperty('--cell-size',size); el('zoomValue').textContent=size;
-  });
+  }
+  el('zoom').addEventListener('input',applyZoom);
   showView('overview');
 })();
 

@@ -5,7 +5,7 @@
 
 ## 브라우저에서 사용하는 로컬 웹
 
-Windows x64용 ZIP을 풀고 **Start-Local-Web.cmd**를 실행하세요. **관제·제어**에서 스위치와 포트를 실시간으로 조회하고, 전력과 LLDP 상태를 확인하거나 선택한 포트의 PoE를 변경할 수 있습니다. 다른 IPv4 대역에서도 서버 주소에 연결할 수 있으면 **LAN 공유**에서 발급한 HTTPS 초대 링크로 접속할 수 있습니다. [로컬 웹 사용 안내](local-web/README.md) · [웹 v1.5.1 다운로드](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/web-v1.5.1)
+Windows x64용 ZIP을 풀고 **Start-Local-Web.cmd**를 실행하세요. **관제·제어**에서 스위치와 포트를 실시간으로 조회하고, 전력과 LLDP 상태를 확인하거나 선택한 포트의 PoE를 변경할 수 있습니다. 다른 IPv4 대역에서도 서버 주소에 연결할 수 있으면 **LAN 공유**에서 발급한 HTTPS 초대 링크로 접속할 수 있습니다. 휴대폰에서도 같은 초대 링크를 열면 화면 크기에 맞춰 포트별 전력과 선택한 제어 대상을 확인할 수 있습니다. [로컬 웹 사용 안내](local-web/README.md) · [웹 v1.5.2 다운로드](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/web-v1.5.2)
 
 ## Windows 데스크톱 프로그램
 
