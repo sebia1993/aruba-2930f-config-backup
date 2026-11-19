@@ -121,6 +121,38 @@ def _detail_cells(result: PoEQueryResult) -> tuple[str, ...]:
     )
 
 
+def query_csv_record(result: PoEQueryResult) -> dict[str, str]:
+    """Use the same values for downloadable CSVs and the live matrix."""
+    snapshot = result.snapshot
+    identity = result.identity
+    watts = snapshot.watts if snapshot and result.status is QueryStatus.OK else None
+    row: tuple[str | int, ...] = (
+        result.group.target.ip,
+        result.group.target.port,
+        result.group.label,
+        (snapshot.hostname if snapshot else "") or (identity.hostname or "" if identity else ""),
+        (snapshot.model if snapshot else "") or (identity.model if identity else ""),
+        result.interface,
+        result.status.value,
+        _setting(snapshot.enabled) if snapshot else "",
+        result.observed_link,
+        _setting(snapshot.poe_enabled) if snapshot else "",
+        snapshot.poe_status if snapshot else "",
+        "" if watts is None else "0" if watts == 0 else str(watts),
+        _utc_timestamp(snapshot.observed_at) if snapshot else "",
+        _utc_timestamp(result.finished_at),
+        result.error_code.value if result.error_code else "",
+        result.message,
+        *_detail_cells(result),
+        diagnose_port_power(snapshot).label,
+        diagnose_port_power(snapshot).reason,
+        _utc_timestamp(result.link_observed_at),
+    )
+    return dict(
+        zip(_FIELDS, (_safe_string(v) if isinstance(v, str) else str(v) for v in row), strict=True)
+    )
+
+
 def write_query_csv(path: Path, results: Sequence[PoEQueryResult]) -> None:
     """Write one row per result, preserving missing watts and original row times."""
     # Stream large exports straight to one exclusive temporary file. This
@@ -140,35 +172,7 @@ def write_query_csv(path: Path, results: Sequence[PoEQueryResult]) -> None:
             writer = csv.writer(output)
             writer.writerow(_FIELDS)
             for result in results:
-                snapshot = result.snapshot
-                identity = result.identity
-                watts = snapshot.watts if snapshot and result.status is QueryStatus.OK else None
-                row: tuple[str | int, ...] = (
-                    result.group.target.ip,
-                    result.group.target.port,
-                    result.group.label,
-                    (snapshot.hostname if snapshot else "")
-                    or (identity.hostname or "" if identity else ""),
-                    (snapshot.model if snapshot else "") or (identity.model if identity else ""),
-                    result.interface,
-                    result.status.value,
-                    _setting(snapshot.enabled) if snapshot else "",
-                    result.observed_link,
-                    _setting(snapshot.poe_enabled) if snapshot else "",
-                    snapshot.poe_status if snapshot else "",
-                    "" if watts is None else "0" if watts == 0 else str(watts),
-                    _utc_timestamp(snapshot.observed_at) if snapshot else "",
-                    _utc_timestamp(result.finished_at),
-                    result.error_code.value if result.error_code else "",
-                    result.message,
-                    *_detail_cells(result),
-                    diagnose_port_power(snapshot).label,
-                    diagnose_port_power(snapshot).reason,
-                    _utc_timestamp(result.link_observed_at),
-                )
-                writer.writerow(
-                    _safe_string(cell) if isinstance(cell, str) else cell for cell in row
-                )
+                writer.writerow(query_csv_record(result).values())
             output.flush()
             os.fsync(output.fileno())
         if temporary is None:

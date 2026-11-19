@@ -38,7 +38,7 @@ from aruba2930f_backup.poe_query_models import (
     PoETarget,
     QueryStatus,
 )
-from aruba2930f_backup.poe_query_report import write_query_csv
+from aruba2930f_backup.poe_query_report import query_csv_record, write_query_csv
 from aruba2930f_backup.poe_targets import (
     MAX_PASTE_CHARACTERS,
     MAX_PROFILE_BYTES,
@@ -66,6 +66,7 @@ from .backup_history import backup_history
 from .backup_tools import BackupProgress, HistoryFolders, pick_directory
 from .port_tools import group_targets, matrix_fields, matrix_observation, preview_targets
 
+POWER_SETTLE_SECONDS = 3
 MAX_LOG_BATCH_BYTES = 8 * 1024 * 1024
 
 
@@ -209,6 +210,7 @@ class Operations:
         self.credentials: Credentials | None = None
         self.last_results: tuple[PoEQueryResult, ...] = ()
         self._unreported_ports: set[tuple[DeviceTarget, str]] = set()
+        self.unverified_controls: set[tuple[DeviceTarget, str]] = set()
         self._inventory: tuple[PoETarget, ...] = ()
         self._review: dict[str, HostKeyCheck] = {}
         self._progress_lock = threading.Lock()
@@ -266,6 +268,7 @@ class Operations:
             if action == "targets.apply":
                 self._inventory = _groups({"targets": view["targets"]}) if view["groups"] else ()
                 self.last_results = ()
+                self.unverified_controls.clear()
             return view
         if action == "session.open" or action.startswith("hostkey."):
             self.host_key_store.initialize_from(self.legacy_key_store)
@@ -286,6 +289,7 @@ class Operations:
                 credentials = Credentials(username.strip(), password, secret)
             self._review.clear()
             self.last_results = ()
+            self.unverified_controls.clear()
             self.credentials = credentials
             session_legacy_ssh.clear()
             return {"connected": credentials is not None}
@@ -360,6 +364,7 @@ class Operations:
             self.host_key_store.remove_reviewed(selected)
             self._review.clear()
             self.last_results = ()
+            self.unverified_controls.clear()
             for endpoint in selected:
                 session_legacy_ssh.revoke(_endpoint(endpoint))
             return {"removed": True}
@@ -408,6 +413,7 @@ class Operations:
             self._inventory = groups
             self.last_results = ()
             self._unreported_ports.clear()
+            self.unverified_controls.clear()
         requested = {(g.target, port) for g in groups for port in g.interfaces}
         # A failed refresh must not authorize actions on stale snapshots of those ports.
         retained = {
@@ -416,7 +422,18 @@ class Operations:
             if (r.group.target, r.interface) not in requested
         }
         self.last_results = tuple(retained.values())
-        self._start_progress("스위치 포트 조회 중", len(requested))
+        observed = self._collect_ports(
+            groups, credentials, cancel, "스위치 포트 조회 중", first_use_host_key_policy(cancel)
+        )
+        self._merge_query_results(groups, observed, cancel.is_set())
+        for row in observed:
+            if row.complete and row.status is QueryStatus.OK and row.snapshot:
+                self.unverified_controls.discard((row.group.target, row.interface))
+        return self._export_query(with_rows=True)
+
+    def _collect_ports(self, groups, credentials, cancel, message, approve_host_key):
+        total = sum(len(g.interfaces) for g in groups)
+        self._start_progress(message, total)
         with self._progress_lock:
             self._query_events = []
             self._query_targets = groups
@@ -428,19 +445,137 @@ class Operations:
                 self._query_events.append(observation)
                 self._start_progress(
                     "포트 관측 완료" if row.complete else "PoE 관측 · LLDP 조회 중",
-                    len(requested),
+                    total,
                     self.progress["completed"] + int(row.complete),
                 )
 
-        observed = self.query_service.collect(
+        return self.query_service.collect(
             groups,
             credentials,
-            approve_host_key=first_use_host_key_policy(cancel),
+            approve_host_key=approve_host_key,
             cancel_event=cancel,
             on_result=on_row,
         )
-        self._merge_query_results(groups, observed, cancel.is_set())
-        return self._export_query(with_rows=True)
+
+    def refresh_control_power(self, action, outcomes, credentials, cancel):
+        """Observe a completed PoE operation without ever reentering the write path."""
+        labels = {g.target: g.label for g in self._inventory}
+        inventory = {(g.target, port) for g in self._inventory for port in g.interfaces}
+        keys = [
+            key
+            for key, status in outcomes.items()
+            if status in {"verified", "unchanged", "unverified"}
+        ]
+        failed = [
+            key
+            for key, status in outcomes.items()
+            if status == "preflight_failed" and key in inventory
+        ]
+        if not (keys or failed):
+            return {}
+
+        def groups_for(selected):
+            ports = {}
+            for target, interface in selected:
+                ports.setdefault(target, []).append(interface)
+            return tuple(
+                PoETarget(t, tuple(items), labels.get(t, "")) for t, items in ports.items()
+            )
+
+        def collect(selected, message):
+            try:
+                rows = self._collect_ports(
+                    groups_for(selected), credentials, cancel, message, lambda _check: False
+                )
+            except Exception:
+                # Preserve the independent control result if SSH collection cannot complete.
+                return {}
+            selected_keys = set(selected)
+            received = {}
+            for row in rows:
+                key = row.group.target, row.interface
+                if key not in selected_keys or not row.complete:
+                    continue
+                if row.snapshot and (row.snapshot.target, row.snapshot.interface) != key:
+                    continue
+                received[key] = row
+            return received
+
+        observed = collect(keys, "PoE 제어 후 전력 조회 중") if keys else {}
+        retry = []
+        for key in keys:
+            row = observed.get(key)
+            if (
+                outcomes[key] != "verified"
+                or not row
+                or row.status is not QueryStatus.OK
+                or not row.snapshot
+            ):
+                continue
+            watts = row.snapshot.watts
+            if watts is not None and (
+                (action is PortAction.POE_ON and watts == 0)
+                or (action is PortAction.POE_OFF and watts > 0)
+            ):
+                retry.append(key)
+        if retry and not cancel.is_set():
+            self._start_progress("PoE 전력 변화 대기 중", len(retry))
+            if not cancel.wait(POWER_SETTLE_SECONDS):
+                rechecked = collect(retry, "PoE 전력 변화 재조회 중")
+                for key in retry:
+                    observed.pop(key, None)
+                observed.update(rechecked)
+
+        readings = []
+        invalid = set()
+        for target, interface in keys:
+            row = observed.get((target, interface))
+            if (
+                not row
+                or row.status not in {QueryStatus.OK, QueryStatus.UNSUPPORTED}
+                or not row.snapshot
+            ):
+                invalid.add((target, interface))
+            snapshot = row.snapshot if row and row.status is QueryStatus.OK else None
+            watts = snapshot.watts if snapshot else None
+            status, message = "measured", ""
+            if watts is None:
+                cancelled = row.status is QueryStatus.CANCELLED if row else cancel.is_set()
+                status = "cancelled" if cancelled else "unavailable"
+                message = (row.message if row else "") or (
+                    "전력 조회가 중지되었습니다."
+                    if cancelled
+                    else "새 전력 측정값을 받지 못했습니다."
+                )
+            readings.append(
+                dict(
+                    ip=target.ip,
+                    sshPort=target.port,
+                    port=interface,
+                    watts=watts,
+                    observed=snapshot.observed_at if watts is not None else "",
+                    status=status,
+                    message=message,
+                )
+            )
+        result = {"powerRefresh": {"readings": readings}}
+        registered = [key for key in keys if key in inventory] + failed
+        if registered:
+            # Never add a manually inspected, unregistered port to the inventory.
+            self._merge_query_results(
+                groups_for(registered), tuple(observed.values()), cancel.is_set()
+            )
+            self._unreported_ports.update(invalid.intersection(registered))
+            for key in registered:
+                if outcomes[key] == "unverified":
+                    self.unverified_controls.add(key)
+            try:
+                result.update(self._export_query(with_rows=True))
+            except OSError, ValueError:
+                # A CSV filesystem error must not hide actual readings or resurrect an old CSV.
+                result.update(rows=self._matrix_rows(), files=[])
+                result["powerRefresh"]["message"] = "전력 조회 결과 CSV를 저장하지 못했습니다."
+        return result
 
     def _merge_query_results(self, groups, observed, cancelled):
         """Fill only requested gaps with a terminal failure that cannot authorize a write."""
@@ -532,18 +667,31 @@ class Operations:
         write_query_csv(path, self.last_results)
         result = {"files": [self._file(path)]}
         if with_rows:
-            with path.open(encoding="utf-8-sig", newline="") as stream:
-                rows = list(csv.DictReader(stream))
-            for values, native in zip(rows, self.last_results, strict=True):
-                allowed = _eligible(native)
-                values.update(matrix_fields(native))
-                values.update(
-                    eligible_operations=allowed, eligibleOff=PortAction.POE_OFF.value in allowed
-                )
-                if (native.group.target, native.interface) in self._unreported_ports:
-                    values.update(controlUsed=True, refreshInvalidated=True)
-            result["rows"] = rows
+            result["rows"] = self._matrix_rows()
         return result
+
+    def _matrix_rows(self):
+        rows = []
+        for native in self.last_results:
+            key = native.group.target, native.interface
+            locked = key in self.unverified_controls
+            allowed = [] if locked or key in self._unreported_ports else _eligible(native)
+            values = query_csv_record(native)
+            values.update(matrix_fields(native))
+            values.update(
+                eligible_operations=allowed, eligibleOff=PortAction.POE_OFF.value in allowed
+            )
+            if key in self._unreported_ports:
+                values.update(controlUsed=True, refreshInvalidated=True)
+            elif locked:
+                values.update(
+                    controlUsed=True,
+                    powerObserved=native.status is QueryStatus.OK
+                    and native.snapshot is not None
+                    and native.snapshot.watts is not None,
+                )
+            rows.append(values)
+        return rows
 
     def _backup(self, body: dict, credentials: Credentials, cancel: threading.Event) -> dict:
         targets = _devices(body, backup_targets=True)

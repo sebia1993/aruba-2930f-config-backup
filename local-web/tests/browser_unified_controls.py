@@ -1,10 +1,9 @@
 """Exercise matrix selection, filtered bulk controls and exact SSH endpoints on loopback."""
 
-import re
 from threading import Event
 from unittest.mock import patch
 
-from browser_qa import click_quick_poe, enter_ssh_credentials, run_browser_case
+from browser_qa import click_quick_poe, enter_ssh_credentials, expect_power_result, run_browser_case
 from playwright.sync_api import expect
 
 
@@ -40,19 +39,23 @@ def change_target_while_previewing(page, switch, address):
     assert switch.poe_enabled
 
 
-def leave_live_inspection_for_batch(page, csv_view, changed, available):
+def leave_live_inspection_for_batch(page, csv_view, changed, available, untouched_switch):
     page.locator("#portLiveTab").click()
     page.locator("#queryPorts").click()
     changed_row = csv_view.locator(f'#tbody tr[data-port-key="{changed}/1"] input')
     other_row = csv_view.locator(f'#tbody tr[data-port-key="{available}/1"] input')
     expect(changed_row).to_be_enabled(timeout=60000)
     changed_row.check()
+    untouched_commands = len(untouched_switch.commands)
     with click_quick_poe(page, "poe_on", [(changed, "1")]):
         result = page.locator("#controlResult tbody tr")
         expect(result).to_have_count(1, timeout=90000)
         expect(result).to_contain_text(changed)
         expect(result).to_contain_text("검증 완료")
-    expect(changed_row).to_be_disabled()
+    expect_power_result(page, changed, "0 W", "9.7 W", delta="+9.7 W")
+    expect(csv_view.locator(f'#tbody tr[data-port-key="{changed}/1"]')).to_contain_text("9.7 W")
+    assert len(untouched_switch.commands) == untouched_commands
+    expect(changed_row).to_be_enabled()
     expect(other_row).to_be_enabled()
 
     csv_view.locator(f'#matrix [data-port-key="{changed}/1"]').click()
@@ -176,6 +179,20 @@ def exercise(page, url, switch, second, shots, _backup):
     assert all("configure terminal" not in fixture.commands for fixture in (switch, second))
     # Deliver the mutation request, then drop just its HTTP acknowledgement.
     delivered = []
+    second.off_watts = 0
+    power_read = "show power-over-ethernet 1"
+    off_command = "no interface 1 power-over-ethernet"
+    respond = switch._respond
+
+    def fail_after_verification(channel, command):
+        # Keep the command verification successful. Reject the independent PoE query on A.
+        if command == power_read and off_command in switch.commands:
+            after_write = switch.commands.index(off_command) + 1
+            if power_read in switch.commands[after_write:]:
+                switch.commands.append(command)
+                channel.sendall("\r\n".join([command, "Permission denied", switch.prompt]).encode())
+                return False
+        return respond(channel, command)
 
     def drop_submission_reply(route):
         accepted = route.fetch(max_retries=0)
@@ -187,6 +204,7 @@ def exercise(page, url, switch, second, shots, _backup):
 
     page.route("**/api/jobs", drop_submission_reply, times=1)
     with (
+        patch.object(switch, "_respond", fail_after_verification),
         page.expect_request(
             lambda req: (
                 req.method == "GET" and delivered and f"/api/jobs/{delivered[0]}?" in req.url
@@ -198,61 +216,69 @@ def exercise(page, url, switch, second, shots, _backup):
         expect(results).to_have_count(2, timeout=90000)
         assert sorted(results.locator("td:first-child").all_text_contents()) == sorted(addresses)
         assert all("검증 완료" in row for row in results.all_text_contents())
+        expect_power_result(page, addresses[0], "8.1 W", "미측정")
+        expect_power_result(page, addresses[1], "8.1 W", "0 W", delta="\N{MINUS SIGN}8.1 W")
     assert len(delivered) == 1
     assert all(not fixture.poe_enabled for fixture in (switch, second))
     for fixture in (switch, second):
-        assert fixture.commands.count("no interface 1 power-over-ethernet") == 1
+        assert fixture.commands.count(off_command) == 1
+        after_write = fixture.commands.index(off_command) + 1
+        assert fixture.commands[after_write:].count(power_read) >= 2
     expect(page.locator("#csvViewer")).to_be_visible()
     expect(combined).to_have_attribute("aria-pressed", "true")
     expect(page.locator("#selectedCount")).to_have_text("선택 0개")
-    expect(checkboxes.nth(0)).to_be_disabled()
-    expect(checkboxes.nth(1)).to_be_disabled()
-    for tile in tiles.all():
-        expect(tile).to_have_attribute("aria-label", re.compile("현재 상태 재조회 필요"))
-    tiles.first.click()
-    expect(csv_view.locator("#detail [data-freshness-key]")).to_be_visible()
-    expect(csv_view.locator("#detail")).to_contain_text("현재 상태 재조회 필요")
+    failed_row = csv_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"]')
+    ready_row = csv_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"]')
+    expect(failed_row.get_by_role("checkbox")).to_be_disabled()
+    expect(failed_row).not_to_contain_text("8.1 W")
+    expect(ready_row.get_by_role("checkbox")).to_be_enabled()
+    expect(ready_row).to_contain_text("0 W")
 
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     if shots:
         page.screenshot(path=shots / "unified-port-mobile.png")
     page.set_viewport_size({"width": 1440, "height": 960})
-    # Both snapshots were consumed by the write. Refreshing B alone must leave A
-    # visible for a separate refresh, without treating the two endpoints as interchangeable.
-    for index in (1, 0):
-        key = addresses[index] + "/1"
-        row = csv_view.locator(f'#tbody tr[data-port-key="{key}"]')
-        expect(row.get_by_role("checkbox")).to_be_disabled()
-        csv_view.locator(f'#matrix [data-port-key="{key}"]').click()
-        other_switch = switch if index == 1 else second
-        untouched_commands = len(other_switch.commands)
-        with page.expect_request(
-            lambda r: r.method == "POST" and r.url.endswith("/api/jobs")
-        ) as request:
-            page.locator("#refreshPorts").click()
-        assert request.value.post_data_json["body"]["targets"] == addresses[index] + " 1"
-        expect(row.get_by_role("checkbox")).to_be_enabled(timeout=60000)
-        expect(page.locator("#csvViewer")).to_be_visible()
-        assert len(other_switch.commands) == untouched_commands
-        if index == 1:
-            stale = csv_view.locator(f'#matrix [data-port-key="{addresses[0]}/1"]')
-            expect(stale).to_be_visible()
-            expect(stale).to_have_attribute("aria-label", re.compile("재조회 필요"))
-            stale_row = csv_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"]')
-            expect(stale_row).not_to_contain_text("8.1 W")
-            expect(stale_row).not_to_contain_text("fixture-ap")
-            expect(stale_row).to_contain_text("재조회 필요")
-            expect(csv_view.locator("#mPorts")).to_have_text("1개")
-            stale_row.locator(".row-select").click()
-            expect(csv_view.locator("#detail")).to_contain_text("재조회 필요")
-            expect(csv_view.locator("#detail")).not_to_contain_text("fixture-ap")
-            page.reload()
-            expect(stale).to_be_visible(timeout=30000)
-            expect(stale_row.get_by_role("checkbox")).to_be_disabled()
-            expect(stale_row).not_to_contain_text("8.1 W")
+    # Reload keeps the failed endpoint distinguishable from B's measured 0 W.
+    page.reload()
+    expect(failed_row.get_by_role("checkbox")).to_be_disabled(timeout=30000)
+    expect(failed_row).not_to_contain_text("8.1 W")
+    expect(ready_row).to_contain_text("0 W")
+    key = addresses[0] + "/1"
+    csv_view.locator(f'#matrix [data-port-key="{key}"]').click()
+    untouched_commands = len(second.commands)
+    with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")) as req:
+        page.locator("#refreshPorts").click()
+    assert req.value.post_data_json["body"]["targets"] == addresses[0] + " 1"
+    expect(failed_row.get_by_role("checkbox")).to_be_enabled(timeout=60000)
+    assert len(second.commands) == untouched_commands
 
-    leave_live_inspection_for_batch(page, csv_view, addresses[1], addresses[0])
+    # The control verification sees 8.1 W, the first independent reading sees 0 W,
+    # and the settled reading sees 9.7 W. The update must come from the latter.
+    on_command = "interface 1 power-over-ethernet"
+    respond_on = second._respond
+
+    def delayed_draw(channel, command):
+        if command == power_read and on_command in second.commands:
+            prior = second.commands[second.commands.index(on_command) + 1 :].count(power_read)
+            if prior:
+                watts = 0 if prior == 1 else 9.7
+                second.commands.append(command)
+                lines = [
+                    command,
+                    "Status and Configuration Information for port 1",
+                    "Power Enable : Yes",
+                    "PoE Port Status : Delivering",
+                    f"PD Power Draw : {watts} W",
+                    second.prompt,
+                ]
+                channel.sendall("\r\n".join(lines).encode())
+                return False
+        return respond_on(channel, command)
+
+    with patch.object(second, "_respond", delayed_draw):
+        leave_live_inspection_for_batch(page, csv_view, addresses[1], addresses[0], switch)
+    assert second.commands.count(on_command) == 1
     assert second.poe_enabled and not switch.poe_enabled
     assert not page_errors, page_errors
     page.locator("#shutdown").click()

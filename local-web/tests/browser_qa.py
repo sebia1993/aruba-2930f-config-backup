@@ -26,6 +26,24 @@ def enter_ssh_credentials(page, switch):
     expect(page.locator("#queryPassword")).to_have_value("")
 
 
+def expect_power_result(page, endpoint, before, after, *, port="1", delta=None):
+    table = page.locator("#controlResult table")
+    row = table.locator("tbody tr").filter(has=page.get_by_text(endpoint, exact=True))
+    row = row.filter(has=page.get_by_role("cell", name=port, exact=True))
+    expect(row).to_have_count(1, timeout=90000)
+    headers = table.locator("thead th").all_text_contents()
+    for label, value in (("변경 전 실측 전력", before), ("자동 재조회 전력", after)):
+        cell = row.get_by_role("cell").nth(headers.index(label))
+        expect(cell.locator("strong")).to_have_text(value)
+        if value == "미측정":
+            expect(cell).not_to_contain_text("0 W")
+    change = row.locator(".power-delta")
+    if delta is None:
+        expect(change).to_have_count(0)
+    else:
+        expect(change).to_have_text("변화 " + delta)
+
+
 @contextmanager
 def click_quick_poe(page, operation, targets):
     """Verify one user click submits exactly one job for the selected SSH endpoints."""
@@ -228,19 +246,23 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     with click_quick_poe(page, "poe_on", [(address, "1")]):
         expect(page.locator("#quickResult")).to_contain_text("이미 ON 1개", timeout=90000)
+        expect(page.locator("#quickResult")).to_contain_text("사전 조회 전력")
+        expect(page.locator("#quickResult tbody tr")).to_contain_text("8.1 W")
     assert switch.poe_enabled and "interface 1 power-over-ethernet" not in switch.commands
     for operation, expected in (("poe_off", False), ("poe_on", True)):
         page.locator("#operation").select_option(operation)
         page.locator("#selectEligible").click()
+        expect(page.locator("#selectedCount")).to_have_text("선택 1개")
         assert switch.poe_enabled is not expected
         with click_quick_poe(page, operation, [(address, "1")]):
             expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
         expect(page.locator("#controlResult")).to_contain_text(
             "링크 Up" if expected else "링크 Down"
         )
+        expect_power_result(
+            page, address, "미측정" if expected else "8.1 W", "8.1 W" if expected else "미측정"
+        )
         assert switch.poe_enabled is expected
-        page.locator("#refreshSwitch").click()
-        expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
         expect(page.locator("#csvViewer")).to_be_visible()
     page.locator("#operation").select_option("poe_off")
     page.locator("#selectEligible").click()
@@ -254,8 +276,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     submit.click()
     expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
     assert not switch.poe_enabled
-    page.locator("#refreshPorts").click()
-    expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
+    expect_power_result(page, address, "8.1 W", "미측정")
     expect(page.locator("#csvViewer")).to_be_visible()
     page.locator("#controlMode").select_option("single")
     page.locator("#singleIP").fill(address)
@@ -269,6 +290,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     submit.click()
     expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
     assert switch.poe_enabled
+    expect_power_result(page, address, "미측정", "8.1 W")
     nav("logs")
     page.locator("#sshLogs summary").click()
     page.locator("#logTargets").fill(address + "\n" + second_address)

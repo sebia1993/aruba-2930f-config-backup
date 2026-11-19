@@ -5,14 +5,15 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from localweb.jobs import Busy, Jobs
 
 from aruba2930f_backup.models import Credentials
 from aruba2930f_backup.poe_query_models import PoEQueryResult, QueryStatus
-from aruba2930f_backup.port_control import PortSnapshot
+from aruba2930f_backup.port_control import PortControlService, PortOperationResult, PortSnapshot
 
 
 class JobTests(unittest.TestCase):
@@ -178,6 +179,48 @@ class JobTests(unittest.TestCase):
                     saved = list(csv.DictReader(stream))
                 self.assertEqual([row["watts"] for row in saved], ["1.0", "", "3.0"])
                 self.assertEqual(self.jobs.workspace()["query"]["files"], [])
+
+    def test_reviewed_poe_restores_new_matrix_when_csv_download_registration_fails(self):
+        self.initial_query()
+        ops = self.jobs.operations
+        snap = ops.last_results[1].snapshot
+        service = Mock(spec=PortControlService)
+        service.inspect.return_value = snap
+        service.apply.return_value = PortOperationResult("verified", "설정 변경 확인", snap, snap)
+        target = {"ip": snap.target.ip, "sshPort": snap.target.port, "port": snap.interface}
+        with patch.object(self.jobs.controls, "_factory", return_value=service):
+            prepared = self.finished(
+                self.jobs.submit(
+                    "control.preview",
+                    {"scope": "single", "operation": "poe_off", "targets": [target]},
+                )
+            )
+            plan = prepared["result"]
+
+            def read_power(groups, creds, **kwargs):
+                (row,) = self.collect_ports(groups, creds, **kwargs)
+                return [replace(row, snapshot=replace(row.snapshot, watts=0.0, poe_enabled=False))]
+
+            with (
+                patch.object(ops.query_service, "collect", read_power),
+                patch.object(self.jobs, "_output", side_effect=OSError("CSV no longer available")),
+            ):
+                job = self.finished(
+                    self.jobs.submit(
+                        "control.apply",
+                        {"planId": plan["planId"], "confirmation": plan["confirmationText"]},
+                    )
+                )
+        self.assertEqual(job["state"], "done")
+        result = job["result"]
+        self.assertEqual(result["results"][0]["status"], "verified")
+        self.assertEqual(result["powerRefresh"]["readings"][0]["watts"], 0.0)
+        self.assertIn("CSV", result["powerRefresh"]["message"])
+        self.assertEqual(result["files"], [])
+        restored = self.jobs.workspace()["query"]
+        self.assertEqual([r["watts"] for r in restored["rows"]], ["1.0", "0", "3.0"])
+        self.assertEqual(restored["files"], [])
+        service.apply.assert_called_once()
 
     def test_partial_return_generates_current_csv_and_only_missing_port_loses_authority(self):
         old = self.initial_query()
