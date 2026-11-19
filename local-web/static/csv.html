@@ -818,6 +818,7 @@ window.PortViews = (() => {
   const state = {current:null, before:null, diff:[], view:'overview', rows:[], found:[],
     selected:null, page:0, issueRows:[], lookup:new Map(), tileByKey:new Map()};
   let importVersion = 0;
+  let lastLiveImport = 0;
   let userRevision = 0;
   let searchFrame = 0;
   const embedded=parent!==window && location.pathname==='/csv' && new URLSearchParams(location.search).get('embedded')==='1';
@@ -861,7 +862,8 @@ window.PortViews = (() => {
   function portOrder(a,b) {
     return collator.compare(a.site,b.site) || collator.compare(a.ip,b.ip) || a.sshPort-b.sshPort || collator.compare(a.port,b.port);
   }
-  function setDataset() {
+  function setDataset(keepView=false) {
+    const site=el('site').value, device=el('device').value;
     checkedPorts.clear(); excludedPorts.clear();
     const missing=liveSelectionId()?state.current.unobserved:[];
     state.rows = [...state.current.rows,...(missing||[])].sort(portOrder);
@@ -870,8 +872,13 @@ window.PortViews = (() => {
     el('site').replaceChildren(option('', '전체 사업장'), ...sites.map(site => option(site,site)));
     const devices=new Map(state.rows.map(row=>[endpoint(row),row.hostname]));
     el('device').replaceChildren(option('','전체 스위치'),...Array.from(devices,([address,name])=>option(address,name+' · '+address)));
-    clearFilters();
-    state.selected = null;
+    if (keepView) {
+      el('site').value=sites.includes(site)?site:'';
+      el('device').value=devices.has(device)?device:'';
+    } else {
+      clearFilters();
+      state.selected=null;
+    }
     filterRows();
   }
   function clearFilters() {
@@ -1231,9 +1238,10 @@ window.PortViews = (() => {
     }
     return window.PortCsv.parse(text,file.name);
   }
-  async function importFiles(files, append, liveId, liveRows=[], stillCurrent=()=>true, unobserved=[]) {
+  async function importFiles(files, append, liveId, liveRows=[], stillCurrent=()=>true, unobserved=[], keepLiveView=false) {
     if (!files.length && !liveId) return;
     const version=++importVersion;
+    if (liveId) lastLiveImport=version;
     const error=el('fileError');
     error.hidden=true; error.textContent='';
     try {
@@ -1271,10 +1279,14 @@ window.PortViews = (() => {
       const before=snapshots.length===2?snapshots[0]:null;
       const current=snapshots[snapshots.length-1];
       const diff=before?window.PortCsv.compare(before,current):[];
+      const keepView=keepLiveView && !!liveSelectionId();
       Object.assign(state,{before,current,diff});
-      setDataset(); updateSource(); openView(before?'compare':'overview');
+      setDataset(keepView); updateSource();
+      if (keepView) showView(state.view,state.found);
+      else openView(before?'compare':'overview');
     } catch (e) {
       if (version!==importVersion || (liveId && !stillCurrent())) return;
+      if (liveId && liveSelectionId() && liveSelectionId()!==liveId) window.PortMonitor.invalidateLive();
       error.textContent='CSV를 열 수 없습니다. '+e.message;
       error.hidden=false;
       if (embedded) parent.postMessage({type:'aruba-port-file-error',message:error.textContent},location.origin);
@@ -1303,7 +1315,7 @@ window.PortViews = (() => {
   }
   if (embedded) {
     window.PortMonitor={
-      loadLive: (id,rows,stillCurrent,unobserved)=>importFiles([],false,id,rows,stillCurrent,unobserved),
+      loadLive: (id,rows,stillCurrent,unobserved,keepView)=>importFiles([],false,id,rows,stillCurrent,unobserved,keepView),
       userRevision: ()=>userRevision,
       openCsv: ()=>el('openCsv').click(),
       navigate,
@@ -1320,7 +1332,7 @@ window.PortViews = (() => {
         for (const action of document.querySelectorAll('[data-observed-key]')) action.disabled=busy;
       },
       invalidateLive: ()=>{
-        ++importVersion;
+        if (importVersion===lastLiveImport) ++importVersion;
         const live=[state.current,state.before].filter(file=>file?.liveId);
         for (const file of live) {
           delete file.liveId;

@@ -261,7 +261,15 @@ class Jobs:
         try:
             if result is not None:
                 for item in result.get("files", []):
-                    path = self._output(item["id"])
+                    try:
+                        path = self._output(item["id"])
+                    except OSError, ValueError:
+                        if "powerRefresh" not in result:
+                            raise
+                        result["powerRefresh"]["message"] = (
+                            "전력 조회 결과 CSV를 등록하지 못했습니다."
+                        )
+                        continue
                     handle = secrets.token_hex(16)
                     folder = result.get("output_directory") if action == "backup.run" else None
                     registrations.append((handle, str(path.relative_to(self.directory)), folder))
@@ -311,7 +319,12 @@ class Jobs:
             with self.lock:
                 if action == "ports.query":
                     self.port_view = result if result and "rows" in result else None
-                elif action in {"ports.refresh", "control.quick", "control.quick-execute"}:
+                elif action in {
+                    "ports.refresh",
+                    "control.quick",
+                    "control.quick-execute",
+                    "control.apply",
+                }:
                     if result and "rows" in result:
                         self.port_view = result
                     elif state != "done":

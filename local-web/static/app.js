@@ -113,10 +113,15 @@ async function run(action, body, receive) {
     sync();
     const {result,cancelled} = await poll(ui.jobId);
     if (receive) receive(result, cancelled);
-    if (['control.apply','control.quick-execute'].includes(action) && result.results?.some(row=>row.status === 'unverified')) {
-      notify(result.message,true);
+    if (['control.apply','control.quick-execute'].includes(action) && hasUncertainControl(result)) {
+      notify(result.message || '포트 제어 결과를 확인하지 못했습니다.',true);
     } else if (action === 'control.quick-execute' && result.blocked?.length) {
       notify(result.message || '선택한 포트의 사전 검증에 실패했습니다.',true);
+    } else if (result.powerRefresh?.readings?.length) {
+      const readings=result.powerRefresh.readings, measured=readings.filter(isMeasuredReading).length;
+      const missing=readings.length-measured;
+      notify(jobNames[action] + (cancelled ? ' 취소됨' : ' 완료') + ' · 전력 자동 재조회 ' + measured + '개 측정' +
+        (missing ? ' · ' + missing + '개 미측정' : ''),missing>0);
     } else {
       notify(jobNames[action] + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'));
     }
@@ -314,16 +319,16 @@ function selectObservedBatch(openControls) {
   renderPorts();
   if (openControls && keys.length) focusControls();
 }
-function queueMatrix(id,canDisplay) {
-  ui.pendingMatrix={id,canDisplay};
+function queueMatrix(id,canDisplay,keepLiveView=false) {
+  ui.pendingMatrix={id,canDisplay,keepLiveView};
   postMatrix();
 }
 function postMatrix() {
   if (!ui.pendingMatrix || !ui.csvLoaded) return;
-  const {id,canDisplay}=ui.pendingMatrix;
+  const {id,canDisplay,keepLiveView}=ui.pendingMatrix;
   ui.pendingMatrix=null;
   const stillCurrent=()=>id===ui.matrixFile && canDisplay();
-  if (stillCurrent()) monitor().loadLive(id,ui.rows,stillCurrent,window.portTools.unobservedTargets());
+  if (stillCurrent()) monitor().loadLive(id,ui.rows,stillCurrent,window.portTools.unobservedTargets(),keepLiveView);
 }
 window.addEventListener('message',e=>{
   if (e.origin !== location.origin || !e.data) return;
@@ -617,6 +622,7 @@ form('backupForm', () => backup({targets:$('backupTargets').value, concurrency:N
 const endpoint = row => Number(row.ssh_port || 22) === 22 ? row.ip : row.ip + ':' + row.ssh_port;
 const portKey = row => endpoint(row) + '|' + row.interface;
 const targetFromRow = row => ({ip:row.ip,sshPort:Number(row.ssh_port || 22),port:String(row.interface)});
+const controlPortKey = target => portKey({ip:target.ip,ssh_port:target.sshPort,interface:target.port});
 function expireLiveMatrix() {
   ui.matrixFile=null; ui.pendingMatrix=null; clearInspection();
   $('queryFiles').replaceChildren();
@@ -668,9 +674,9 @@ function renderPorts() {
   syncMonitorChecks();
   window.portTools?.renderMatrix();
 }
-function receivePorts(result,canDisplay,preferLive=false) {
+function receivePorts(result,canDisplay,preferLive=false,refreshedKeys) {
   if (!Array.isArray(result.rows)) return;
-  ui.rows = window.portTools.reconcileRows(result.rows);
+  ui.rows = window.portTools.reconcileRows(result.rows,refreshedKeys);
   const available = new Set(ui.rows.filter(row=>row.status === 'ok' && !row.controlUsed).map(portKey));
   ui.selected = new Set([...ui.selected].filter(key=>available.has(key)));
   const files=ui.rows.some(row=>row.status==='refresh_pending') ? [] : result.files || [];
@@ -680,7 +686,7 @@ function receivePorts(result,canDisplay,preferLive=false) {
     const replaceObservation=canDisplay() && (preferLive || !historicalSource() || monitor()?.source().expiredLive);
     ui.matrixFile=file.id;
     $('liveResultsBar').hidden=$('showMatrix').hidden=false;
-    if (replaceObservation) queueMatrix(file.id,canDisplay);
+    if (replaceObservation) queueMatrix(file.id,canDisplay,!!refreshedKeys);
   } else if (ui.matrixFile) expireLiveMatrix();
   renderPorts();
 }
@@ -781,22 +787,71 @@ $('controlMode').onchange = () => {
 function controlAfterText(row) {
   if (row.after) return [row.after.detail,row.after.poeStatus].filter(Boolean).join(' · ');
   if (['paused','cancelled','preflight_failed'].includes(row.status)) return '변경 명령 미전송';
+  if (['unverified','result_unknown'].includes(row.status)) return '명령 적용 미확인';
   return '재조회 필요';
 }
 function markControlRowsUsed(targets) {
-  const used = new Set(targets.map(item=>portKey({ip:item.ip,ssh_port:item.sshPort,interface:item.port})));
+  const used = new Set(targets.map(controlPortKey));
   for (const key of used) ui.selected.delete(key);
-  for (const row of ui.rows) if (used.has(portKey(row))) row.controlUsed = true;
+  for (const row of ui.rows) if (used.has(portKey(row))) {
+    row.controlUsed=true;
+    row.powerObserved=false;
+  }
   renderPorts();
+}
+function receiveControlObservations(response,canDisplay) {
+  const results=response.results || [], readings=response.powerRefresh?.readings;
+  const affected=['poe_on','poe_off'].includes(response.operation)
+    ? results.filter(row=>['verified','unchanged','unverified','result_unknown','preflight_failed'].includes(row.status))
+    : results;
+  if (Array.isArray(readings) && Array.isArray(response.rows)) {
+    for (const row of affected) ui.selected.delete(controlPortKey(row));
+    receivePorts(response,canDisplay,false,new Set(readings.map(controlPortKey)));
+  } else {
+    if (Array.isArray(response.rows)) receivePorts(response,canDisplay);
+    if (affected.length) markControlRowsUsed(affected);
+  }
+}
+function isMeasuredReading(reading) {
+  return reading?.status==='measured' && Number.isFinite(reading.watts) && reading.watts>=0;
+}
+function hasUncertainControl(result) {
+  return result.results?.some(row=>row.status==='unverified' || row.status==='result_unknown');
+}
+const powerDeltaNumber=new Intl.NumberFormat('ko-KR',{useGrouping:false,maximumSignificantDigits:10});
+function powerCell(watts, observed, note, beforeWatts) {
+  const cell=elem('div',undefined,'control-power');
+  const measured=Number.isFinite(watts) && watts>=0;
+  cell.append(elem('strong',measured ? watts+' W' : '미측정'));
+  if (measured && Number.isFinite(beforeWatts) && beforeWatts>=0) {
+    const delta=watts-beforeWatts, sign=delta>0 ? '+' : delta<0 ? '−' : '';
+    cell.append(elem('small','변화 '+sign+powerDeltaNumber.format(Math.abs(delta))+' W','power-delta'));
+  }
+  if (observed) cell.append(elem('small',dateText(observed)));
+  if (note) cell.append(elem('small',note));
+  return cell;
 }
 function showControlResults(response, title) {
   const results = response.results || [];
   const box = $('controlResult');
   box.hidden = false;
-  box.append(elem('p',response.message || title + ' 실행 결과'),simpleTable([
+  const columns=[
     ['스위치',x=>x.sshPort && x.sshPort !== 22 ? x.ip + ':' + x.sshPort : x.ip],
-    ['포트','port'],['결과',x=>stateNames[x.status] || x.status],['상세','message',true],['변경 후 상태',controlAfterText,true]
-  ],results));
+    ['포트','port'],['결과',x=>stateNames[x.status] || x.status]
+  ];
+  if (Array.isArray(response.powerRefresh?.readings)) {
+    const fresh = new Map(response.powerRefresh.readings.map(reading=>[controlPortKey(reading),reading]));
+    columns.push(['변경 전 실측 전력',row=>powerCell(row.before?.watts,row.before?.observed)],
+      ['자동 재조회 전력',row=>{
+        const reading=fresh.get(controlPortKey(row));
+        if (!reading) return '재조회 대상 아님';
+        if (isMeasuredReading(reading)) return powerCell(reading.watts,reading.observed,'',row.before?.watts);
+        return powerCell(null,reading.observed,reading.message || (reading.status==='cancelled' ? '재조회 취소' : '전력값을 확인할 수 없습니다.'));
+      },true],['명령 검증 시점 상태',controlAfterText,true]);
+  } else columns.push(['변경 후 상태',controlAfterText,true]);
+  columns.push(['상세','message',true]);
+  box.append(elem('p',response.message || title + ' 실행 결과'),simpleTable(columns,results));
+  if (response.powerRefresh?.message) box.append(elem('p',response.powerRefresh.message,'warning'));
 }
 function renderPlan(plan, inspected=ui.inspectedRow) {
   const choice=controlChoice();
@@ -812,11 +867,12 @@ function renderPlan(plan, inspected=ui.inspectedRow) {
       notify('제어 대상 또는 작업이 변경되었습니다. 현재 선택으로 다시 검토하세요.',true);
       return;
     }
+    const canDisplay=capturePortIntent();
     run('control.apply',{planId:plan.planId,confirmation:input.value},r => {
-      const continuePlan=sameChoice();
+      const continuePlan=canDisplay() && sameChoice();
       window.controlTools.finishProgress();
       showControlResults(r,title);
-      markControlRowsUsed(r.results || []);
+      receiveControlObservations(r,canDisplay);
       if (r.nextPlan && continuePlan) renderPlan(r.nextPlan,inspected);
     });
   },'danger');
@@ -965,9 +1021,11 @@ async function start() {
     }
     if (resumed?.action === 'control.quick-execute') {
       window.controlTools.showQuickResult(resumed.result,resumed.cancelled,true);
-      if (resumed.result.results?.some(row=>row.status==='unverified') || resumed.result.blocked?.length)
-        notify(resumed.result.message,true);
+    } else if (resumed?.action === 'control.apply' && resumed.result.results?.length) {
+      showControlResults(resumed.result,operationNames[resumed.result.operation] || '포트 제어');
     }
+    if (resumed && (hasUncertainControl(resumed.result) || resumed.result.blocked?.length))
+      notify(resumed.result.message || '포트 제어 결과를 확인하세요.',true);
     route();
   } catch (error) { notify(error.message,true); }
   finally { sync(); }

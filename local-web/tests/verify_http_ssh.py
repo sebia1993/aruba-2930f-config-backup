@@ -54,6 +54,7 @@ class MonitorFixture(LoopbackArubaSSHServer):
     """Extend the source release's fixture with one simulated AP-535 port."""
 
     poe_enabled = True
+    off_watts = None
 
     def status_lines(self):
         return interface_status_table([("1", "", "Up" if self.poe_enabled else "Down")])
@@ -91,6 +92,8 @@ class MonitorFixture(LoopbackArubaSSHServer):
             ]
             if self.poe_enabled:
                 lines.extend(["PoE Port Status : Delivering", "PD Power Draw : 8.1 W"])
+            elif self.off_watts is not None:
+                lines.append(f"PD Power Draw : {self.off_watts} W")
         elif command == "show lldp info remote-device 1":
             lines = [
                 "LLDP Remote Device Information Detail",
@@ -204,12 +207,18 @@ def exercise(http, switch):
     assert "127.0.0.1" in restored["targets"] and str(switch.port) in restored["targets"]
 
     target = {"ip": "127.0.0.1", "sshPort": switch.port, "port": "1"}
+    switch.off_watts = 0
     plan = http.job("control.preview", operation="poe_off", scope="batch", targets=[target])
     assert switch.poe_enabled
     assert "링크 Up" in plan["targets"][0]["detail"], plan
     result = http.job("control.apply", planId=plan["planId"], confirmation=plan["confirmationText"])
     assert result["results"][0]["status"] == "verified", result["results"][0]["message"]
     assert result["results"][0]["after"]["link"] == "Down", result
+    assert result["results"][0]["before"]["watts"] == 8.1
+    (reading,) = result["powerRefresh"]["readings"]
+    assert (reading["ip"], reading["sshPort"], reading["port"]) == ("127.0.0.1", switch.port, "1")
+    assert reading["status"] == "measured" and reading["watts"] == 0 and reading["observed"]
+    assert float(result["rows"][0]["watts"]) == 0
     assert not switch.poe_enabled
     http.job(
         "control.apply",
@@ -223,6 +232,10 @@ def exercise(http, switch):
     result = http.job("control.apply", planId=plan["planId"], confirmation=plan["confirmationText"])
     assert result["results"][0]["status"] == "verified" and switch.poe_enabled
     assert result["results"][0]["after"]["link"] == "Up", result
+    assert result["results"][0]["before"]["watts"] == 0
+    (reading,) = result["powerRefresh"]["readings"]
+    assert reading["status"] == "measured" and reading["watts"] == 8.1 and reading["observed"]
+    assert float(result["rows"][0]["watts"]) == 8.1
     assert switch.commands.count("interface 1 power-over-ethernet") == 1
     history = http.job("control.history")["rows"]
     assert {"poe_on", "poe_off"} <= {r["operation"] for r in history if r["status"] == "verified"}

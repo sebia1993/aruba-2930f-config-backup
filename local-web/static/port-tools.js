@@ -158,7 +158,7 @@
     return stableGroups([...items.values()]);
   }
   function invalidatedKeys() {
-    return new Set(ui.rows.filter(row=>row.refreshInvalidated).map(portKey));
+    return new Set(ui.rows.filter(row=>row.refreshInvalidated || (row.powerObserved && row.controlUsed)).map(portKey));
   }
   function unobservedTargets() {
     const observed=new Set(ui.rows.map(portKey));
@@ -230,7 +230,7 @@
   function observation(key, record) {
     const fresh = live.get(key);
     const waiting = loading.has(key) && !fresh;
-    const stale = record?.controlUsed && (record.status==='ok' || record.status==='refresh_pending');
+    const stale = record?.controlUsed && !record.powerObserved && (record.status==='ok' || record.status==='refresh_pending');
     const row = waiting ? null : fresh || (stale ? null : record);
     const incomplete = row && [false,'no','false'].includes(row.complete);
     let phase = 'observed';
@@ -384,14 +384,14 @@
     $('targetCount').textContent=groups.length+'대 · '+targetCount(groups)+'포트 등록 · 관제에서 포트 선택';
     updatePortActions(); renderMatrix();
   }
-  function reconcileRows(rows) {
+  function reconcileRows(rows,refreshed=loading) {
     // A partial refresh export also contains earlier observations from other ports.
     const invalid = new Map(ui.rows.filter(row=>row.refreshInvalidated).map(row=>[portKey(row),row]));
     if (!invalid.size) return rows;
     const reconciled=rows.map(row=>{
       const key=portKey(row), previous=invalid.get(key);
       invalid.delete(key);
-      return previous && !loading.has(key) && row.status==='ok' ? previous : row;
+      return previous && !refreshed.has(key) && row.status==='ok' ? previous : row;
     });
     return reconciled.concat([...invalid.values()]);
   }

@@ -4,7 +4,7 @@ from threading import Event
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
-from browser_qa import enter_ssh_credentials, run_browser_case
+from browser_qa import enter_ssh_credentials, expect_power_result, run_browser_case
 from playwright.sync_api import expect
 from verify_http_ssh import Http
 
@@ -230,6 +230,16 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     assert_comparison(embedded, earlier, {"name": "실시간 조회 결과.csv"})
     assert "show power-over-ethernet 1" in switch.commands[baseline_commands:]
     assert "configure terminal" not in switch.commands[baseline_commands:]
+    page.locator("#operation").select_option("poe_on")
+    page.locator("#preview").click()
+    expect(page.locator("#review")).to_be_visible(timeout=60000)
+    page.locator("#reviewBody input").fill(page.locator("#reviewBody code").inner_text())
+    page.get_by_role("button", name="승인하고 명령 실행").click()
+    expect_power_result(page, address, "미측정", "8.1 W")
+    assert switch.commands.count("interface 1 power-over-ethernet") == 1
+    # Control data updates, while the chosen before/after snapshots retain their original values.
+    expect(page.locator("#portCompareTab")).to_have_attribute("aria-pressed", "true")
+    assert_comparison(embedded, earlier, {"name": "실시간 조회 결과.csv"})
     embedded.locator("#openCsv").set_input_files(later)
     expect(embedded.locator("#sourceName")).to_have_text(later["name"])
     assert_historical_context(page, embedded)
@@ -241,6 +251,6 @@ if __name__ == "__main__":
     run_browser_case(exercise_csv)
     print(
         "PASS Chrome CSV viewer: empty standalone and embedded views, query export, review, "
-        "two-file selection and append, live versus baseline, historical port requery without writes, "
+        "two-file selection and append, live versus baseline, retained comparison after PoE control, "
         "and invalid-file recovery."
     )

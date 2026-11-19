@@ -3,7 +3,7 @@
 from threading import Event
 from unittest.mock import patch
 
-from browser_qa import click_quick_poe, enter_ssh_credentials, run_browser_case
+from browser_qa import click_quick_poe, enter_ssh_credentials, expect_power_result, run_browser_case
 from playwright.sync_api import expect
 from verify_http_ssh import MonitorFixture, interface_status_table
 
@@ -91,6 +91,12 @@ def cancel_before_off(page, switch, address):
         expect(page.locator("#stopJob")).to_be_hidden(timeout=90000)
     assert "configure terminal" not in switch.commands[start:]
     assert switch.power["1"]
+    checkbox = page.frame_locator("#csvViewer").locator(
+        f'#tbody tr[data-port-key="{address}/1"] input'
+    )
+    expect(checkbox).to_be_enabled()
+    expect(checkbox).to_be_checked()
+    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
 
 
 def run_range(page, url, switch, second, shots, output):
@@ -156,7 +162,8 @@ def run_range(page, url, switch, second, shots, output):
             assert len(switch.auth_attempts) == switch.auth_at_disconnect
         else:
             assert all("검증 완료" in row for row in results), results
-            assert all("0 W" in row for row in results), results
+            for port in ("1", "2"):
+                expect_power_result(page, address, "0 W", "0 W", port=port, delta="0 W")
             after_second_write = switch.commands.index("interface 2 power-over-ethernet", start) + 1
             assert switch.commands[after_second_write:].count("show power-over-ethernet 2") >= 2
             assert writes == ["interface 1 power-over-ethernet", "interface 2 power-over-ethernet"]

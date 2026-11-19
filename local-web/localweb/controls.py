@@ -246,6 +246,10 @@ class Controls:
                 snapshot=snapshot,
             )
         elif scope == "batch":
+            if self.operations.unverified_controls.intersection(targets):
+                raise ValueError(
+                    "이전 변경 결과 또는 전력 측정을 확인하지 못했습니다. 포트를 다시 조회하세요."
+                )
             query = self.operations.last_results
             rows = {(row.group.target, row.interface): row for row in query}
             try:
@@ -276,7 +280,12 @@ class Controls:
         if not set(targets).issubset(registered):
             raise ValueError("먼저 선택한 포트를 조회 대상으로 등록하세요.")
         rows = {(r.group.target, r.interface): r for r in self.operations.last_results}
-        refresh = {key for key in targets if _needs_read(rows.get(key), action, direct=direct)}
+        locked = self.operations.unverified_controls.intersection(targets)
+        refresh = {
+            key
+            for key in targets
+            if key not in locked and _needs_read(rows.get(key), action, direct=direct)
+        }
         reread = {}
         if refresh:
             groups = []
@@ -290,6 +299,14 @@ class Controls:
             raise ValueError("사전 조회가 중지되었습니다.")
         ready, skipped, blocked = [], [], []
         for key in targets:
+            if key in locked:
+                blocked.append(
+                    {
+                        **_target_fields(*key),
+                        "detail": "이전 변경 결과 또는 전력 측정을 확인하지 못했습니다. 포트를 다시 조회하세요.",
+                    }
+                )
+                continue
             row = rows.get(key)
             # An already unpowered AP need not have a live link or LLDP neighbor.
             # Only a completed fresh read can skip it without a change command.
@@ -340,12 +357,6 @@ class Controls:
         batch = create_batch_plan(ready, action)
         if direct:
             response.update(self._execute_batch(batch, credentials, cancel, quick=True))
-            # Optional on-demand query exports remain dated observations. Mark
-            # pre-change rows unusable as fresh evidence in the UI and restored workspace.
-            affected = {(t.target.ip, t.target.port, t.interface) for t in batch.targets}
-            for row in response.get("rows", []):
-                if (row["ip"], int(row["ssh_port"]), row["interface"]) in affected:
-                    row["controlUsed"] = True
         else:
             approval = self._batch_approval(batch, credentials, self.operations.last_results)
             approval.quick = True
@@ -469,18 +480,29 @@ class Controls:
                 )
             finally:
                 self._forget_rows({(snapshot.target, snapshot.interface)})
-            return {
+            response = {
+                "operation": approval.action.value,
                 "results": [
                     {
                         **_target_fields(snapshot.target, snapshot.interface),
                         "status": result.status,
                         "message": result.message,
-                        "before": _snapshot_info(snapshot),
+                        "before": _snapshot_info(result.before),
                         "after": _snapshot_info(result.after),
                     }
                 ],
                 "message": result.message,
             }
+            if approval.action.is_poe:
+                response.update(
+                    self.operations.refresh_control_power(
+                        approval.action,
+                        {(snapshot.target, snapshot.interface): result.status},
+                        approval.credentials,
+                        cancel,
+                    )
+                )
+            return response
         assert approval.batch is not None
         return self._execute_batch(
             approval.batch,
@@ -540,21 +562,37 @@ class Controls:
                     index, result.target, result.status.value, result.message
                 ),
             )
-        finally:
+        except Exception:
             self._forget_rows({(target.target, target.interface) for target in chunk})
+            raise
+        outcomes = {(r.target.target, r.target.interface): r.status.value for r in outcome.results}
+        # Paused/cancelled ports never received a write. Preserve their original observation.
+        self._forget_rows(
+            {
+                key
+                for key, status in outcomes.items()
+                if not batch.action.is_poe or status not in {"paused", "cancelled"}
+            }
+        )
         result_rows = [
             {
                 **_target_fields(r.target.target, r.target.interface),
                 "status": r.status.value,
                 "message": r.message,
+                "before": _snapshot_info(r.before),
                 "after": _snapshot_info(r.after),
             }
             for r in outcome.results
         ]
         response = {
+            "operation": batch.action.value,
             "results": result_rows,
             "message": f"{len(result_rows)}개 포트의 실행 결과를 기록했습니다.",
         }
+        if batch.action.is_poe:
+            response.update(
+                self.operations.refresh_control_power(batch.action, outcomes, credentials, cancel)
+            )
         halted = cancel.is_set() or any(
             r.status in (BatchStatus.UNVERIFIED, BatchStatus.CANCELLED, BatchStatus.PAUSED)
             for r in outcome.results

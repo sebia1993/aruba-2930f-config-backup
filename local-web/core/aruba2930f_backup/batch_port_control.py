@@ -111,6 +111,7 @@ class BatchResult:
     message: str
     after: PortSnapshot | None = None
     audit_path: Path | None = None
+    before: PortSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,7 +515,9 @@ class BatchPortController:
                 state = BatchStatus.UNCHANGED
             else:
                 state = BatchStatus.UNVERIFIED
-            return BatchResult(item, state, result.message, result.after, result.audit_path)
+            return BatchResult(
+                item, state, result.message, result.after, result.audit_path, result.before
+            )
         except BatchControlError:
             # A failed durable append is a hard stop: later targets must not be
             # changed if a mutation cannot be audited reliably.

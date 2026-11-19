@@ -41,7 +41,7 @@
   }
   function showQuickResult(result,cancelled,restored=false,canDisplay) {
     finishProgress();
-    if (!restored && Array.isArray(result.rows)) receivePorts(result,canDisplay);
+    if (!restored) receiveControlObservations(result,canDisplay);
     if (!result.operation) return;
     const state = result.operation==='poe_off' ? 'OFF' : 'ON';
     const title = 'PoE ' + state + ' 즉시 실행';
@@ -51,10 +51,15 @@
       elem('p','선택 ' + result.selected + '개 · 사전 재조회 ' + result.rechecked + '개 · 이미 ' + state + ' ' + skipped.length + '개'));
     if (blocked.length) quickResult.append(elem('p',result.message || '사전 검증 실패로 선택한 전체 포트의 실행을 보류했습니다.','warning'),
       simpleTable([['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['보류 사유','detail',true]],blocked));
-    if (skipped.length) quickResult.append(simpleTable([['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['건너뛴 이유','detail']],skipped));
+    if (skipped.length) {
+      const observed=new Map((result.rows || []).map(row=>[portKey(row),row]));
+      quickResult.append(simpleTable([['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['사전 조회 전력',target=>{
+        const row=observed.get(controlPortKey(target));
+        return powerCell(PowerMatrix.classify(row).watts,row?.observed_at);
+      }],['건너뛴 이유','detail']],skipped));
+    }
     if (result.results?.length) {
       showControlResults(result,title);
-      if (!restored) markControlRowsUsed(result.results);
     }
   }
   function requestQuick(operation) {

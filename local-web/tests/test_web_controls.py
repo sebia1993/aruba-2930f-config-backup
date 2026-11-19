@@ -6,11 +6,10 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
-from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from localweb.backup_tools import HistoryFolders
 from localweb.controls import Controls
+from localweb.operations import Operations
 
 from aruba2930f_backup.hostkeys import sha256_fingerprint
 from aruba2930f_backup.models import (
@@ -35,13 +34,9 @@ class WebControlTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.target = DeviceTarget("192.0.2.42", 2222)
-        self.state = SimpleNamespace(
-            credentials=Credentials("test", "test-secret"),
-            host_key_store=object(),
-            last_results=(),
-            data_dir=Path(temporary.name),
-            history_folders=HistoryFolders(),
-        )
+        self.state = Operations(Path(temporary.name))
+        self.state.credentials = Credentials("test", "test-secret")
+        self.state.query_service.collect = Mock(side_effect=self.post_read)
         self.clock = 100.0
         self.cancel = Event()
         self.service = Mock(spec=PortControlService)
@@ -59,6 +54,22 @@ class WebControlTests(unittest.TestCase):
         )
         self.controls.legacy_directory = Path(temporary.name) / "legacy"
 
+    def post_read(self, groups, credentials, **kwargs):
+        rows = []
+        for group in groups:
+            for port in group.interfaces:
+                snapshot = replace(
+                    self.snapshot(port),
+                    target=group.target,
+                    poe_enabled=False,
+                    watts=0.0,
+                    observed_at="2026-11-19T09:00:01+00:00",
+                )
+                row = PoEQueryResult(group, port, QueryStatus.OK, snapshot=snapshot)
+                kwargs["on_result"](row)
+                rows.append(row)
+        return rows
+
     def snapshot(self, port):
         return PortSnapshot(
             self.target,
@@ -71,11 +82,15 @@ class WebControlTests(unittest.TestCase):
             "Delivering",
             8.0,
             "SHA256:approved-fixture",
+            "2026-11-19T09:00:00+00:00",
         )
 
     def query(self, count):
         neighbors = LLDPObservation(
             LLDPStatus.OK, (LLDPNeighbor(model="AP-535", chassis_id="fixture", port_id="eth0"),)
+        )
+        self.state._inventory = (
+            PoETarget(self.target, tuple(str(i) for i in range(1, count + 1))),
         )
         self.state.last_results = tuple(
             PoEQueryResult(
@@ -192,7 +207,9 @@ class WebControlTests(unittest.TestCase):
         self.assertEqual(
             self.service.apply.call_args.kwargs["expected_lldp_identity"], ("fixture", "eth0")
         )
-        self.assertEqual([r.interface for r in self.state.last_results], ["11"])
+        self.assertEqual([r.snapshot.watts for r in self.state.last_results], [0.0] * 10 + [8.0])
+        self.assertEqual(first["powerRefresh"]["readings"][0]["watts"], 0.0)
+        self.assertEqual(first["results"][0]["before"]["watts"], 8.0)
         self.assertEqual(
             [r["status"] for r in self.controls._history() if r["port"] == "11"], ["queued"]
         )
@@ -316,7 +333,7 @@ class WebControlTests(unittest.TestCase):
         self.assertEqual(len(result["results"]), 11)
         self.assertEqual(result["results"][-1]["after"]["watts"], 8.0)
         self.assertEqual(self.state.progress["completed"], 11)
-        self.assertEqual(len(self.state.progress["ports"]), 11)
+        self.assertEqual(len(result["powerRefresh"]["readings"]), 11)
         with self.assertRaises(ValueError):
             self.apply(plan)
 
@@ -331,7 +348,8 @@ class WebControlTests(unittest.TestCase):
         self.assertNotIn("planId", result)
         self.assertNotIn("nextPlan", result)
         self.assertIsNone(self.controls._approval)
-        self.assertEqual([r.interface for r in self.state.last_results], ["12"])
+        self.assertEqual([r.interface for r in self.state.last_results], ports)
+        self.assertEqual([r.snapshot.watts for r in self.state.last_results], [0.0] * 11)
         self.assertEqual(
             len(self.controls.dispatch("control.history", {}, self.cancel)["rows"]), 11
         )
@@ -367,7 +385,8 @@ class WebControlTests(unittest.TestCase):
         self.assertEqual(self.state._query.call_args.args[0][0].interfaces, ("2",))
         self.assertEqual([r["port"] for r in result["skipped"]], ["2"])
         self.assertEqual([r["port"] for r in result["results"]], ["1"])
-        self.assertTrue(result["rows"][0]["controlUsed"])
+        self.assertEqual(result["rows"][0]["watts"], "0")
+        self.assertFalse(result["rows"][0].get("controlUsed"))
         self.assertNotIn("controlUsed", result["rows"][1])
         self.service.apply.assert_called_once()
 
@@ -379,6 +398,139 @@ class WebControlTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.quick(["1"], direct=True)
         self.service.apply.assert_not_called()
+
+    def test_delayed_read_collects_only_ports_still_drawing_after_verified_off(self):
+        self.query(3)
+        calls = []
+
+        def settling(groups, creds, **kwargs):
+            calls.append([(g.target, g.interfaces) for g in groups])
+            rows = self.post_read(groups, creds, **kwargs)
+            if len(calls) == 1:
+                rows[0] = replace(rows[0], snapshot=replace(rows[0].snapshot, watts=6.5))
+            return rows
+
+        self.state.query_service.collect.side_effect = settling
+        with patch("localweb.operations.POWER_SETTLE_SECONDS", 0):
+            result = self.apply(self.preview(("1", "2")))
+        self.assertEqual(calls, [[(self.target, ("1", "2"))], [(self.target, ("1",))]])
+        self.assertEqual(self.service.apply.call_count, 2)
+        self.assertEqual([r["watts"] for r in result["powerRefresh"]["readings"]], [0.0, 0.0])
+        self.assertEqual([r["watts"] for r in result["rows"]], ["0", "0", "8.0"])
+        self.assertNotEqual(
+            result["results"][0]["before"]["observed"],
+            result["powerRefresh"]["readings"][0]["observed"],
+        )
+
+    def test_missing_draw_on_valid_off_snapshot_allows_on_and_measures_real_power(self):
+        self.query(1)
+
+        def collect(groups, creds, **kwargs):
+            rows = self.post_read(groups, creds, **kwargs)
+            on = self.service.apply.call_count == 2
+            return [
+                replace(r, snapshot=replace(r.snapshot, poe_enabled=on, watts=6.25 if on else None))
+                for r in rows
+            ]
+
+        self.state.query_service.collect.side_effect = collect
+        off = self.quick(["1"], direct=True)
+        reading = off["powerRefresh"]["readings"][0]
+        self.assertEqual((reading["status"], reading["watts"]), ("unavailable", None))
+        self.assertEqual(off["rows"][0]["watts"], "")
+        self.assertIn("poe_on", off["rows"][0]["eligible_operations"])
+        self.service.inspect.side_effect = lambda *args, **kw: self.state.last_results[0].snapshot
+        on = self.quick(["1"], "poe_on", direct=True)
+        self.assertEqual(self.service.apply.call_count, 2)
+        self.assertEqual(on["results"][0]["status"], "verified")
+        self.assertIsNone(on["results"][0]["before"]["watts"])
+        self.assertEqual(on["powerRefresh"]["readings"][0]["watts"], 6.25)
+
+    def test_uncertain_write_read_displays_watts_but_requires_independent_new_query(self):
+        self.query(2)
+        self.service.apply.side_effect = lambda snap, *args, **kw: PortOperationResult(
+            "unverified", "결과 불확실", snap, None
+        )
+        result = self.quick(["1", "2"], direct=True)
+        self.assertEqual([r["status"] for r in result["results"]], ["unverified", "paused"])
+        self.assertEqual([r["port"] for r in result["powerRefresh"]["readings"]], ["1"])
+        self.assertEqual(result["powerRefresh"]["readings"][0]["watts"], 0.0)
+        first, second = result["rows"]
+        self.assertTrue(first["controlUsed"] and first["powerObserved"])
+        self.assertEqual(first["eligible_operations"], [])
+        self.assertEqual(second["watts"], "8.0")
+        self.assertEqual(self.quick(["1"], "poe_on", direct=True)["blocked"][0]["port"], "1")
+        self.service.apply.assert_called_once()
+
+        def missing_draw(groups, creds, **kwargs):
+            (row,) = self.post_read(groups, creds, **kwargs)
+            return [replace(row, snapshot=replace(row.snapshot, watts=None))]
+
+        self.state.query_service.collect.side_effect = missing_draw
+        refreshed = self.state.dispatch(
+            "ports.refresh", {"targets": f"{self.target.endpoint} 1"}, self.cancel
+        )
+        self.assertIn("poe_on", refreshed["rows"][0]["eligible_operations"])
+        self.assertFalse(self.state.unverified_controls)
+
+    def test_error_cancel_and_export_failure_do_not_erase_command_results_or_other_ports(self):
+        for situation in ("read-failure", "cancel", "export"):
+            with self.subTest(situation=situation):
+                self.cancel.clear()
+                self.query(2)
+                self.service.apply.reset_mock()
+
+                def collect(groups, creds, *, situation=situation, **kwargs):
+                    if situation == "cancel":
+                        self.cancel.set()
+                    if situation != "export":
+                        raise OSError("no reader")
+                    return self.post_read(groups, creds, **kwargs)
+
+                self.state.query_service.collect.side_effect = collect
+                with patch("localweb.operations.write_query_csv", side_effect=OSError("no CSV")):
+                    result = self.apply(self.preview(("1",)))
+                self.service.apply.assert_called_once()
+                self.assertEqual(result["results"][0]["status"], "verified")
+                self.assertEqual(result["files"], [])
+                self.assertEqual(result["rows"][1]["watts"], "8.0")
+                reading = result["powerRefresh"]["readings"][0]
+                if situation == "export":
+                    self.assertEqual((reading["status"], reading["watts"]), ("measured", 0.0))
+                else:
+                    status = "cancelled" if situation == "cancel" else "unavailable"
+                    self.assertEqual((reading["status"], reading["watts"]), (status, None))
+                    self.assertEqual(result["rows"][0]["watts"], "")
+                    self.assertTrue(result["rows"][0]["refreshInvalidated"])
+
+    def test_manual_non_inventory_port_is_read_by_exact_ssh_endpoint_without_expanding_matrix(self):
+        other = DeviceTarget(self.target.ip, 22)
+        group = PoETarget(other, ("1",), "other")
+        existing = PoEQueryResult(
+            group,
+            "1",
+            QueryStatus.OK,
+            snapshot=replace(self.snapshot("1"), target=other, watts=15.0),
+        )
+        self.state._inventory = (group,)
+        self.state.last_results = (existing,)
+
+        def wrong_endpoint(groups, creds, **kwargs):
+            self.assertEqual([(g.target, g.interfaces) for g in groups], [(self.target, ("1",))])
+            self.assertFalse(kwargs["approve_host_key"](None))
+            return [existing, replace(existing, group=groups[0])]
+
+        self.state.query_service.collect.side_effect = wrong_endpoint
+        result = self.apply(self.preview(scope="single", operation="poe_off"))
+        (reading,) = result["powerRefresh"]["readings"]
+        self.assertEqual(
+            (reading["sshPort"], reading["status"], reading["watts"]), (2222, "unavailable", None)
+        )
+        self.assertEqual(result["results"][0]["status"], "verified")
+        self.assertNotIn("rows", result)
+        self.assertEqual(self.state.last_results, (existing,))
+        self.assertEqual(self.state._inventory, (group,))
+        self.service.apply.assert_called_once()
 
     def test_import_journal_does_not_replay_pending_intent(self):
         header = {
