@@ -13,15 +13,19 @@
   }
   function hideInspection() { inspection.hidden = true; inspection.replaceChildren(); }
   for (const id of ['singleIP','singlePort','controlMode']) $(id).addEventListener('input',hideInspection);
-  single.append(liveButton('inspectSingle','현재 상태 조회',() => {
+  function inspectSingle() {
     hideInspection();
     const ip = $('singleIP').value.trim(), port = $('singlePort').value.trim();
     if (!ip || !port) return notify('스위치 주소와 한 개의 포트를 입력하세요.',true);
+    if (!ui.session.active) { requestQueryAccount(inspectSingle); return; }
     run('control.inspect',{targets:[{ip,port}]},(result,cancelled) => {
-      if (cancelled || !result.snapshot) return;
+      if (cancelled || !result.snapshot || $('singleIP').value.trim()!==ip || $('singlePort').value.trim()!==port) return;
       showInspection(result.snapshot);
     });
-  }));
+  }
+  const inspect = button('현재 상태 조회',inspectSingle);
+  inspect.id='inspectSingle'; inspect.dataset.job='';
+  single.append(inspect);
   function showInspection(s) {
     inspection.hidden = false;
     inspection.replaceChildren(elem('b','현재 포트 상태'),simpleTable([
@@ -32,6 +36,15 @@
   const quickResult = elem('div',undefined,'output');
   quickResult.id = 'quickResult'; quickResult.hidden = true;
   batch.after(quickResult);
+  let quickChoice=null;
+  function onChoiceChange() {
+    if (quickChoice!==null && (quickChoice!==controlChoice() || !controlContextMatches(null))) {
+      quickChoice=null;
+      quickResult.hidden=true;
+      quickResult.replaceChildren();
+    }
+  }
+  $('operation').addEventListener('change',onChoiceChange);
   function selectedTargets() {
     return window.portTools?.checkedTargets() || ui.rows.filter(row=>ui.selected.has(portKey(row))).map(targetFromRow);
   }
@@ -39,6 +52,8 @@
     return targets.map(r=>[r.ip,r.sshPort || 22,r.port].join('|')).sort().join('\n');
   }
   function requestQuick(operation) {
+    if (!controlContextMatches(null)) return;
+    const choice=controlChoice();
     const targets = selectedTargets();
     const selection = keys(targets);
     if (!targets.length) return notify('빠른 제어를 실행할 포트를 체크하세요.',true);
@@ -47,9 +62,8 @@
     $('controlResult').replaceChildren(); $('controlResult').hidden = true;
     run('control.quick',{operation,targets},(plan,cancelled) => {
       if (cancelled) return;
-      quickResult.hidden = false;
-      if (keys(selectedTargets()) !== selection || $('controlMode').value !== 'batch') {
-        quickResult.replaceChildren(elem('p','대상 선택이 변경되었습니다. 현재 선택을 확인하고 다시 검토하세요.'));
+      if (!controlContextMatches(null) || keys(selectedTargets()) !== selection || choice!==controlChoice()) {
+        showChangedControlChoice();
         return;
       }
       if (Array.isArray(plan.rows)) {
@@ -58,6 +72,8 @@
         ui.selected = checked;
         renderPorts();
       }
+      quickChoice=controlChoice();
+      quickResult.hidden=false;
       quickResult.replaceChildren(elem('p','선택 ' + plan.selected + '개 · 사전 재조회 ' + plan.rechecked +
           '개 · 변경 대상 ' + (plan.targets?.length || 0) + '개 · 이미 ON ' + plan.skipped.length + '개'));
       if (plan.blocked.length) {
@@ -104,6 +120,6 @@
       $('controlHistoryTable').prepend(elem('p','명령의 결과가 확인되지 않은 포트가 있습니다. 해당 포트의 현재 상태를 다시 조회하세요.','warning'));
     }
   }
-  window.controlTools = {onProgress,finishProgress,explainUnknown,showInspection};
+  window.controlTools = {onProgress,finishProgress,explainUnknown,showInspection,hideInspection,onChoiceChange};
   sync();
 })();

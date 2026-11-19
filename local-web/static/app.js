@@ -58,6 +58,7 @@ function sync() {
   $('queryTargets').readOnly = ui.busy;
   document.querySelector('[data-import="queryTargets"]').disabled = ui.busy;
   for (const node of all('#portTable [data-port-selectable]')) node.disabled = ui.busy || node.dataset.portSelectable!=='true';
+  monitor()?.setControlBusy?.(ui.busy);
   $('stopJob').hidden = !ui.jobId;
   $('dismissStatus').hidden = ui.busy;
   $('shutdown').disabled = ui.busy || !ui.token;
@@ -174,29 +175,65 @@ function historicalSource() {
 function historicalControlOnly() {
   return historicalSource() && !(monitor()?.source().expiredLive && ui.rows.length);
 }
+function currentInspection() {
+  return ui.inspectedRow && ui.inspectedRow===monitor()?.selected();
+}
+function controlContextMatches(inspected) {
+  return ui.portView==='monitor' && !$('portMonitor').closest('[data-page]').hidden &&
+    (inspected ? ui.inspectedRow===inspected && currentInspection() : !ui.inspectedRow && !historicalControlOnly());
+}
+function controlChoice() {
+  const mode=$('controlMode').value;
+  const targets=mode==='single' ? [$('singleIP').value.trim(),$('singlePort').value.trim()] : Array.from(ui.selected).sort();
+  return JSON.stringify([mode,$('operation').value,targets]);
+}
+function showChangedControlChoice() {
+  $('controlResult').replaceChildren(elem('p','검토 중 제어 대상 또는 작업이 변경되었습니다. 현재 선택으로 다시 검토하세요.'));
+  $('controlResult').hidden=false;
+}
+function clearInspection() {
+  if (!ui.inspectedRow) return;
+  ui.inspectedRow=null;
+  $('singleIP').value=$('singlePort').value='';
+  window.controlTools?.hideInspection();
+  $('controlMode').value='batch';
+  $('controlMode').onchange();
+}
 function updatePortActions() {
-  const historical=historicalSource();
-  const inspected=historical && !!ui.inspectedRow;
-  $('portControlTab').disabled=!!historicalControlOnly() && !inspected;
-  $('portControlTab').title=$('portControlTab').disabled?'관제에서 포트를 선택한 뒤 실시간으로 조회하세요.':'';
-  $('controlRows').hidden=!!inspected;
-  $('liveScope').hidden=ui.portView==='monitor' || (ui.portView==='control' && !!inspected);
+  const blocked=!!historicalControlOnly();
+  const inspected=!!currentInspection();
+  const unified=ui.portView==='monitor';
+  $('portMonitor').classList.toggle('has-data',!!monitor()?.source().hasData);
+  $('controlPanel').hidden=blocked && !inspected;
+  $('controlSourceHint').hidden=!$('controlPanel').hidden;
+  $('controlRows').hidden=blocked || inspected || !ui.rows.length;
+  $('liveScope').hidden=unified && (blocked || inspected || !ui.rows.length);
   $('controlMode').disabled=!!inspected;
   $('singleIP').readOnly=$('singlePort').readOnly=!!inspected;
   $('openPortCsv').disabled=!ui.csvLoaded;
+  $('jumpToControl').hidden=!unified;
+  updateControlTarget();
 }
 function setPortView(view) {
-  if (view==='control' && historicalControlOnly() && !ui.inspectedRow) return;
   ui.portView=view;
-  for (const [name,tab,panel] of [['monitor','portMonitorTab','portMonitor'],['live','portLiveTab','portTargets'],['control','portControlTab','portLiveControl']]) {
+  for (const [name,tab,panel] of [['monitor','portMonitorTab','portMonitor'],['live','portLiveTab','portTargets']]) {
     $(panel).hidden=name!==view;
     $(tab).setAttribute('aria-pressed',String(name===view));
   }
+  $('portLiveControl').hidden=view!=='monitor';
   updatePortActions();
 }
 $('portMonitorTab').onclick=()=>setPortView('monitor');
 $('portLiveTab').onclick=()=>setPortView('live');
-$('portControlTab').onclick=()=>setPortView('control');
+function focusControls() {
+  $('controlHeading').focus({preventScroll:true});
+  $('controlHeading').scrollIntoView({block:'start'});
+}
+$('jumpToControl').onclick=focusControls;
+$('returnToMonitor').onclick=()=>{
+  $('csvViewer').focus({preventScroll:true});
+  $('portMonitor').scrollIntoView({block:'start'});
+};
 $('openPortCsv').onclick=()=>{
   setPortView('monitor');
   $('csvViewer').contentDocument?.getElementById('openCsv')?.click();
@@ -205,15 +242,19 @@ function selectObservedPort(message) {
   if (ui.portView!=='monitor' || ui.busy) return;
   const row=monitor()?.selected();
   if (!row || row.ip!==message.ip || row.port!==message.port || row.sshPort!==message.sshPort) return;
-  if (!ui.session.active) { notify('SSH 접속 설정에서 계정을 적용한 뒤 이 포트를 다시 선택하세요.',true); return; }
+  if (!ui.session.active) {
+    requestQueryAccount(()=>{ if (row===monitor()?.selected()) selectObservedPort(message); });
+    return;
+  }
   const source=monitor().source();
   const record=source.liveId && source.liveId===ui.matrixFile && ui.rows.find(
     item=>item.ip===row.ip && Number(item.ssh_port || 22)===row.sshPort && String(item.interface)===row.port
   );
   if (record && record.status==='ok' && !record.controlUsed) {
+    clearInspection();
     ui.selected=new Set([portKey(record)]); ui.detail=portKey(record);
     $('controlMode').value='batch'; $('controlMode').onchange();
-    setPortView('control'); renderPorts(); showDetail(record);
+    renderPorts(); showDetail(record); focusControls();
     return;
   }
   const address=row.sshPort===22?row.ip:row.ip+':'+row.sshPort;
@@ -223,8 +264,21 @@ function selectObservedPort(message) {
     $('controlMode').value='single'; $('controlMode').onchange();
     $('singleIP').value=address; $('singlePort').value=row.port;
     window.controlTools.showInspection(result.snapshot);
-    setPortView('control');
+    updatePortActions(); focusControls();
   });
+}
+function selectObservedBatch(openControls) {
+  if (ui.portView!=='monitor' || ui.busy) return;
+  const batch=monitor()?.batch();
+  if (!batch?.liveId || batch.liveId!==ui.matrixFile || !Array.isArray(batch.rows)) return;
+  const available=new Set(ui.rows.filter(row=>row.status==='ok' && !row.controlUsed && !row.refreshInvalidated).map(portKey));
+  const keys=batch.rows.map(row=>portKey({ip:row.ip,ssh_port:row.sshPort,interface:row.port}));
+  if (keys.some(key=>!available.has(key))) { syncMonitorChecks(); return; }
+  clearInspection();
+  ui.selected=new Set(keys);
+  $('controlMode').value='batch'; $('controlMode').onchange();
+  renderPorts();
+  if (openControls && keys.length) focusControls();
 }
 function postMatrix() {
   if (!ui.pendingMatrix || !ui.csvLoaded) return;
@@ -237,10 +291,15 @@ window.addEventListener('message',e=>{
     notify('로그 수집 후 분석 결과: ' + e.data.message,true);
   if (e.source === $('csvViewer').contentWindow) {
     if (e.data.type==='aruba-observed-port') selectObservedPort(e.data);
+    if (e.data.type==='aruba-observed-batch' || e.data.type==='aruba-port-checks')
+      selectObservedBatch(e.data.type==='aruba-observed-batch');
+    if (e.data.type==='aruba-port-context' && ui.inspectedRow && !currentInspection()) {
+      clearInspection(); updatePortActions();
+    }
     if (e.data.type==='aruba-port-source') {
-      ui.inspectedRow=null;
-      if (historicalControlOnly()) { ui.selected.clear(); updateSelection(); }
-      if (ui.portView==='control' && historicalControlOnly()) setPortView('monitor');
+      if (!currentInspection()) clearInspection();
+      if (historicalControlOnly()) ui.selected.clear();
+      renderPorts();
       updatePortActions();
     }
   }
@@ -508,11 +567,10 @@ const targetFromRow = row => ({ip:row.ip,sshPort:Number(row.ssh_port || 22),port
 const portPageSize = 100;
 let portPage = 0;
 function expireLiveMatrix() {
-  ui.matrixFile=null; ui.pendingMatrix=null; ui.inspectedRow=null;
+  ui.matrixFile=null; ui.pendingMatrix=null; clearInspection();
   $('queryFiles').replaceChildren();
   monitor()?.invalidateLive();
   $('showMatrix').hidden=true; $('liveResultsBar').hidden=true;
-  if (ui.portView==='control' && historicalControlOnly()) setPortView('monitor');
   updatePortActions();
 }
 function clearPorts() {
@@ -582,10 +640,35 @@ function showDetail(row) {
   for (const tr of $('portTable').querySelectorAll('tr[data-key]')) tr.classList.toggle('active',tr.dataset.key === ui.detail);
   window.portTools?.selectDetail?.(row);
 }
+function updateControlTarget() {
+  const target=$('controlTarget');
+  if (currentInspection()) {
+    target.textContent='실시간으로 다시 조회한 대상 · '+$('singleIP').value+' / 포트 '+$('singlePort').value;
+  } else if ($('controlMode').value==='batch' && ui.selected.size) {
+    const keys=Array.from(ui.selected);
+    const ports=keys.slice(0,3).map(key=>key.replace('|',' / 포트 '));
+    target.textContent=ports.join(' · ')+(keys.length>3?' 외 '+(keys.length-3)+'개':'');
+  } else target.textContent='';
+  target.hidden=!target.textContent;
+  $('selectedCount').hidden=$('controlMode').value==='single';
+  window.controlTools?.onChoiceChange();
+}
+function syncMonitorChecks() {
+  const viewer=monitor();
+  if (!ui.matrixFile || viewer?.source().liveId!==ui.matrixFile) return;
+  const selected=[], excluded=[];
+  for (const row of ui.rows) {
+    if (row.status!=='ok' || row.controlUsed || row.refreshInvalidated) excluded.push(targetFromRow(row));
+    else if (ui.selected.has(portKey(row))) selected.push(targetFromRow(row));
+  }
+  viewer.setControlSelection?.(ui.matrixFile,selected,excluded);
+}
 function updateSelection() {
   const shown = all('#portTable tbody tr').filter(tr=>ui.selected.has(tr.dataset.key)).length;
   $('selectedCount').textContent = '선택 ' + ui.selected.size + '개' + (ui.selected.size > shown ? ' · 화면 밖 ' + (ui.selected.size - shown) + '개' : '');
   window.portTools?.syncChecks?.();
+  updateControlTarget();
+  syncMonitorChecks();
 }
 function renderPorts() {
   const filtered = filteredRows(), pages = Math.max(1, Math.ceil(filtered.length / portPageSize));
@@ -648,15 +731,26 @@ function receivePorts(result, openMonitor=false) {
     ui.matrixFile=file.id;
     $('liveResultsBar').hidden=$('showMatrix').hidden=false;
     if (replaceObservation) { ui.pendingMatrix=file.id; postMatrix(); }
-    if (openMonitor) setPortView('monitor');
+    if (openMonitor) {
+      $('controlMode').value='batch'; $('controlMode').onchange();
+      setPortView('monitor');
+    }
   } else if (ui.matrixFile) expireLiveMatrix();
   renderPorts();
+  updatePortActions();
   const selected = ui.rows.find(row=>portKey(row) === ui.detail);
   if (selected) showDetail(selected); else $('rowDetails').hidden = true;
 }
 function queryPorts(targets) {
   clearPorts();
   return run('ports.query',{targets},result=>receivePorts(result,true));
+}
+let credentialQuery=null;
+function requestQueryAccount(onConnected) {
+  if (queryCredentials.open || ui.busy || !ui.token) return;
+  credentialQuery=onConnected;
+  $('queryLoginError').hidden=true;
+  queryCredentials.showModal();
 }
 form('queryForm', () => {
   if (ui.busy || !ui.token || queryCredentials.open) return;
@@ -670,14 +764,13 @@ form('queryForm', () => {
     queryPorts(targets);
     return;
   }
-  $('queryLoginError').hidden = true;
-  queryCredentials.showModal();
+  requestQueryAccount(()=>queryPorts(targets));
 });
 $('cancelQueryCredentials').onclick = () => queryCredentials.close();
-queryCredentials.addEventListener('close', () => $('queryLoginForm').reset());
+queryCredentials.addEventListener('close', () => { credentialQuery=null; $('queryLoginForm').reset(); });
 form('queryLoginForm', async () => {
   if (!queryCredentials.open || ui.busy || !ui.token) return;
-  const targets = $('queryTargets').value.trim();
+  const onConnected=credentialQuery;
   const submit = $('submitQueryCredentials'), error = $('queryLoginError');
   error.hidden = true;
   submit.textContent = '계정 적용 중…';
@@ -691,7 +784,7 @@ form('queryLoginForm', async () => {
     return;
   }
   queryCredentials.close();
-  queryPorts(targets);
+  onConnected?.();
 });
 function refreshTargets(bySwitch) {
   if (window.portTools?.refreshTargets) {
@@ -764,13 +857,16 @@ $('controlMode').onchange = () => {
     if (detail) { $('singleIP').value = endpoint(detail); $('singlePort').value = detail.interface; }
   }
   $('controlHint').textContent = single ? '직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.' : '일괄 전원 OFF와 포트 비활성화는 LLDP로 AP-535가 확인된 포트에서 사용할 수 있습니다.';
+  updateControlTarget();
 };
 function controlAfterText(row) {
   if (row.after) return [row.after.detail,row.after.poeStatus].filter(Boolean).join(' · ');
   if (['paused','cancelled','preflight_failed'].includes(row.status)) return '변경 명령 미전송';
   return '재조회 필요';
 }
-function renderPlan(plan) {
+function renderPlan(plan, inspected=ui.inspectedRow) {
+  const choice=controlChoice();
+  const sameChoice=()=>controlContextMatches(inspected) && choice===controlChoice();
   const title = operationNames[plan.operation] || plan.operation;
   const targets = simpleTable([['스위치',x=>x.hostname || x.ip],['IP',x=>x.sshPort && x.sshPort !== 22 ? x.ip + ':' + x.sshPort : x.ip],['포트','port'],['현재 상태','detail',true],['전송할 명령','command',true]],plan.targets || []);
   const phrase = elem('code',plan.confirmationText), input = elem('input'), label = elem('label','표시된 확인 문구를 그대로 입력하세요.');
@@ -778,7 +874,12 @@ function renderPlan(plan) {
   const execute = button('승인하고 명령 실행',() => {
     if (!plan.confirmationText || (!plan.quick && input.value !== plan.confirmationText)) return;
     dialog.close();
+    if (!sameChoice()) {
+      notify('제어 대상 또는 작업이 변경되었습니다. 현재 선택으로 다시 검토하세요.',true);
+      return;
+    }
     run('control.apply',{planId:plan.planId,confirmation:plan.quick ? plan.confirmationText : input.value},r => {
+      const continuePlan=sameChoice();
       const results = r.results || [], box = $('controlResult');
       box.hidden = false;
       box.append(elem('p',r.message || title + ' 실행 결과'),simpleTable([['스위치',x=>x.sshPort && x.sshPort !== 22 ? x.ip + ':' + x.sshPort : x.ip],['포트','port'],['결과',x=>stateNames[x.status] || x.status],['상세','message',true],['변경 후 상태',controlAfterText,true]],results));
@@ -790,7 +891,7 @@ function renderPlan(plan) {
         }
       }
       renderPorts();
-      if (r.nextPlan) renderPlan(r.nextPlan);
+      if (r.nextPlan && continuePlan) renderPlan(r.nextPlan,inspected);
     });
   },'danger');
   execute.disabled = !plan.quick;
@@ -814,6 +915,9 @@ function renderPlan(plan) {
   }
 }
 $('preview').onclick = () => {
+  const inspected=ui.inspectedRow;
+  if (!controlContextMatches(inspected)) { updatePortActions(); return; }
+  const choice=controlChoice();
   const mode = $('controlMode').value;
   let targets;
   if (mode === 'single') {
@@ -826,7 +930,9 @@ $('preview').onclick = () => {
   }
   $('controlResult').replaceChildren(); $('controlResult').hidden = true;
   run('control.preview',{operation:$('operation').value,scope:mode,targets},plan => {
-    if (plan.planId) renderPlan(plan);
+    if (!plan.planId) return;
+    if (controlContextMatches(inspected) && choice===controlChoice()) renderPlan(plan,inspected);
+    else showChangedControlChoice();
   });
 };
 function dateText(value) {

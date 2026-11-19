@@ -45,6 +45,14 @@ def assert_comparison(view, earlier, later):
     expect(link.locator("td")).to_have_text(["Up", "Down"])
 
 
+def assert_historical_context(page, view):
+    expect(page.locator("#csvViewer")).to_be_visible()
+    expect(page.locator("#portMonitorTab")).to_have_attribute("aria-pressed", "true")
+    expect(page.locator("#controlPanel")).to_be_hidden()
+    expect(page.locator("#controlSourceHint")).to_be_visible()
+    expect(view.locator("#controlObservedBatch")).to_be_hidden()
+
+
 def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     page.goto(url)
     expect(page.locator("#inspectSingle")).to_have_count(1)
@@ -75,6 +83,9 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     expect(direct.locator("#matrix [data-port-key]")).to_have_attribute("data-state", "normal")
     expect(direct.locator("#tbody tr")).to_have_count(1)
     expect(direct.locator("#tbody tr")).to_contain_text("fixture-ap")
+    direct.locator("#matrix [data-port-key]").click()
+    expect(direct.locator("#inspectObservedPort")).to_have_count(0)
+    expect(direct.locator("#tbody input[data-control-key]")).to_have_count(0)
     direct.locator("#priorityButton").click()
     expect(direct.locator("#extraView")).to_be_visible()
     expect(direct.locator("#extraView")).to_contain_text("점검 목록")
@@ -85,12 +96,13 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     expect(direct.locator("#tbody tr")).to_contain_text("fixture-ap")
     direct.locator("#addCsv").set_input_files(later)
     assert_comparison(direct, earlier, later)
+    expect(direct.locator("#compareObservedPort")).to_have_count(0)
 
     with page.expect_file_chooser() as parent_selection:
         page.locator("#openPortCsv").click()
     parent_selection.value.set_files([later, earlier])
     assert_comparison(embedded, earlier, later)
-    expect(page.locator("#portControlTab")).to_be_disabled()
+    assert_historical_context(page, embedded)
     embedded.locator("#openCsv").set_input_files([later, invalid])
     expect(embedded.locator("#fileError")).to_contain_text(invalid["name"])
     assert_comparison(embedded, earlier, later)
@@ -103,7 +115,7 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     embedded.locator("#openCsv").set_input_files(earlier)
     expect(embedded.locator("#sourceName")).to_have_text(earlier["name"])
     expect(embedded.locator("#tbody")).to_contain_text("8.1 W")
-    expect(page.locator("#portControlTab")).to_be_disabled()
+    assert_historical_context(page, embedded)
     embedded.locator("#matrix [data-port-key]").click()
     command_count = len(switch.commands)
     embedded.locator("#inspectObservedPort").click()
@@ -111,6 +123,20 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     expect(page.locator("#singleIP")).to_have_value(f"127.0.0.1:{switch.port}")
     expect(page.locator("#singlePort")).to_have_value("1")
     expect(page.locator("#singleControls + .output")).to_contain_text("PoE OFF")
+    expect(page.locator("#csvViewer")).to_be_visible()
+    expect(embedded.locator("#sourceName")).to_have_text(earlier["name"])
+    expect(embedded.locator("#tbody")).to_contain_text("8.1 W")
+    expect(page.locator("#singleIP")).not_to_be_editable()
+    expect(page.locator("#singlePort")).not_to_be_editable()
+    expect(page.locator("#controlMode")).to_be_disabled()
+    page.locator("#operation").select_option("poe_on")
+    page.locator("#preview").click()
+    expect(page.locator("#reviewBody")).to_contain_text(
+        "interface 1 power-over-ethernet", timeout=60000
+    )
+    expect(page.get_by_role("button", name="승인하고 명령 실행")).to_be_disabled()
+    page.locator("#review").get_by_role("button", name="닫기").click()
+    assert not switch.poe_enabled
     inspected = switch.commands[command_count:]
     assert "show power-over-ethernet 1" in inspected and "configure terminal" not in inspected
     page.locator("#portLiveTab").click()
@@ -124,7 +150,17 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     )
     embedded.locator("#addCsv").set_input_files(earlier)
     assert_comparison(embedded, earlier, {"name": "실시간 조회 결과.csv"})
-    expect(page.locator("#portControlTab")).to_be_disabled()
+    assert_historical_context(page, embedded)
+    baseline_commands = len(switch.commands)
+    embedded.locator("#compareObservedPort").click()
+    expect(page.locator("#singleControls + .output")).to_contain_text("PoE OFF", timeout=60000)
+    expect(page.locator("#csvViewer")).to_be_visible()
+    assert_comparison(embedded, earlier, {"name": "실시간 조회 결과.csv"})
+    assert "show power-over-ethernet 1" in switch.commands[baseline_commands:]
+    assert "configure terminal" not in switch.commands[baseline_commands:]
+    embedded.locator("#openCsv").set_input_files(later)
+    expect(embedded.locator("#sourceName")).to_have_text(later["name"])
+    assert_historical_context(page, embedded)
     direct.close()
     http.post("/api/shutdown", {})
 

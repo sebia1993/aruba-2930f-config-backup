@@ -153,6 +153,10 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 #matrix{max-height:clamp(250px,52vh,560px);overflow-y:auto;overscroll-behavior-y:contain;padding:3px;scrollbar-color:var(--stroke-light) var(--surface)}
 .dgrid{min-width:0}.detail-name{white-space:normal;overflow-wrap:anywhere}
 #detail{scroll-margin-top:12px}.row-select:focus-visible{outline-offset:0}
+.control-picks{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:9px 15px;border-bottom:1px solid var(--stroke);font-size:11px}
+.control-picks label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.control-picks input{accent-color:var(--teal)}.control-picks .btn{margin-left:auto}
+.resulttable .control-cell{width:42px;text-align:center}.detail-actions .btn{justify-self:start}
 #dataMode:not(.pending){color:var(--teal)}.rightcol,.leftcol{min-width:0}
 @media(max-width:780px){.rightcol{grid-row:auto}.layout{display:flex;flex-direction:column}.leftcol,.rightcol{width:100%}.filterbar select{min-width:0}.filterbar .search{min-width:min(100%,240px)}}
 @media(max-width:600px){.nav .navtxt{display:inline}.nav button{padding:0 7px;gap:6px}.table-head-tools{flex-wrap:wrap}.table-head-tools .count{white-space:nowrap}.notice-l{flex-wrap:wrap}.topbar{gap:5px}.heading-actions{width:100%}}
@@ -228,13 +232,14 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       <div class="matrix-footer"><div class="legend" aria-label="PoE 전력 범례"><span><i class="swatch unpowered"></i><b data-power-label="unpowered"></b></span><span><i class="swatch limited"></i><b data-power-label="limited"></b></span><span><i class="swatch normal"></i><b data-power-label="normal"></b></span></div><span class="matrix-note">점선 테두리는 전력 미측정</span></div>
      </section>
      <section class="panel" aria-labelledby="tableTitle"><div class="panel-head"><div><h2 id="tableTitle">포트별 조회 결과</h2><div class="panel-sub">포트를 선택하면 해당 장비의 조회 결과를 확인할 수 있습니다</div></div><div class="table-head-tools"><span class="count" id="tableCount">—</span><select id="sort" aria-label="결과 정렬"><option value="natural">IP·포트 순</option><option value="issues">전력 점검 우선</option><option value="power">전력 높은 순</option></select></div></div>
-      <div class="tablewrap"><table class="resulttable"><thead><tr><th>스위치 Hostname</th><th>IP</th><th>Port</th><th>전력 판정</th><th>실측 전력</th><th>PoE 공급 상태</th><th>LLDP AP 이름</th></tr></thead><tbody id="tbody"></tbody></table></div>
+      <div class="control-picks" id="controlPicks" hidden><label><input type="checkbox" id="selectFilteredPorts">검색 결과 전체 선택</label><span id="controlPickCount" role="status"></span><button type="button" class="btn" id="controlObservedBatch" disabled>선택 포트 제어</button></div>
+      <div class="tablewrap"><table class="resulttable"><thead><tr><th scope="col" class="control-cell" id="controlColumn" hidden>선택</th><th>스위치 Hostname</th><th>IP</th><th>Port</th><th>전력 판정</th><th>실측 전력</th><th>PoE 공급 상태</th><th>LLDP AP 이름</th></tr></thead><tbody id="tbody"></tbody></table></div>
       <div class="table-foot"><span id="tableRange">—</span><div class="paginate"><button id="prevPage" aria-label="이전 페이지">이전</button><span id="pageNum">1 / 1</span><button id="nextPage" aria-label="다음 페이지">다음</button></div></div>
      </section>
     </div>
     <div class="rightcol">
      <section class="panel" aria-labelledby="issuesTitle"><div class="panel-head"><div><h2 id="issuesTitle"><button class="section-action" id="priorityButton">우선 확인 <span aria-hidden="true">›</span></button></h2><div class="panel-sub">전력 미공급 또는 공급 중 점검할 포트</div></div><span class="count" id="issueCount">—</span></div><div class="issues" id="issues"></div><div class="priority-foot"><button class="all-issues" id="allIssues">점검 목록 전체 보기 →</button></div></section>
-     <section class="panel" aria-labelledby="detailTitle"><div class="panel-head"><div><h2 id="detailTitle">선택 포트 상세</h2><div class="panel-sub">스위치 식별과 포트별 상태를 별도 확인</div></div><span class="count">READ ONLY</span></div><div class="detail" id="detail"></div></section>
+     <section class="panel" aria-labelledby="detailTitle"><div class="panel-head"><div><h2 id="detailTitle">선택 포트 상세</h2><div class="panel-sub">스위치 식별과 포트별 상태를 별도 확인</div></div></div><div class="detail" id="detail"></div></section>
     </div>
    </div>
 </div><section id="extraView" hidden></section>
@@ -763,14 +768,17 @@ window.PortViews = (() => {
     filter.addEventListener('change',refilter);
     drawPage();
   }
-  function renderReview(host,rows,onBack,onSelect) {
+  function renderReview(host,rows,onBack,onSelect,addAction) {
     const container = toolbar(host,onBack);
     const items = rows.filter(row => Object.hasOwn(issueLabels,row.status)).map(row => ({
       key:row.key,category:row.status,row,entry:row,search:searchText(row),
       note:[portAddress(row),row.reason].filter(Boolean).join(' · ')
     })).sort((a,b) => issueOrder[a.category]-issueOrder[b.category]);
     explorer(container,items,{title:'점검 목록',detailTitle:'선택 포트 상세',filterTitle:'점검 유형',
-      categories:issueLabels,empty:'현재 조회 결과에 우선 확인할 포트가 없습니다.',details:(box,row) => reviewDetails(box,row,onSelect)});
+      categories:issueLabels,empty:'현재 조회 결과에 우선 확인할 포트가 없습니다.',details:(box,row) => {
+        reviewDetails(box,row,onSelect);
+        if (addAction) addAction(box,row,'reviewObservedPort');
+      }});
   }
   function snapshotTime(value) {
     const date = value ? new Date(value) : null;
@@ -817,7 +825,10 @@ window.PortViews = (() => {
     selected:null, page:0, issueRows:[], lookup:new Map(), tileByKey:new Map()};
   let importVersion = 0;
   let searchFrame = 0;
-  const embedded=parent!==window && new URLSearchParams(location.search).get('embedded')==='1';
+  const embedded=parent!==window && location.pathname==='/csv' && new URLSearchParams(location.search).get('embedded')==='1';
+  let checkedPorts=new Set(), excludedPorts=new Set();
+  let controlsBusy=false;
+  function liveSelectionId() { return embedded && !state.before && state.current?.liveId; }
   function publishSource() {
     if (embedded) parent.postMessage({type:'aruba-port-source'},location.origin);
   }
@@ -837,6 +848,15 @@ window.PortViews = (() => {
   function isIssue(row) { return row.status === 'unpowered' || row.status === 'limited'; }
   function endpoint(row) { return row.sshPort === 22 ? row.ip : row.ip + ':' + row.sshPort; }
   function watts(row) { return row.watts == null ? '미측정' : row.watts + ' W'; }
+  const refreshNotice='현재 상태 재조회 필요';
+  function needsRefresh(row) { return liveSelectionId() && row.queryStatus==='ok' && excludedPorts.has(row.key); }
+  function labelTile(tile,row) {
+    const parts=[row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status],row.apName];
+    if (needsRefresh(row)) parts.push(refreshNotice);
+    const label=parts.filter(Boolean).join(' · ');
+    tile.setAttribute('aria-label',label);
+    tile.title=label+'\n'+row.reason;
+  }
   function timeText(value) {
     if (!value) return '기록 없음';
     const date = new Date(value);
@@ -847,6 +867,7 @@ window.PortViews = (() => {
     return collator.compare(a.site,b.site) || collator.compare(a.ip,b.ip) || a.sshPort-b.sshPort || collator.compare(a.port,b.port);
   }
   function setDataset() {
+    checkedPorts.clear(); excludedPorts.clear();
     state.rows = [...state.current.rows].sort(portOrder);
     state.lookup = new Map(state.rows.map(row => [row.key,row]));
     const sites = [...new Set(state.rows.map(row => row.site))];
@@ -909,11 +930,10 @@ window.PortViews = (() => {
       const tile = button(null,'port-tile '+row.status);
       tile.dataset.portKey = row.key;
       tile.dataset.state = row.status;
-      const label = [row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status],row.apName].filter(Boolean).join(' · ');
-      tile.setAttribute('aria-label',label);
-      tile.title = label+'\n'+row.reason;
+      labelTile(tile,row);
       tile.setAttribute('aria-pressed',String(row.key===state.selected));
       tile.classList.toggle('selected',row.key===state.selected);
+      tile.classList.toggle('for-action',!!liveSelectionId() && checkedPorts.has(row.key));
       group.grid.append(tile);
       tiles.set(row.key,tile);
     }
@@ -961,21 +981,101 @@ window.PortViews = (() => {
     }
     const reason=node('div',null,'reason');
     reason.append(node('strong','전력 판정 근거'),document.createTextNode(row.reason || '기록 없음'));
-    box.replaceChildren(node('div','SELECTED PORT · READ ONLY','detail-tag'),node('div',row.hostname,'detail-name'),
+    box.replaceChildren(node('div',row.hostname,'detail-name'),
       node('div',endpoint(row)+' · '+row.site,'detail-address'),badges,node('div',null,'detail-divider'),fields,reason);
     addPortAction(box,row,'inspectObservedPort');
   }
   let observedAction=null;
+  const contextObserver=new MutationObserver(()=>{
+    if (observedAction && !selectedActionRow()) {
+      observedAction=null;
+      contextObserver.disconnect();
+      parent.postMessage({type:'aruba-port-context'},location.origin);
+    }
+  });
+  function selectedActionRow() {
+    return observedAction?.action.isConnected && !observedAction.action.closest('[hidden]') ? observedAction.row : null;
+  }
+  function labelPortAction(action,row) {
+    const canControl=liveSelectionId() && canCheck(row);
+    action.textContent=canControl?'이 포트 제어':'이 포트 실시간 조회';
+    action.disabled=controlsBusy;
+    action.nextElementSibling.hidden=!!canControl;
+    const notice=action.previousElementSibling;
+    notice.hidden=!needsRefresh(row);
+  }
   function addPortAction(box,row,id) {
     if (embedded) {
-      const action=button(state.current.liveId && !state.before?'이 포트 제어':'이 포트 실시간 조회','btn');
+      const action=button(null,'btn primary');
       action.id=id;
+      action.dataset.observedKey=row.key;
       action.addEventListener('click',()=>{
         observedAction={row,action};
+        for(const target of [el('overviewRoot'),el('extraView')])
+          contextObserver.observe(target,{subtree:true,childList:true,attributes:true,attributeFilter:['hidden']});
         parent.postMessage({type:'aruba-observed-port',ip:row.ip,sshPort:row.sshPort,port:row.port},location.origin);
       });
-      box.append(action);
+      const actions=node('div',null,'detail-actions');
+      const notice=node('strong',refreshNotice+' · 위 수치는 마지막 조회 시점의 값입니다.','detail-foot');
+      notice.dataset.freshnessKey=row.key;
+      actions.append(notice,action,node('span','현재 스위치 상태를 조회한 뒤 이 포트를 제어할 수 있습니다.','detail-foot'));
+      labelPortAction(action,row);
+      box.append(actions);
     }
+  }
+  function canCheck(row) { return row.queryStatus==='ok' && !excludedPorts.has(row.key); }
+  function targetKey(target) { return target.ip+':'+target.sshPort+'/'+target.port; }
+  function controlBatch() {
+    const liveId=liveSelectionId();
+    if (!liveId || state.view!=='overview') return null;
+    return {liveId,rows:[...checkedPorts].map(key=>state.lookup.get(key)).filter(row=>row && canCheck(row))
+      .map(({ip,sshPort,port})=>({ip,sshPort,port}))};
+  }
+  function renderChecks() {
+    const live=!!liveSelectionId();
+    el('controlPicks').hidden=el('controlColumn').hidden=!live;
+    if (!live) return;
+    const eligible=state.found.filter(canCheck);
+    const covered=eligible.filter(row=>checkedPorts.has(row.key)).length;
+    const all=el('selectFilteredPorts');
+    all.disabled=controlsBusy || !eligible.length;
+    all.checked=eligible.length>0 && eligible.length===covered;
+    all.indeterminate=covered>0 && covered<eligible.length;
+    el('controlPickCount').textContent='선택 '+checkedPorts.size+'개';
+    el('controlObservedBatch').disabled=controlsBusy || !checkedPorts.size;
+    for (const input of el('tbody').querySelectorAll('input[data-control-key]')) {
+      const key=input.dataset.controlKey;
+      input.disabled=controlsBusy || !canCheck(state.lookup.get(key));
+      input.checked=checkedPorts.has(key);
+    }
+  }
+  function setControlSelection(liveId,targets,excluded=[]) {
+    if (!liveId || liveId!==liveSelectionId()) return;
+    const previousExcluded=excludedPorts;
+    excludedPorts=new Set(excluded.map(targetKey));
+    for (const key of new Set([...previousExcluded,...excludedPorts])) {
+      const tile=state.tileByKey.get(key);
+      if (tile && previousExcluded.has(key)!==excludedPorts.has(key)) labelTile(tile,state.lookup.get(key));
+    }
+    const next=new Set(targets.map(targetKey).filter(key=>state.lookup.has(key) && canCheck(state.lookup.get(key))));
+    for (const key of checkedPorts) if (!next.has(key)) state.tileByKey.get(key)?.classList.remove('for-action');
+    for (const key of next) if (!checkedPorts.has(key)) state.tileByKey.get(key)?.classList.add('for-action');
+    checkedPorts=next;
+    renderChecks();
+    for (const action of document.querySelectorAll('[data-observed-key]')) {
+      const row=state.lookup.get(action.dataset.observedKey);
+      if (row) labelPortAction(action,row);
+    }
+  }
+  function checkRows(rows,checked) {
+    if (controlsBusy) return;
+    for (const row of rows) {
+      if (!canCheck(row)) continue;
+      if (checked) checkedPorts.add(row.key); else checkedPorts.delete(row.key);
+      state.tileByKey.get(row.key)?.classList.toggle('for-action',checked);
+    }
+    renderChecks();
+    parent.postMessage({type:'aruba-port-checks'},location.origin);
   }
   function renderTable() {
     const order=el('sort').value;
@@ -988,6 +1088,12 @@ window.PortViews = (() => {
     for (const row of sorted.slice(start,start+pageSize)) {
       const tr=node('tr'); tr.dataset.portKey=row.key;
       tr.classList.toggle('selected',row.key===state.selected);
+      if (liveSelectionId()) {
+        const cell=node('td',null,'control-cell'), input=node('input');
+        input.type='checkbox'; input.dataset.controlKey=row.key;
+        input.setAttribute('aria-label',endpoint(row)+' 포트 '+row.port+' 제어 대상 선택');
+        cell.append(input); tr.append(cell);
+      }
       const hostname=node('td');
       const pick=button(row.hostname,'row-select');
       pick.setAttribute('aria-label',row.hostname+' '+row.port+' 상세 보기');
@@ -998,8 +1104,9 @@ window.PortViews = (() => {
         node('td',row.poeStatus),node('td',row.apName || '—'));
       frag.append(tr);
     }
-    if (!sorted.length) { const tr=node('tr'), td=node('td','일치하는 포트가 없습니다.'); td.colSpan=7; tr.append(td); frag.append(tr); }
+    if (!sorted.length) { const tr=node('tr'), td=node('td','일치하는 포트가 없습니다.'); td.colSpan=liveSelectionId()?8:7; tr.append(td); frag.append(tr); }
     el('tbody').replaceChildren(frag);
+    renderChecks();
     el('pageNum').textContent=(state.page+1)+' / '+max;
     el('tableCount').textContent=sorted.length+'개';
     el('tableRange').textContent=(sorted.length?start+1:0)+'–'+Math.min(start+pageSize,sorted.length)+' / '+sorted.length+'개 표시';
@@ -1042,7 +1149,7 @@ window.PortViews = (() => {
       window.PortViews.renderReview(extra,scopedRows||state.rows,()=>openView('overview'),key=>{
         if (!state.found.some(r=>r.key===key)) clearFilters();
         state.selected=key; showView('overview'); selectPort(key,true);
-      });
+      },addPortAction);
     } else {
       window.PortViews.renderCompare(extra,state.diff,state.before.filename,state.current.filename,
         ()=>openView('overview'),()=>{
@@ -1057,6 +1164,7 @@ window.PortViews = (() => {
     const file=state.current;
     el('sourceName').textContent=file.filename;
     let hint='비교할 CSV를 추가하면 두 시점의 변화를 확인할 수 있습니다.';
+    if (file.expiredLive) hint='이전 조회 시점의 관측값입니다. 현재 상태는 포트를 다시 조회해 확인하세요.';
     if (state.before) {
       hint='관제 화면은 비교 CSV를 표시합니다.';
       if (!state.before.latestObserved || !file.latestObserved || state.before.latestObserved===file.latestObserved) hint+=' 관측 시각만으로 전후를 구분할 수 없습니다. 비교 순서를 확인하세요.';
@@ -1129,7 +1237,15 @@ window.PortViews = (() => {
       loadLive: id=>importFiles([],false,id),
       source: ()=>({hasData:!!state.current,liveId:state.before?null:state.current?.liveId,
         expiredLive:!state.before && !!state.current?.expiredLive}),
-      selected: ()=>observedAction?.action.isConnected && !observedAction.action.closest('[hidden]') ? observedAction.row : null,
+      selected:selectedActionRow,
+      batch:controlBatch,
+      setControlSelection,
+      setControlBusy(busy) {
+        if (controlsBusy===busy) return;
+        controlsBusy=busy;
+        renderChecks();
+        for (const action of document.querySelectorAll('[data-observed-key]')) action.disabled=busy;
+      },
       invalidateLive: ()=>{
         ++importVersion;
         const live=[state.current,state.before].filter(file=>file?.liveId);
@@ -1141,6 +1257,16 @@ window.PortViews = (() => {
         if (live.length) { updateSource(); showView(state.view); }
       }
     };
+    el('selectFilteredPorts').addEventListener('change',event=>{
+      if (liveSelectionId()) checkRows(state.found,event.target.checked);
+    });
+    el('tbody').addEventListener('change',event=>{
+      const key=event.target.dataset.controlKey;
+      if (liveSelectionId() && state.lookup.has(key)) checkRows([state.lookup.get(key)],event.target.checked);
+    });
+    el('controlObservedBatch').addEventListener('click',()=>{
+      if (controlBatch()?.rows.length) parent.postMessage({type:'aruba-observed-batch'},location.origin);
+    });
     el('openButton').hidden=true;
     el('sourceHint').textContent='실시간 조회를 실행하거나 저장한 조회 CSV를 여세요. 두 시점을 선택하면 포트별 변화가 표시됩니다.';
   }
@@ -1158,6 +1284,7 @@ window.PortViews = (() => {
   });
   for(const id of ['priorityButton','allIssues']) el(id).addEventListener('click',()=>openView('review',state.found));
   for(const id of ['matrix','issues','tbody']) el(id).addEventListener('click',event=>{
+    if (event.target.closest('input[data-control-key]')) return;
     const item=event.target.closest('[data-port-key]');
     if(item) selectPort(item.dataset.portKey,id==='tbody'||window.matchMedia('(max-width:780px)').matches);
   });
