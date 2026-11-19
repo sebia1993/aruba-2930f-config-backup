@@ -213,6 +213,12 @@ class BatchConfirmationDialog(QDialog):
 class UnifiedPortManagementDialog(PoEQueryDialog):
     """Reuse the proven query UI; add an independent, fail-closed batch console."""
 
+    # Read-only view notifications. Existing checkbox/PoE controls own all writes.
+    matrixTargetsChanged = Signal(object)
+    matrixQueryStarted = Signal(object)
+    matrixPortObserved = Signal(object)
+    matrixVisibilityChanged = Signal(object)
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -342,6 +348,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         """An updated device inventory must never inherit stale checked ports."""
         if not hasattr(self, "_checked_port_keys"):
             super()._build_results(groups)
+            self.matrixTargetsChanged.emit(groups)
             return
         self._checked_port_keys.clear()
         with QSignalBlocker(self.result_tree):
@@ -353,6 +360,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                         0, Qt.CheckState.Unchecked
                     )
         self._clear_batch_plan("조회 대상 변경으로 포트 체크를 초기화했습니다.")
+        self.matrixTargetsChanged.emit(groups)
         self._selection_summary_timer.start()
 
     def _selection_locked(self) -> bool:
@@ -697,11 +705,15 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 item.setHidden(not shown)
                 visible = visible or shown
             parent.setHidden(not visible)
+        self.matrixVisibilityChanged.emit(
+            {key for key, item in self._items.items() if not item.isHidden()}
+        )
         self._selection_summary_timer.start()
 
     def _apply_result(self, value: object) -> None:
         super()._apply_result(value)
         result = cast(PoEQueryResult, value)
+        self.matrixPortObserved.emit(result)
         if self._thread is not None and result.complete:
             self.progress_panel.update_query(
                 self._run_total - len(self._pending),
@@ -1125,6 +1137,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                     parent.setCheckState(0, Qt.CheckState.Unchecked)
             self._checked_port_keys.clear()
         super()._invalidate()
+        # Never display a stale healthy tile after the operator edits IP/port targets.
+        self.matrixTargetsChanged.emit(())
         if hasattr(self, "plan_preview"):
             self.plan_preview.setText("입력 대상이 변경되어 작업 계획을 초기화했습니다.")
         if hasattr(self, "cycle_button"):
@@ -1154,6 +1168,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             preflight=pending is not None,
             action=ACTION_TITLES[pending[0]] if pending is not None else "",
         )
+        self.matrixQueryStarted.emit(tuple(self._progress_query_keys))
         super()._start(groups, credentials)
 
     def _selected_rows(self) -> tuple[PoEQueryResult, ...]:

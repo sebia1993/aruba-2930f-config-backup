@@ -19,6 +19,10 @@ Windows x64용 로컬 웹 ZIP을 풀고 **Start-Local-Web.cmd**를 열면 기본
 
 > **현재 main 코드 버전: [v0.9.5](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.9.5)** (`Aruba2930FConfigBackup_v0.9.5_windows_x64.zip`)입니다. WC.16.01.0008 장비의 SSH 서버키 협상 호환성을 자동으로 처리하며, 레거시 예외 승인 버튼 없이 조회할 수 있습니다. GitHub에는 Windows 11용 사전 릴리스를 유지합니다. 현장에서 구형 장비 SSH 로그인은 확인됐으며, 실제 PoE 동작은 장비별로 별도 검증이 필요합니다.
 
+> **v0.10.1 (Hostname 수집 안정화 사전릴리스):** [릴리스 페이지](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.10.1) · `Aruba2930FConfigBackup_v0.10.1_windows_x64.zip`. Aruba 2930F `show system information`의 `System Name`으로 장비명을 직접 읽고, 읽기 전용 프롬프트/설정 정보로 보완합니다. PoE 조회·변경 전후 확인에서 동일한 로직을 사용하며 Hostname 출처를 상세 화면에 표시합니다. **`main`은 v0.9.5로 유지하고 PR #56은 미병합 상태**입니다.
+
+> **v0.10.0 (개발 브랜치 사전릴리스):** [릴리스 페이지](https://github.com/sebia1993/aruba-2930f-config-backup/releases/tag/v0.10.0) · `Aruba2930FConfigBackup_v0.10.0_windows_x64.zip`. 지정한 스위치 포트만 독립 블록으로 표시하는 상태 매트릭스, 한 컨트롤에 붙은 라이트/다크 버튼, Hostname 미확인 상황의 PoE ON 정상 실행 보완이 포함됩니다. **`main`은 v0.9.5로 유지하며 PR #56은 미병합 상태입니다.** 실제 장비 변경 동작은 현장 검증이 필요합니다.
+
 > **WC.16.01 자동 SSH 호환:** 기존처럼 `전체 조회`만 실행하세요. 프로그램이 강한 SSH 방식으로 먼저 연결하고, 서버 호스트키 불일치가 확인된 경우 **인증 전 1회** `ssh-rsa` 서버키 방식으로 재협상합니다. 별도 예외 승인 버튼이나 추가 호환 설정은 없습니다. 포트 결과의 `레거시 SSH` 표시로 구분하며, **최초 SSH 지문 신뢰 승인과 변경된 키 차단은 그대로 유지**합니다. [보안 제약과 상세 절차](docs/SSH_LEGACY_COMPAT_KO.md).
 
 > 새 일괄 제어 기능은 여러 AP의 무선 서비스에 영향을 줄 수 있습니다. 실제 운영 장비 검증은 사용자 직접 수행 범위입니다. 컨피그 수집/포트 제어의 SSH 인증·장비 지문·작업 이력 보호는 그대로 유지합니다.
@@ -183,14 +187,14 @@ TXT 저장 + SHA-256 + Excel 결과 기록
 
 ## 빠른 시작
 
-1. GitHub **Releases**에서 `Aruba2930FConfigBackup_v0.9.5_windows_x64.zip`을 받습니다. `main`의 애플리케이션 버전도 v0.9.5입니다.
+1. GitHub **Releases**에서 `Aruba2930FConfigBackup_v0.10.1_windows_x64.zip`을 받습니다. 이 파일은 PR #56의 **개발 브랜치 사전릴리스**이고, `main` 애플리케이션 버전은 v0.9.5로 유지합니다.
    아직 게시되지 않은 개발 버전은 해당 PR의 성공한 Windows CI 실행에서
    `Aruba2930FConfigBackup-windows-x64-ci` 아티팩트를 내려받습니다.
 2. 함께 제공되는 `.sha256` 파일로 ZIP 해시를 확인합니다.
 
 ```powershell
-Get-FileHash .\Aruba2930FConfigBackup_v0.9.5_windows_x64.zip -Algorithm SHA256
-Get-Content .\Aruba2930FConfigBackup_v0.9.5_windows_x64.zip.sha256
+Get-FileHash .\Aruba2930FConfigBackup_v0.10.1_windows_x64.zip -Algorithm SHA256
+Get-Content .\Aruba2930FConfigBackup_v0.10.1_windows_x64.zip.sha256
 ```
 
 3. ZIP 전체를 쓰기 가능한 로컬 폴더에 압축 해제합니다.

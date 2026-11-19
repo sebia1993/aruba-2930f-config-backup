@@ -44,6 +44,10 @@ class QueryConnection(FakeConnection):
         responses = {
             "show version": ["show version\nAruba JL255A 2930F Switch\nedge-lab#"],
             "show modules": ["show modules\nChassis: Aruba 2930F JL255A\nedge-lab#"],
+            "show system information": [
+                "show system information\nStatus and Counters - General System Information\n"
+                "System Name : edge-lab\nedge-lab#"
+            ],
             "show interfaces brief": [
                 "show interfaces brief\nPort Type | Alert Enabled Status Mode\n"
                 + "\n".join(f"{p} 100/1000T | No Yes Up Auto" for p in network.ports[endpoint])
@@ -146,6 +150,31 @@ class Network:
         )
 
 
+def test_system_information_name_is_used_for_all_ports_on_one_switch(
+    tmp_path: Path,
+) -> None:
+    endpoint = DeviceTarget("192.0.2.50")
+    network = Network({endpoint: {"1": 10.0, "2": 12.0}})
+    network.responses[endpoint] = {
+        "show system information": [
+            "show system information\nStatus and Counters - General System Information\n"
+            "System Name : SEOUL-AP-SW-050\nedge-lab#"
+        ]
+    }
+    rows = network.service(tmp_path).collect(
+        [target(endpoint.ip, "1,2")],
+        CREDENTIALS,
+        approve_host_key=lambda check: True,
+    )
+    assert [row.snapshot.hostname for row in rows] == [
+        "SEOUL-AP-SW-050",
+        "SEOUL-AP-SW-050",
+    ]
+    assert all(row.identity.hostname_source == "system-information" for row in rows)
+    assert len(network.connections) == 1
+    assert network.connections[0].writes.count("show system information") == 1
+
+
 def test_requested_pairs_use_one_session_and_fresh_status_per_port(tmp_path: Path) -> None:
     a, b = DeviceTarget("192.0.2.1"), DeviceTarget("192.0.2.2", 2222)
     network = Network({a: {"24": 0, "1/3": 4.2}, b: {"7": 8.5}})
@@ -163,7 +192,7 @@ def test_requested_pairs_use_one_session_and_fresh_status_per_port(tmp_path: Pat
     assert len(network.connections) == 2
     for connection in network.connections:
         assert connection.disconnected
-        expected = ["show version", "show modules"]
+        expected = ["show version", "show modules", "show system information"]
         expected.append("show interfaces brief")
         for port in network.ports[connection.endpoint]:
             expected.append(f"show power-over-ethernet {port}")
@@ -363,6 +392,7 @@ def test_cancel_before_work_emits_every_row_without_probe_or_connect(tmp_path: P
         "terminal width 511",
         "show version",
         "show modules",
+        "show system information",
         "show interfaces brief",
         "show power-over-ethernet 1",
     ],

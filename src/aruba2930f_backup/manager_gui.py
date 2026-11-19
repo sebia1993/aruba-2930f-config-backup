@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from zipfile import BadZipFile
 
 from openpyxl import load_workbook
@@ -41,9 +41,12 @@ from .batch_port_control import BatchControlError, journal_states
 from .gui import MainWindow
 from .home_shortcuts import HomeShortcutButton
 from .models import Credentials
+from .port_matrix_widget import PortMatrixPanel
+from .port_status_mapper import PortKey
 from .session_credentials import SessionCredentialDialog, SessionCredentialStore
 from .ssh_legacy import session_legacy_ssh
 from .storage import default_output_directory
+from .ui_theme import selected_theme, set_theme
 from .unified_port_gui import UnifiedPortManagementDialog
 
 if TYPE_CHECKING:
@@ -218,7 +221,28 @@ class NetworkManagerWindow(QMainWindow):
         title_font.setPointSize(max(12, title_font.pointSize() + 4))
         title_font.setBold(True)
         self.page_title.setFont(title_font)
-        content_layout.addWidget(self.page_title)
+        heading_row = QHBoxLayout()
+        heading_row.setSpacing(7)
+        heading_row.addWidget(self.page_title, 1)
+        # One joined two-segment control, not two visually separated buttons.
+        self.theme_segmented_control = QFrame(content)
+        self.theme_segmented_control.setObjectName("themeSegmentedControl")
+        theme_segments = QHBoxLayout(self.theme_segmented_control)
+        theme_segments.setContentsMargins(2, 2, 2, 2)
+        theme_segments.setSpacing(0)
+        self.theme_light_button = QPushButton("라이트", self.theme_segmented_control)
+        self.theme_light_button.setObjectName("themeLight")
+        self.theme_dark_button = QPushButton("다크", self.theme_segmented_control)
+        self.theme_dark_button.setObjectName("themeDark")
+        for button in (self.theme_light_button, self.theme_dark_button):
+            button.setCheckable(True)
+            button.setMinimumSize(72, 34)
+            button.setToolTip("한 번 클릭하면 프로그램 전체 테마가 바뀝니다.")
+            theme_segments.addWidget(button)
+        self.theme_light_button.clicked.connect(lambda: self._apply_appearance("light"))
+        self.theme_dark_button.clicked.connect(lambda: self._apply_appearance("dark"))
+        heading_row.addWidget(self.theme_segmented_control)
+        content_layout.addLayout(heading_row)
         self.page_description = QLabel(content)
         self.page_description.setWordWrap(True)
         content_layout.addWidget(self.page_description)
@@ -269,6 +293,7 @@ class NetworkManagerWindow(QMainWindow):
         self.history_page = self._create_history()
         self.pages.addWidget(self.history_page)
         self.navigate(0)
+        self._apply_appearance(selected_theme(), persist=False)
 
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(650)
@@ -276,8 +301,6 @@ class NetworkManagerWindow(QMainWindow):
         self._status_timer.start()
         self.setStyleSheet(
             "QFrame#networkManagerSidebar { border: 1px solid palette(mid); border-radius: 8px; }"
-            " QPushButton:checked { background: palette(highlight);"
-            " color: palette(highlighted-text); font-weight: 600; }"
             " QLabel#managerPageTitle { padding: 2px 0; }"
         )
 
@@ -511,7 +534,17 @@ class NetworkManagerWindow(QMainWindow):
         port.result_tree.setColumnWidth(2, 105)  # watts
         port.result_tree.setColumnWidth(3, 220)  # port administration and link
         port.result_tree.setColumnWidth(5, 190)  # PoE setting and delivery
-        result_layout.addWidget(port.result_tree, 1)
+        self.port_matrix = PortMatrixPanel(self.port_result_panel)
+        self.port_matrix.portActivated.connect(self._port_matrix_activated)
+        self.port_view_splitter = QSplitter(Qt.Orientation.Vertical, self.port_result_panel)
+        self.port_view_splitter.setObjectName("portMatrixResultSplitter")
+        self.port_view_splitter.addWidget(self.port_matrix)
+        self.port_view_splitter.addWidget(port.result_tree)
+        self.port_view_splitter.setChildrenCollapsible(False)
+        self.port_view_splitter.setStretchFactor(0, 2)
+        self.port_view_splitter.setStretchFactor(1, 3)
+        self.port_view_splitter.setSizes([320, 280])
+        result_layout.addWidget(self.port_view_splitter, 1)
         self.port_input_result_splitter = QSplitter(Qt.Orientation.Vertical, port)
         self.port_input_result_splitter.setObjectName("portVerticalSplitter")
         # Preserve v0.8.0 integrations/tests that reference this splitter name.
@@ -550,6 +583,44 @@ class NetworkManagerWindow(QMainWindow):
         root.addWidget(quick_bar)
         root.addWidget(port.progress_bar)
         root.addWidget(port.status_label)
+        # Subscribe only to UI observations; existing query/PoE services are unchanged.
+        port.matrixTargetsChanged.connect(self.port_matrix.set_targets)
+        port.matrixQueryStarted.connect(self.port_matrix.mark_loading)
+        port.matrixPortObserved.connect(self.port_matrix.update_result)
+        port.matrixVisibilityChanged.connect(self.port_matrix.filter_to)
+        port.result_tree.currentItemChanged.connect(self._port_table_selected)
+        self.port_matrix.set_targets(tuple(port._groups))
+
+    def _port_matrix_activated(self, key: object) -> None:
+        if not isinstance(key, tuple) or len(key) != 2:
+            return
+        if not all(isinstance(part, str) for part in key):
+            return
+        item = self.port_page._items.get(cast(PortKey, key))
+        if item is not None:
+            self.port_page.result_tree.setCurrentItem(item)
+            self.port_page.result_tree.scrollToItem(item)
+
+    def _port_table_selected(
+        self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None
+    ) -> None:
+        if current is None:
+            return
+        key = current.data(0, Qt.ItemDataRole.UserRole)
+        if (
+            isinstance(key, tuple)
+            and len(key) == 2
+            and isinstance(key[0], str)
+            and isinstance(key[1], str)
+            and key[1]
+        ):
+            self.port_matrix.select_port(cast(PortKey, key))
+
+    def _apply_appearance(self, mode: str, *, persist: bool = True) -> None:
+        set_theme(mode, persist=persist)
+        self.theme_light_button.setChecked(mode == "light")
+        self.theme_dark_button.setChecked(mode == "dark")
+        self.port_matrix.set_theme(mode)
 
     def _layout_port_control_buttons(self, group: QWidget) -> None:
         """Reflow wide legacy button rows into a readable narrow control rail."""
