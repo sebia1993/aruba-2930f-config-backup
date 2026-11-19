@@ -36,62 +36,47 @@
   const quickResult = elem('div',undefined,'output');
   quickResult.id = 'quickResult'; quickResult.hidden = true;
   batch.after(quickResult);
-  let quickChoice=null;
-  function onChoiceChange() {
-    if (quickChoice!==null && (quickChoice!==controlChoice() || !controlContextMatches(null))) {
-      quickChoice=null;
-      quickResult.hidden=true;
-      quickResult.replaceChildren();
+  function clearQuickResult() {
+    quickResult.hidden = true;
+    quickResult.replaceChildren();
+  }
+  function showQuickResult(result,cancelled,restored=false) {
+    finishProgress();
+    if (!restored && Array.isArray(result.rows)) receivePorts(result);
+    if (!result.operation) return;
+    const state = result.operation==='poe_off' ? 'OFF' : 'ON';
+    const title = 'PoE ' + state + ' 즉시 실행';
+    const skipped=result.skipped || [], blocked=result.blocked || [];
+    quickResult.hidden=false;
+    quickResult.replaceChildren(elem('b',title + (cancelled ? ' 취소 결과' : ' 결과')),
+      elem('p','선택 ' + result.selected + '개 · 사전 재조회 ' + result.rechecked + '개 · 이미 ' + state + ' ' + skipped.length + '개'));
+    if (blocked.length) quickResult.append(elem('p',result.message || '사전 검증 실패로 선택한 전체 포트의 실행을 보류했습니다.','warning'),
+      simpleTable([['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['보류 사유','detail',true]],blocked));
+    if (skipped.length) quickResult.append(simpleTable([['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['건너뛴 이유','detail']],skipped));
+    if (result.results?.length) {
+      showControlResults(result,title);
+      if (!restored) markControlRowsUsed(result.results);
     }
   }
-  $('operation').addEventListener('change',onChoiceChange);
-  function selectedTargets() {
-    return window.portTools?.checkedTargets() || ui.rows.filter(row=>ui.selected.has(portKey(row))).map(targetFromRow);
-  }
-  function keys(targets) {
-    return targets.map(r=>[r.ip,r.sshPort || 22,r.port].join('|')).sort().join('\n');
-  }
   function requestQuick(operation) {
-    if (!controlContextMatches(null)) return;
-    const choice=controlChoice();
-    const targets = selectedTargets();
-    const selection = keys(targets);
+    if (ui.busy || !controlContextMatches(null) || $('controlMode').value!=='batch') return;
+    const targets = window.portTools.checkedTargets();
     if (!targets.length) return notify('빠른 제어를 실행할 포트를 체크하세요.',true);
     if (targets.length > 300) return notify('최대 300포트까지 한 번에 처리할 수 있습니다.',true);
-    quickResult.hidden = true;
+    clearQuickResult();
+    finishProgress();
     $('controlResult').replaceChildren(); $('controlResult').hidden = true;
-    run('control.quick',{operation,targets},(plan,cancelled) => {
-      if (cancelled) return;
-      if (!controlContextMatches(null) || keys(selectedTargets()) !== selection || choice!==controlChoice()) {
-        showChangedControlChoice();
-        return;
-      }
-      if (Array.isArray(plan.rows)) {
-        const checked = new Set(ui.selected);
-        receivePorts(plan);
-        ui.selected = checked;
-        renderPorts();
-      }
-      quickChoice=controlChoice();
-      quickResult.hidden=false;
-      quickResult.replaceChildren(elem('p','선택 ' + plan.selected + '개 · 사전 재조회 ' + plan.rechecked +
-          '개 · 변경 대상 ' + (plan.targets?.length || 0) + '개 · 이미 ON ' + plan.skipped.length + '개'));
-      if (plan.blocked.length) {
-        quickResult.append(elem('b','다음 포트의 사전 검증에 실패하여 전체 작업을 보류했습니다.'),
-          simpleTable([['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['보류 사유','detail',true]],plan.blocked));
-      }
-      if (plan.skipped.length) quickResult.append(simpleTable([['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['결과','detail']],plan.skipped));
-      if (plan.planId) renderPlan(plan);
-    });
+    const requestId = crypto.randomUUID().replaceAll('-','');
+    run('control.quick-execute',{operation,targets,requestId},showQuickResult);
   }
-  batch.append(liveButton('quickOff','빠른 PoE OFF',()=>requestQuick('poe_off')),
-               liveButton('quickOn','빠른 PoE ON',()=>requestQuick('poe_on')));
+  batch.append(liveButton('quickOff','PoE OFF 즉시 실행',()=>requestQuick('poe_off')),
+               liveButton('quickOn','PoE ON 즉시 실행',()=>requestQuick('poe_on')));
   const progress = elem('details'); progress.id = 'controlProgress'; progress.hidden = true;
   progress.append(elem('summary','포트별 실행 단계'));
   const stageTable = elem('div'); progress.append(stageTable);
   $('controlResult').before(progress);
   function onProgress(action,data) {
-    if (action !== 'control.apply' || !data?.ports?.length) return;
+    if (!['control.apply','control.quick-execute'].includes(action) || !data?.ports?.length) return;
     progress.hidden = false;
     stageTable.replaceChildren(simpleTable([['스위치','ip'],['SSH 포트','sshPort'],['포트','port'],
       ['단계',r=>stateNames[r.stage] || r.stage],['결과','message',true]],data.ports));
@@ -120,6 +105,6 @@
       $('controlHistoryTable').prepend(elem('p','명령의 결과가 확인되지 않은 포트가 있습니다. 해당 포트의 현재 상태를 다시 조회하세요.','warning'));
     }
   }
-  window.controlTools = {onProgress,finishProgress,explainUnknown,showInspection,hideInspection,onChoiceChange};
+  window.controlTools = {onProgress,finishProgress,explainUnknown,showInspection,hideInspection,showQuickResult,clearQuickResult};
   sync();
 })();

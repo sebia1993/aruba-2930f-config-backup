@@ -117,7 +117,7 @@ def _snapshot_info(snapshot: PortSnapshot | None) -> dict | None:
     }
 
 
-def _needs_read(row: PoEQueryResult | None, action: PortAction) -> bool:
+def _needs_read(row: PoEQueryResult | None, action: PortAction, *, direct: bool) -> bool:
     if (
         not row
         or not row.complete
@@ -127,7 +127,11 @@ def _needs_read(row: PoEQueryResult | None, action: PortAction) -> bool:
         return True
     if action is PortAction.POE_ON:
         return row.snapshot.poe_enabled is True
-    return not row.lldp or row.lldp.status is not LLDPStatus.OK
+    return (
+        (direct and row.snapshot.poe_enabled is False)
+        or not row.lldp
+        or row.lldp.status is not LLDPStatus.OK
+    )
 
 
 class Controls:
@@ -180,7 +184,12 @@ class Controls:
                         "포트 제어 작업 기록을 읽을 수 없습니다. 원본 JSONL을 확인하세요."
                     ) from exc
             return {"rows": rows}
-        if action in {"control.inspect", "control.quick", "control.preview"}:
+        if action in {
+            "control.inspect",
+            "control.quick",
+            "control.quick-execute",
+            "control.preview",
+        }:
             self.invalidate()
             if action == "control.inspect":
                 target = _targets(body)
@@ -195,8 +204,8 @@ class Controls:
                     display_only=True,
                 )
                 return {"snapshot": _snapshot_info(state)}
-            if action == "control.quick":
-                return self._quick(body, cancel)
+            if action in {"control.quick", "control.quick-execute"}:
+                return self._quick(body, cancel, direct=action == "control.quick-execute")
             return self._preview(body, cancel)
         if action == "control.apply":
             return self._apply(body, cancel)
@@ -251,8 +260,8 @@ class Controls:
             raise ValueError("지원하지 않는 제어 방식입니다.")
         return self._offer(approval)
 
-    def _quick(self, body: dict, cancel: Event) -> dict:
-        """Refresh missing read-only evidence, then offer one fixed, explicitly approved plan."""
+    def _quick(self, body: dict, cancel: Event, *, direct: bool) -> dict:
+        """Check the selected PoE targets, then run them or return a legacy preview."""
         credentials = self.operations.credentials
         if not credentials:
             raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
@@ -267,7 +276,7 @@ class Controls:
         if not set(targets).issubset(registered):
             raise ValueError("먼저 선택한 포트를 조회 대상으로 등록하세요.")
         rows = {(r.group.target, r.interface): r for r in self.operations.last_results}
-        refresh = {key for key in targets if _needs_read(rows.get(key), action)}
+        refresh = {key for key in targets if _needs_read(rows.get(key), action, direct=direct)}
         reread = {}
         if refresh:
             groups = []
@@ -282,6 +291,19 @@ class Controls:
         ready, skipped, blocked = [], [], []
         for key in targets:
             row = rows.get(key)
+            # An already unpowered AP need not have a live link or LLDP neighbor.
+            # Only a completed fresh read can skip it without a change command.
+            if (
+                direct
+                and action is PortAction.POE_OFF
+                and row
+                and row.complete
+                and row.status is QueryStatus.OK
+                and row.snapshot
+                and row.snapshot.poe_enabled is False
+            ):
+                skipped.append({**_target_fields(*key), "detail": "이미 PoE OFF"})
+                continue
             try:
                 if row is None:
                     raise BatchControlError("새 포트 조회 결과 없음")
@@ -305,11 +327,28 @@ class Controls:
             "selected": len(targets),
         }
         response.update(reread)
-        if not blocked and ready:
-            batch = create_batch_plan(ready, action)
+        if direct:
+            response.update(operation=action.value, results=[])
+        if blocked or not ready:
+            if direct:
+                response["message"] = (
+                    f"선택한 {len(targets)}개 중 제어할 수 없는 포트가 있어 변경 명령을 전송하지 않았습니다."
+                    if blocked
+                    else "선택한 포트가 모두 요청한 PoE 상태입니다."
+                )
+            return response
+        batch = create_batch_plan(ready, action)
+        if direct:
+            response.update(self._execute_batch(batch, credentials, cancel, quick=True))
+            # Optional on-demand query exports remain dated observations. Mark
+            # pre-change rows unusable as fresh evidence in the UI and restored workspace.
+            affected = {(t.target.ip, t.target.port, t.interface) for t in batch.targets}
+            for row in response.get("rows", []):
+                if (row["ip"], int(row["ssh_port"]), row["interface"]) in affected:
+                    row["controlUsed"] = True
+        else:
             approval = self._batch_approval(batch, credentials, self.operations.last_results)
             approval.quick = True
-            approval.text = f"EXECUTE {len(batch.targets)}"
             response.update(self._offer(approval))
         return response
 
@@ -443,14 +482,32 @@ class Controls:
                 "message": result.message,
             }
         assert approval.batch is not None
-        batch = approval.batch
-        chunk = batch.targets if approval.quick else batch.targets[:BATCH_CHECKPOINT]
+        return self._execute_batch(
+            approval.batch,
+            approval.credentials,
+            cancel,
+            quick=approval.quick,
+            journal=approval.journal,
+            offset=approval.offset,
+        )
+
+    def _execute_batch(
+        self,
+        batch: BatchPlan,
+        credentials: Credentials,
+        cancel: Event,
+        *,
+        quick: bool,
+        journal: _BatchJournal | None = None,
+        offset: int = 0,
+    ) -> dict:
+        chunk = batch.targets if quick else batch.targets[:BATCH_CHECKPOINT]
         rest = batch.targets[len(chunk) :]
         job = replace(batch, targets=chunk)
         controller = BatchPortController(
             controller_factory=self._factory, journal_directory=self.directory / "batch"
         )
-        journal = approval.journal or controller.begin_journal(batch)
+        journal = journal or controller.begin_journal(batch)
         stages = {}
 
         def publish(index, item, stage, message=""):
@@ -471,13 +528,11 @@ class Controls:
         try:
             outcome = controller.execute(
                 job,
-                approval.credentials,
+                credentials,
                 cancel_event=cancel,
                 journal=journal,
-                journal_offset=approval.offset,
-                continue_after_chunk=(lambda _done, _total: not cancel.is_set())
-                if approval.quick
-                else None,
+                journal_offset=offset,
+                continue_after_chunk=(lambda _done, _total: not cancel.is_set()) if quick else None,
                 on_stage=lambda index, item, phase: publish(
                     index, item, "사전 검증" if phase == "preflight" else "명령 적용"
                 ),
@@ -521,15 +576,15 @@ class Controls:
                 response["message"] += f" 뒤의 {unsent}개 포트에는 변경 명령을 전송하지 않았습니다."
         if rest and not halted:
             pending = self._batch_approval(
-                replace(batch, targets=rest), approval.credentials, self.operations.last_results
+                replace(batch, targets=rest), credentials, self.operations.last_results
             )
             pending.journal = journal
-            pending.offset = approval.offset + len(chunk)
+            pending.offset = offset + len(chunk)
             pending.text = f"EXECUTE {min(len(rest), BATCH_CHECKPOINT)}"
             response["nextPlan"] = self._offer(pending)
         elif rest:
             state = BatchStatus.CANCELLED if cancel.is_set() else BatchStatus.PAUSED
-            for index in range(approval.offset + len(chunk), approval.offset + len(batch.targets)):
+            for index in range(offset + len(chunk), offset + len(batch.targets)):
                 journal.append(index, "result", status=state.value, message=pause_message)
             if not uncertain:
                 response["message"] += f" 남은 {len(rest)}개 포트의 실행을 중단했습니다."

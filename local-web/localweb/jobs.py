@@ -1,6 +1,7 @@
 """Run a single device operation at a time; retain only summaries and download handles on disk."""
 
 import json
+import re
 import secrets
 import sqlite3
 from collections import OrderedDict
@@ -39,6 +40,7 @@ ACTIONS = frozenset(
         "control.history",
         "control.inspect",
         "control.quick",
+        "control.quick-execute",
         "control.import-history",
     ]
 )
@@ -50,6 +52,7 @@ PERSIST = {
     "backup.run",
     "logs.query",
     "control.quick",
+    "control.quick-execute",
     "control.apply",
 }
 EXTENSIONS = {".jsonl", ".json", ".txt", ".xlsx", ".csv"}
@@ -100,14 +103,28 @@ class Jobs:
         with self.lock:
             if self.closing or self.active:
                 raise Busy("다른 작업이 실행 중이거나 서버가 종료 중입니다.")
-            key = secrets.token_hex(16)
+            if action == "control.quick-execute":
+                key = body.get("requestId")
+                if not isinstance(key, str) or re.fullmatch(r"[0-9a-f]{32}", key) is None:
+                    raise ValueError("빠른 PoE 요청 식별자가 올바르지 않습니다.")
+                if key in self.recent:
+                    raise Busy("이미 접수한 빠른 PoE 요청입니다. 작업 이력을 확인하세요.")
+            else:
+                key = secrets.token_hex(16)
             started = now()
             if action in PERSIST:
                 with closing(sqlite3.connect(self.db)) as db, db:
-                    db.execute(
-                        "INSERT INTO jobs VALUES(?,?,?,?,?,?,?)",
-                        (key, action, "running", started, None, "", "[]"),
-                    )
+                    try:
+                        db.execute(
+                            "INSERT INTO jobs VALUES(?,?,?,?,?,?,?)",
+                            (key, action, "running", started, None, "", "[]"),
+                        )
+                    except sqlite3.IntegrityError:
+                        if action == "control.quick-execute":
+                            raise Busy(
+                                "이미 접수한 빠른 PoE 요청입니다. 작업 이력을 확인하세요."
+                            ) from None
+                        raise
             self.recent[key] = dict(
                 id=key,
                 action=action,
@@ -255,7 +272,12 @@ class Jobs:
                 labels = {"done": "완료", "failed": "실패", "cancelled": "취소됨"}
                 summary = labels[state]
                 if result:
-                    rows = result.get("rows", result.get("logs", result.get("results", [])))
+                    rows = result.get("results", result.get("rows", result.get("logs", [])))
+                    if action == "control.quick-execute":
+                        summary += (
+                            f" · 선택 {result['selected']}개 · 건너뜀 {len(result['skipped'])}개"
+                            f" · 제어 불가 {len(result['blocked'])}개"
+                        )
                     if rows:
                         summary += f" · {len(rows)}건"
                         counts = {}
@@ -289,7 +311,7 @@ class Jobs:
             with self.lock:
                 if action == "ports.query":
                     self.port_view = result if result and "rows" in result else None
-                elif action in {"ports.refresh", "control.quick"}:
+                elif action in {"ports.refresh", "control.quick", "control.quick-execute"}:
                     if result and "rows" in result:
                         self.port_view = result
                     elif state != "done":

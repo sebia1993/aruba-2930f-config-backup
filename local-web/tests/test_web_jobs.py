@@ -42,6 +42,39 @@ class JobTests(unittest.TestCase):
         self.assertNotIn("192.0.2", str(reopened.history()))
         self.assertFalse(reopened.operations.session_summary()["active"])
 
+    def test_direct_quick_submission_cannot_replay_running_or_finished_id(self):
+        reached, finish = threading.Event(), threading.Event()
+        request = {"requestId": "1" * 32, "operation": "poe_off", "targets": []}
+
+        def apply_once(action, body, cancel):
+            reached.set()
+            self.assertTrue(finish.wait(3))
+            return {"results": [], "selected": 1, "blocked": [], "skipped": [{}]}
+
+        with patch.object(self.jobs.controls, "dispatch", side_effect=apply_once) as dispatch:
+            key = self.jobs.submit("control.quick-execute", dict(request))
+            try:
+                self.assertTrue(reached.wait(3))
+                with self.assertRaises(Busy):
+                    self.jobs.submit("control.quick-execute", dict(request))
+            finally:
+                finish.set()
+            self.assertEqual(self.finished(key)["state"], "done")
+            with self.assertRaises(Busy):
+                self.jobs.submit("control.quick-execute", dict(request))
+            dispatch.assert_called_once()
+        reopened = Jobs(self.root)
+        with self.assertRaises(Busy):
+            reopened.submit("control.quick-execute", dict(request))
+        self.assertEqual(len(reopened.history()), 1)
+        self.assertIn("건너뜀 1개", reopened.history()[0]["summary"])
+
+    def test_direct_quick_requires_unique_well_formed_id(self):
+        for invalid in (None, "", "z" * 32, 99):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.jobs.submit("control.quick-execute", {"requestId": invalid})
+        self.assertEqual([], self.jobs.history())
+
     def test_out_of_scope_file_marks_job_failed(self):
         target = self.root / "private.json"
         target.write_text("{}")

@@ -4,7 +4,7 @@ import re
 from threading import Event
 from unittest.mock import patch
 
-from browser_qa import run_browser_case
+from browser_qa import click_quick_poe, run_browser_case
 from playwright.sync_api import expect
 
 
@@ -47,12 +47,11 @@ def leave_live_inspection_for_batch(page, csv_view, changed, available):
     other_row = csv_view.locator(f'#tbody tr[data-port-key="{available}/1"] input')
     expect(changed_row).to_be_enabled(timeout=60000)
     changed_row.check()
-    page.locator("#quickOn").click()
-    review = page.locator("#review")
-    expect(review.locator("tbody tr")).to_have_count(1, timeout=60000)
-    expect(review.locator("tbody tr")).to_contain_text(changed)
-    review.get_by_role("button", name="승인하고 명령 실행").click()
-    expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
+    with click_quick_poe(page, "poe_on", [(changed, "1")]):
+        result = page.locator("#controlResult tbody tr")
+        expect(result).to_have_count(1, timeout=90000)
+        expect(result).to_contain_text(changed)
+        expect(result).to_contain_text("검증 완료")
     expect(changed_row).to_be_disabled()
     expect(other_row).to_be_enabled()
 
@@ -114,7 +113,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator(f'#portTable tr[data-key="{addresses[0]}|1"] input')).not_to_be_checked()
     expect(page.locator("#csvViewer")).to_be_visible()
     expect(csv_view.locator("#overviewRoot")).to_be_visible()
-    page.locator("#quickOff").click()
+    page.locator("#preview").click()
     expect(page.locator("#reviewBody tbody tr")).to_have_count(1, timeout=60000)
     expect(page.locator("#reviewBody tbody tr")).to_contain_text(addresses[1])
     page.locator("#review").get_by_role("button", name="닫기").click()
@@ -142,16 +141,33 @@ def exercise(page, url, switch, second, shots, _backup):
     if shots:
         page.screenshot(path=shots / "unified-port-control.png")
 
-    page.locator("#quickOff").click()
-    reviewed = page.locator("#reviewBody tbody tr")
-    expect(reviewed).to_have_count(2, timeout=60000)
-    assert sorted(reviewed.locator("td:nth-child(2)").all_text_contents()) == sorted(addresses)
     assert all(fixture.poe_enabled for fixture in (switch, second))
     assert all("configure terminal" not in fixture.commands for fixture in (switch, second))
-    page.get_by_role("button", name="승인하고 명령 실행").click()
-    results = page.locator("#controlResult tbody tr")
-    expect(results).to_have_count(2, timeout=90000)
-    assert all("검증 완료" in row for row in results.all_text_contents())
+    # Deliver the mutation request, then drop just its HTTP acknowledgement.
+    delivered = []
+
+    def drop_submission_reply(route):
+        accepted = route.fetch(max_retries=0)
+        assert accepted.status == 202
+        job = route.request.post_data_json["body"]["requestId"]
+        assert accepted.json()["id"] == job
+        delivered.append(job)
+        route.abort("connectionreset")
+
+    page.route("**/api/jobs", drop_submission_reply, times=1)
+    with (
+        page.expect_request(
+            lambda req: (
+                req.method == "GET" and delivered and f"/api/jobs/{delivered[0]}?" in req.url
+            )
+        ),
+        click_quick_poe(page, "poe_off", [(addr, "1") for addr in addresses]),
+    ):
+        results = page.locator("#controlResult tbody tr")
+        expect(results).to_have_count(2, timeout=90000)
+        assert sorted(results.locator("td:first-child").all_text_contents()) == sorted(addresses)
+        assert all("검증 완료" in row for row in results.all_text_contents())
+    assert len(delivered) == 1
     assert all(not fixture.poe_enabled for fixture in (switch, second))
     for fixture in (switch, second):
         assert fixture.commands.count("no interface 1 power-over-ethernet") == 1
@@ -182,5 +198,5 @@ def exercise(page, url, switch, second, shots, _backup):
 if __name__ == "__main__":
     run_browser_case(exercise)
     print(
-        "PASS unified live matrix, filtered selection, exact endpoint binding and approved bulk control"
+        "PASS unified live matrix, filtered selection, exact endpoint binding and one-click bulk control"
     )
