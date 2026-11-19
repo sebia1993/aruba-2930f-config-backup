@@ -194,13 +194,16 @@
     }
     return missing;
   }
-  function checkedTargets() {
-    const checked = [], blocked = invalidatedKeys();
+  function availableControlTargets(operation=$('operation').value,live=!!ui.liveId) {
+    const targets=[];
+    const restricted=operation!=='disable';
+    const fresh=restricted && live ? new Set(ui.rows.filter(freshControlRow).map(portKey)) : null;
+    const blocked=restricted && !live ? invalidatedKeys() : null;
     for (const g of inventory()) for (const port of g.interfaces) {
       const key=address(g)+'|'+port;
-      if (ui.selected.has(key) && !blocked.has(key)) checked.push({ip:g.ip,sshPort:Number(g.ssh_port || 22),port});
+      if ((!fresh || fresh.has(key)) && !blocked?.has(key)) targets.push({ip:g.ip,sshPort:Number(g.ssh_port || 22),port});
     }
-    return checked;
+    return targets;
   }
   function cableScope() {
     if (directCableTarget && $('controlMode').value==='single') {
@@ -243,22 +246,16 @@
       notify('스위치 필터 또는 포트 상세에서 현재 장비를 선택하세요.',true);
       return null;
     }
-    if (ui.liveId) {
-      const available=ui.rows.filter(row=>row.status==='ok' && !row.controlUsed && !row.refreshInvalidated);
-      if (range==='filtered') {
-        if (!scope) {
-          notify('관제에서 검색할 포트를 표시하세요.',true);
-          return null;
-        }
-        const found=new Set(scope.rows.map(row=>portKey({ip:row.ip,ssh_port:row.sshPort,interface:row.port})));
-        return available.map(portKey).filter(key=>found.has(key));
+    const available=availableControlTargets().map(controlPortKey);
+    if (range==='filtered') {
+      if (ui.liveId && !scope) {
+        notify('관제에서 검색할 포트를 표시하세요.',true);
+        return null;
       }
-      return available.filter(row=>!device || endpoint(row)===device).map(portKey);
+      const visible=new Set(scope ? scope.rows.map(controlPortKey) : entries().map(item=>item.key));
+      return available.filter(key=>visible.has(key));
     }
-    const blocked=invalidatedKeys();
-    if (range==='filtered') return entries().filter(item=>!blocked.has(item.key)).map(item=>item.key);
-    return inventory().filter(g=>!device || address(g)===device)
-      .flatMap(g=>g.interfaces.map(p=>address(g)+'|'+p)).filter(key=>!blocked.has(key));
+    return device ? available.filter(key=>key.split('|')[0]===device) : available;
   }
   function refreshTargets(bySwitch) {
     const device=currentAddress(), current=currentKey();
@@ -319,16 +316,17 @@
     area.replaceChildren(title,powerBadge(view),elem('span',facts.join(' · ')),checkLabel,elem('small',view.reason));
   }
   function syncChecks() {
-    const known=new Map(inventory().map(g=>[address(g),g])), blocked=invalidatedKeys();
+    const known=new Map(inventory().map(g=>[address(g),g]));
+    const available=new Set(availableControlTargets().map(controlPortKey));
     for (const node of matrix.querySelectorAll('[data-check-group]')) {
       const g=known.get(node.dataset.checkGroup);
       if (!g) continue;
-      const keys=g.interfaces.map(p=>address(g)+'|'+p).filter(key=>!blocked.has(key));
+      const keys=g.interfaces.map(p=>address(g)+'|'+p).filter(key=>available.has(key));
       const count=keys.filter(key=>ui.selected.has(key)).length;
       node.checked=count>0 && count===keys.length; node.indeterminate=count>0&&!node.checked; node.disabled=ui.busy || !keys.length;
     }
     const check=matrix.querySelector('[data-matrix-check]');
-    if (check) { check.checked=ui.selected.has(check.dataset.matrixCheck);check.disabled=ui.busy || blocked.has(check.dataset.matrixCheck); }
+    if (check) { check.checked=ui.selected.has(check.dataset.matrixCheck);check.disabled=ui.busy || !available.has(check.dataset.matrixCheck); }
   }
   function selectItem(item) {
     directCableTarget=false;
@@ -362,8 +360,11 @@
         check.type='checkbox'; check.dataset.checkGroup=addr;
         check.setAttribute('aria-label',addr+' 등록 포트 전체 체크');
         check.onchange=()=>{
-          const blocked=invalidatedKeys();
-          for(const p of item.g.interfaces){const key=addr+'|'+p;if(check.checked && !blocked.has(key))ui.selected.add(key);else ui.selected.delete(key);}
+          const available=new Set(availableControlTargets().map(controlPortKey));
+          for (const p of item.g.interfaces) {
+            const key=addr+'|'+p;
+            if (check.checked && available.has(key)) ui.selected.add(key); else ui.selected.delete(key);
+          }
           renderPorts();
         };
         const name=item.row?.hostname || item.g.label;
@@ -447,7 +448,9 @@
       } else {
         fullQuery=null;
         live.clear();loading.clear();progressGroups=null;
-        for (const key of invalidatedKeys()) ui.selected.delete(key);
+        if ($('operation').value!=='disable') {
+          for (const key of invalidatedKeys()) ui.selected.delete(key);
+        }
       }
       renderPorts();
     } else if (state==='idle') syncChecks();
@@ -488,7 +491,7 @@
     });
     return reconciled.concat([...invalid.values()]);
   }
-  window.portTools={targetDraftVersion,openTargetEditor,reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,checkedTargets,scopeKeys,unobservedTargets,cableScope,
+  window.portTools={targetDraftVersion,openTargetEditor,reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,availableControlTargets,scopeKeys,unobservedTargets,cableScope,
     hasInventory:()=>groups.length>0 || ui.rows.length>0,refreshTargets,restoreInventory,matchesInventory};
   updatePortActions();sync();
 })();

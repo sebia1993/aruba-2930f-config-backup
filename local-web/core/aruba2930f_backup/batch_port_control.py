@@ -50,17 +50,24 @@ class BatchControlError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class BatchTarget:
+class BatchPort:
+    """The exact registered switch endpoint and interface selected for a change."""
+
     target: DeviceTarget
     interface: str
+
+    def __post_init__(self) -> None:
+        validate_interface(self.interface)
+
+
+@dataclass(frozen=True, slots=True)
+class BatchTarget(BatchPort):
     expected_hostname: str
     expected_enabled: bool
     expected_poe_enabled: bool | None
     fingerprint: str = field(repr=False)
     ap_name: str = ""
     confirmed_ap535: bool = False
-    expected_chassis_id: str = ""
-    expected_remote_port_id: str = ""
     expected_model: str = ""
     allow_unknown_hostname: bool = False
 
@@ -84,7 +91,7 @@ class BatchPlan:
     plan_id: str
     created_at: str
     action: PortAction
-    targets: tuple[BatchTarget, ...]
+    targets: tuple[BatchPort, ...]
 
     def __post_init__(self) -> None:
         try:
@@ -98,15 +105,19 @@ class BatchPlan:
         keys = [(t.target.endpoint, t.interface) for t in self.targets]
         if len(set(keys)) != len(keys):
             raise BatchControlError("같은 스위치·포트를 한 작업에 중복 등록할 수 없습니다.")
+        if self.action is not PortAction.DISABLE and not all(
+            isinstance(item, BatchTarget) for item in self.targets
+        ):
+            raise BatchControlError("이 작업에는 조회한 포트 상태가 필요합니다.")
         if self.action is not PortAction.POE_ON and any(
-            item.allow_unknown_hostname for item in self.targets
+            isinstance(item, BatchTarget) and item.allow_unknown_hostname for item in self.targets
         ):
             raise BatchControlError("호스트네임 미확인 대상의 자동 검증은 PoE ON에서만 허용합니다.")
 
 
 @dataclass(frozen=True, slots=True)
 class BatchResult:
-    target: BatchTarget
+    target: BatchPort
     status: BatchStatus
     message: str
     after: PortSnapshot | None = None
@@ -136,6 +147,7 @@ class SinglePortController(Protocol):
         credentials: Credentials,
         *,
         approve_host_key: Callable[[HostKeyCheck], bool],
+        admin_only: bool = False,
     ) -> PortSnapshot: ...
 
     def apply(
@@ -153,9 +165,7 @@ class SinglePortController(Protocol):
 def validate_batch_target(
     row: PoEQueryResult,
     action: PortAction,
-    *,
-    allow_unverified_ap: bool = False,
-) -> BatchTarget:
+) -> BatchPort:
     """Share the exact fail-closed batch eligibility rule with the GUI.
 
     A selected row alone cannot authorize a mutation: inspect/apply still
@@ -163,6 +173,8 @@ def validate_batch_target(
     """
     if not isinstance(action, PortAction):
         raise BatchControlError("지원하지 않는 포트 제어 동작입니다.")
+    if action is PortAction.DISABLE:
+        return BatchPort(row.group.target, row.interface)
     snapshot = row.snapshot
     if (
         not row.complete
@@ -178,19 +190,6 @@ def validate_batch_target(
         row.lldp.neighbors if row.lldp is not None and row.lldp.status is LLDPStatus.OK else ()
     )
     confirmed = len(neighbors) == 1 and neighbors[0].model == "AP-535"
-    if action is PortAction.DISABLE:
-        # A cached LLDP entry can survive a physical disconnect.
-        if snapshot.link_status.casefold() != "up":
-            raise BatchControlError("일괄 포트 Down은 물리 링크가 Link Up인 포트만 허용합니다.")
-        if confirmed and (not neighbors[0].chassis_id or not neighbors[0].port_id):
-            raise BatchControlError(
-                "일괄 포트 Down에는 AP-535의 LLDP Chassis ID와 Port ID가 필요합니다."
-            )
-        if not confirmed and not allow_unverified_ap:
-            raise BatchControlError(
-                "일괄 포트 Down은 LLDP에서 AP-535로 확인된 포트만 허용합니다. "
-                "미확인 포트는 단일 포트 제어에서 개별 확인하세요."
-            )
     return BatchTarget(
         snapshot.target,
         snapshot.interface,
@@ -200,8 +199,6 @@ def validate_batch_target(
         snapshot.fingerprint,
         ap_name=neighbors[0].system_name if len(neighbors) == 1 else "",
         confirmed_ap535=confirmed,
-        expected_chassis_id=neighbors[0].chassis_id if confirmed else "",
-        expected_remote_port_id=neighbors[0].port_id if confirmed else "",
         expected_model=snapshot.model,
         allow_unknown_hostname=(
             action is PortAction.POE_ON
@@ -213,22 +210,13 @@ def validate_batch_target(
 def create_batch_plan(
     results: Sequence[PoEQueryResult],
     action: PortAction,
-    *,
-    allow_unverified_ap: bool = False,
 ) -> BatchPlan:
-    """Bind a concrete, already-observed endpoint/port list to one fixed action.
-
-    Administrative Down requires a live AP-535 neighbor by default. PoE OFF
-    operates on the selected switch port's verified power setting.
-    """
+    """Bind the selected endpoint/port list to one fixed action."""
     if not isinstance(action, PortAction):
         raise BatchControlError("지원하지 않는 포트 제어 동작입니다.")
     if not results or len(results) > MAX_BATCH_ACTIONS:
         raise BatchControlError("한 번의 제어 계획에는 1~300개 포트만 넣을 수 있습니다.")
-    targets = [
-        validate_batch_target(row, action, allow_unverified_ap=allow_unverified_ap)
-        for row in results
-    ]
+    targets = [validate_batch_target(row, action) for row in results]
     return BatchPlan(str(uuid.uuid4()), datetime.now(UTC).isoformat(), action, tuple(targets))
 
 
@@ -251,9 +239,15 @@ class _BatchJournal:
                         {
                             "endpoint": item.target.endpoint,
                             "interface": item.interface,
-                            "hostname": item.expected_hostname,
-                            "ap_name": item.ap_name,
-                            "confirmed_ap535": item.confirmed_ap535,
+                            **(
+                                {
+                                    "hostname": item.expected_hostname,
+                                    "ap_name": item.ap_name,
+                                    "confirmed_ap535": item.confirmed_ap535,
+                                }
+                                if isinstance(item, BatchTarget)
+                                else {}
+                            ),
                         }
                         for item in plan.targets
                     ],
@@ -337,6 +331,7 @@ class BatchPortController:
         controller_factory: Callable[[], SinglePortController] | None = None,
         journal_directory: Path | None = None,
         chunk_size: int = BATCH_CHECKPOINT,
+        approve_host_key: Callable[[HostKeyCheck], bool] | None = None,
     ) -> None:
         if type(chunk_size) is not int or not 1 <= chunk_size <= BATCH_CHECKPOINT:
             raise ValueError("작업 확인 단위는 1~10개 포트여야 합니다.")
@@ -345,6 +340,7 @@ class BatchPortController:
             journal_directory or default_output_directory() / "port-control" / "batch"
         )
         self._chunk_size = chunk_size
+        self._approve_host_key = approve_host_key
 
     def begin_journal(self, plan: BatchPlan) -> _BatchJournal:
         return _BatchJournal(self._journal_directory / f"{plan.plan_id}.jsonl", plan)
@@ -356,7 +352,7 @@ class BatchPortController:
         *,
         cancel_event: threading.Event | None = None,
         on_result: Callable[[int, BatchResult], None] | None = None,
-        on_stage: Callable[[int, BatchTarget, str], None] | None = None,
+        on_stage: Callable[[int, BatchPort, str], None] | None = None,
         continue_after_chunk: Callable[[int, int], bool] | None = None,
         journal: _BatchJournal | None = None,
         journal_offset: int = 0,
@@ -379,7 +375,7 @@ class BatchPortController:
                 result = BatchResult(item, BatchStatus.CANCELLED, "실행 전 사용자가 중지했습니다.")
             elif pause_reason:
                 result = BatchResult(item, BatchStatus.PAUSED, pause_reason)
-            elif index and index % self._chunk_size == 0:
+            elif plan.action is not PortAction.DISABLE and index and index % self._chunk_size == 0:
                 can_continue = (
                     continue_after_chunk(index, len(plan.targets))
                     if continue_after_chunk is not None
@@ -410,7 +406,7 @@ class BatchPortController:
                     cancel,
                     on_stage,
                 )
-            if result.status is BatchStatus.UNVERIFIED:
+            if result.status is BatchStatus.UNVERIFIED and plan.action is not PortAction.DISABLE:
                 pause_reason = (
                     f"{item.target.endpoint} 포트 {item.interface}의 변경 결과를 확인하지 못해 "
                     "이 포트에 변경 명령을 전송하지 않았습니다."
@@ -426,12 +422,12 @@ class BatchPortController:
     def _execute_one(
         self,
         index: int,
-        item: BatchTarget,
+        item: BatchPort,
         action: PortAction,
         credentials: Credentials,
         journal: _BatchJournal,
         cancel: threading.Event,
-        on_stage: Callable[[int, BatchTarget, str], None] | None,
+        on_stage: Callable[[int, BatchPort, str], None] | None,
     ) -> BatchResult:
         controller = self._controller_factory()
 
@@ -443,32 +439,45 @@ class BatchPortController:
 
         try:
             emit_stage("preflight")
-            snapshot = controller.inspect(
-                item.target,
-                item.interface,
-                credentials,
-                approve_host_key=lambda _check: False,
-            )
-            # AOS-S may return an EXEC prompt without a parseable hostname
-            # on either the initial observation or the fresh inspection.
-            # The fallback is PoE ON only; all other identity/configuration
-            # fields remain strict and two known hostnames must match.
-            hostname_matches = snapshot.hostname == item.expected_hostname or (
-                action is PortAction.POE_ON
-                and (
-                    snapshot.hostname in ("", "확인 불가")
-                    or item.expected_hostname in ("", "확인 불가")
+            if action is PortAction.DISABLE:
+                snapshot = controller.inspect(
+                    item.target,
+                    item.interface,
+                    credentials,
+                    approve_host_key=self._approve_host_key or (lambda _check: False),
+                    admin_only=True,
                 )
-            )
-            identity_matches = (
-                snapshot.target == item.target
-                and snapshot.interface == item.interface
-                and snapshot.fingerprint == item.fingerprint
-                and snapshot.enabled == item.expected_enabled
-                and snapshot.poe_enabled == item.expected_poe_enabled
-                and hostname_matches
-                and (not item.expected_model or snapshot.model == item.expected_model)
-            )
+                identity_matches = (
+                    snapshot.target == item.target and snapshot.interface == item.interface
+                )
+            else:
+                assert isinstance(item, BatchTarget)
+                snapshot = controller.inspect(
+                    item.target,
+                    item.interface,
+                    credentials,
+                    approve_host_key=lambda _check: False,
+                )
+                # AOS-S may return an EXEC prompt without a parseable hostname
+                # on either the initial observation or the fresh inspection.
+                # The fallback is PoE ON only; all other identity/configuration
+                # fields remain strict and two known hostnames must match.
+                hostname_matches = snapshot.hostname == item.expected_hostname or (
+                    action is PortAction.POE_ON
+                    and (
+                        snapshot.hostname in ("", "확인 불가")
+                        or item.expected_hostname in ("", "확인 불가")
+                    )
+                )
+                identity_matches = (
+                    snapshot.target == item.target
+                    and snapshot.interface == item.interface
+                    and snapshot.fingerprint == item.fingerprint
+                    and snapshot.enabled == item.expected_enabled
+                    and snapshot.poe_enabled == item.expected_poe_enabled
+                    and hostname_matches
+                    and (not item.expected_model or snapshot.model == item.expected_model)
+                )
             if not identity_matches:
                 return BatchResult(
                     item,
@@ -481,25 +490,14 @@ class BatchPortController:
             # The pending intent is persisted BEFORE the single-port service
             # is allowed to send any mutation. Crash recovery never replays it.
             journal.append(index, "intent", action=action.value)
-            # Administrative Down checks the pinned neighbor immediately before the command.
             emit_stage("apply")
-            if action is PortAction.DISABLE and item.confirmed_ap535:
-                result = controller.apply(
-                    snapshot,
-                    action,
-                    credentials,
-                    confirmation=snapshot.confirmation_text,
-                    expected_lldp_identity=(item.expected_chassis_id, item.expected_remote_port_id),
-                    cancel_event=cancel,
-                )
-            else:
-                result = controller.apply(
-                    snapshot,
-                    action,
-                    credentials,
-                    confirmation=snapshot.confirmation_text,
-                    cancel_event=cancel,
-                )
+            result = controller.apply(
+                snapshot,
+                action,
+                credentials,
+                confirmation=snapshot.confirmation_text,
+                cancel_event=cancel,
+            )
             if result.status == "verified":
                 state = BatchStatus.VERIFIED
             elif result.status == "unchanged":

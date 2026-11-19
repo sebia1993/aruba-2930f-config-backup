@@ -652,7 +652,7 @@ window.PortViews = (() => {
     selected:null, page:0, changesOnly:false, preserveView:false, issueRows:[], lookup:new Map(), tileByKey:new Map()};
   let searchFrame = 0;
   const embedded=parent!==window && location.pathname==='/matrix' && new URLSearchParams(location.search).get('embedded')==='1';
-  let checkedPorts=new Set(), excludedPorts=new Set();
+  let checkedPorts=new Set(), excludedPorts=new Set(), selectablePorts=new Set();
   let controlsBusy=false, multiSelect=false;
   function liveSelectionId() { return embedded && state.current?.liveId; }
   function publishSource() {
@@ -700,7 +700,7 @@ window.PortViews = (() => {
   }
   function setDataset(keepView=false) {
     const site=el('site').value, device=el('device').value;
-    checkedPorts.clear(); excludedPorts.clear();
+    checkedPorts.clear(); excludedPorts.clear(); selectablePorts.clear();
     const missing=liveSelectionId()?state.current.unobserved:[];
     state.rows = [...state.current.rows,...(missing||[])].sort(portOrder);
     state.lookup = new Map(state.rows.map(row => [row.key,row]));
@@ -951,19 +951,22 @@ window.PortViews = (() => {
   function selectedActionRow() {
     return liveSelectionId() ? state.lookup.get(state.selected) : null;
   }
+  function needsInspection(row) {
+    return row && !row.unobserved && (row.queryStatus!=='ok' || excludedPorts.has(row.key));
+  }
   function addRefreshNotice(box,row) {
-    if (!liveSelectionId() || canCheck(row)) return;
+    if (!liveSelectionId() || !needsInspection(row)) return;
     const notes=node('div',null,'detail-actions');
     if (needsRefresh(row)) {
       const notice=node('strong',refreshNotice+' · 위 수치는 마지막 조회 시점의 값입니다.','detail-foot');
       notice.dataset.freshnessKey=row.key;
       notes.append(notice);
     }
-    notes.append(node('span','현재 상태 조회 후 이 포트를 제어할 수 있습니다.','detail-foot'));
+    notes.append(node('span','최근 상태는 ‘현재 상태 조회’로 확인할 수 있습니다.','detail-foot'));
     box.append(notes);
   }
   function matrixMultiActive() { return state.presentation==='matrix' && multiSelect; }
-  function canCheck(row) { return row.queryStatus==='ok' && !excludedPorts.has(row.key); }
+  function canCheck(row) { return row && selectablePorts.has(row.key); }
   function targetKey(target) { return target.ip+':'+target.sshPort+'/'+target.port; }
   function controlBatch() {
     const liveId=liveSelectionId();
@@ -988,8 +991,9 @@ window.PortViews = (() => {
       input.checked=checkedPorts.has(key);
     }
   }
-  function setControlSelection(liveId,targets,excluded=[]) {
+  function setControlSelection(liveId,targets,excluded,available) {
     if (!liveId || liveId!==liveSelectionId()) return;
+    selectablePorts=new Set(available.map(targetKey));
     const previousExcluded=excludedPorts;
     excludedPorts=new Set(excluded.map(targetKey));
     for (const key of new Set([...previousExcluded,...excludedPorts])) {
@@ -1267,7 +1271,7 @@ window.PortViews = (() => {
     state.rows=[]; state.found=[]; state.issueRows=[];
     state.selected=null;
     state.lookup.clear(); state.tileByKey.clear();
-    checkedPorts.clear(); excludedPorts.clear();
+    checkedPorts.clear(); excludedPorts.clear(); selectablePorts.clear();
     if (!preserveView) {
       clearFilters();
       el('site').replaceChildren(option('','전체 사업장'));
@@ -1309,7 +1313,7 @@ window.PortViews = (() => {
       selected:selectedActionRow,
       inspectionTarget() {
         const row=selectedActionRow();
-        return row && !row.unobserved && !canCheck(row) ? row : null;
+        return needsInspection(row) ? row : null;
       },
       batch:controlBatch,
       setControlSelection,

@@ -67,13 +67,14 @@ class PortSnapshot:
     interface: str
     hostname: str
     model: str
-    enabled: bool
+    enabled: bool | None
     link_status: str
     poe_enabled: bool | None
     poe_status: str
     watts: float | None
     fingerprint: str = field(default="", repr=False)
     observed_at: str = ""
+    admin_only: bool = False
 
     @property
     def confirmation_text(self) -> str:
@@ -301,13 +302,12 @@ def _hostname_matches_for_action(
 ) -> bool:
     """Do not treat a missing CLI prompt hostname as a new device.
 
-    The trusted SHA-256 host key, model, endpoint, port and settings must
-    still match. If both names are known they must agree. Limit the
-    missing-hostname fallback to PoE ON; never weaken disruptive OFF/Down.
+    Match two known names. PoE ON and the address-bound administrative
+    disable also accept a missing name on the same pinned device.
     """
     if before.hostname == after.hostname:
         return True
-    return action is PortAction.POE_ON and (
+    return (action is PortAction.POE_ON or before.admin_only) and (
         before.hostname in ("", "확인 불가") or after.hostname in ("", "확인 불가")
     )
 
@@ -321,8 +321,8 @@ def _same_settings_for_action(
         and before.interface == expected.interface
         and before.model == expected.model
         and before.fingerprint == expected.fingerprint
-        and before.enabled == expected.enabled
-        and before.poe_enabled == expected.poe_enabled
+        and (expected.admin_only or before.enabled == expected.enabled)
+        and (expected.admin_only or before.poe_enabled == expected.poe_enabled)
         and _hostname_matches_for_action(before, expected, action)
     )
 
@@ -431,6 +431,7 @@ class PortControlService:
         *,
         approve_host_key: Callable[[HostKeyCheck], bool],
         display_only: bool = False,
+        admin_only: bool = False,
     ) -> PortSnapshot:
         with self._exclusive():
             self._snapshot = None
@@ -441,7 +442,12 @@ class PortControlService:
                 session = self._factory(target, credentials, self._options, self.host_key_store)
                 self._prepare(session)
                 snapshot = self._read_snapshot(
-                    session, target, interface, observation.fingerprint, display_only=display_only
+                    session,
+                    target,
+                    interface,
+                    observation.fingerprint,
+                    display_only=display_only,
+                    admin_only=admin_only,
                 )
                 if not display_only:
                     self._snapshot = snapshot
@@ -481,6 +487,8 @@ class PortControlService:
                 )
             if not isinstance(action, PortAction):
                 raise ValueError("지원하지 않는 포트 제어 동작입니다.")
+            if snapshot.admin_only and action is not PortAction.DISABLE:
+                raise ValueError("관리 상태만 조회한 포트는 일괄 비활성화에만 사용할 수 있습니다.")
             if expected_lldp_identity is not None and (
                 action not in (PortAction.POE_OFF, PortAction.DISABLE)
                 or len(expected_lldp_identity) != 2
@@ -504,7 +512,11 @@ class PortControlService:
                 )
                 self._prepare(session)
                 before = self._read_snapshot(
-                    session, snapshot.target, snapshot.interface, observation.fingerprint
+                    session,
+                    snapshot.target,
+                    snapshot.interface,
+                    observation.fingerprint,
+                    admin_only=snapshot.admin_only,
                 )
                 if not _same_settings_for_action(before, snapshot, action):
                     raise PreMutationRejected(
@@ -602,38 +614,53 @@ class PortControlService:
         fingerprint: str,
         *,
         display_only: bool = False,
+        admin_only: bool = False,
     ) -> PortSnapshot:
         version = session.send_show("show version")
         modules = session.send_show("show modules")
         resolved = resolve_switch_hostname(session)
         identity = validate_device_identity(version, modules, hostname=resolved.hostname)
-        port = parse_interface_status(session.read_interfaces(), interface)
-        try:
-            poe = PortControlService._read_poe(session, interface, identity, port)
-        except CollectionFailure as exc:
-            if not display_only or exc.code is not ErrorCode.COMMAND_REJECTED:
-                raise
-            # A completed, malformed PoE response cannot authorize a change.
-            # The independently observed physical link can still be displayed.
-            poe = PoEState(None, "PoE 조회 불가", None)
-        try:
-            links = parse_interface_links(session.read_interface_status())
-        except CollectionFailure as exc:
-            if exc.code is not ErrorCode.COMMAND_REJECTED:
-                raise
+        if admin_only:
+            # Administrative disable addresses the port directly. An unavailable
+            # status display is not evidence that the selected port is enabled or disabled.
+            try:
+                enabled = parse_interface_status(session.read_interfaces(), interface).enabled
+            except CollectionFailure as exc:
+                if exc.code is not ErrorCode.COMMAND_REJECTED:
+                    raise
+                enabled = None
+            poe = PoEState(None, "미조회", None)
             links = {}
+        else:
+            port = parse_interface_status(session.read_interfaces(), interface)
+            enabled = port.enabled
+            try:
+                poe = PortControlService._read_poe(session, interface, identity, port)
+            except CollectionFailure as exc:
+                if not display_only or exc.code is not ErrorCode.COMMAND_REJECTED:
+                    raise
+                # A completed, malformed PoE response cannot authorize a change.
+                # The independently observed physical link can still be displayed.
+                poe = PoEState(None, "PoE 조회 불가", None)
+            try:
+                links = parse_interface_links(session.read_interface_status())
+            except CollectionFailure as exc:
+                if exc.code is not ErrorCode.COMMAND_REJECTED:
+                    raise
+                links = {}
         return PortSnapshot(
             target,
             interface,
             identity.hostname or "확인 불가",
             identity.model,
-            port.enabled,
+            enabled,
             links.get(interface, UNKNOWN_LINK),
             poe.enabled,
             poe.status,
             poe.watts,
             fingerprint,
             datetime.now(UTC).isoformat(),
+            admin_only=admin_only,
         )
 
     @staticmethod
@@ -719,7 +746,11 @@ class PortControlService:
             session.change_port(before.interface, action.value)
             acknowledged = True
             after = self._read_snapshot(
-                session, before.target, before.interface, before.fingerprint
+                session,
+                before.target,
+                before.interface,
+                before.fingerprint,
+                admin_only=before.admin_only,
             )
             can_recheck, reason = _check_readback(before, after, action)
             if not can_recheck:

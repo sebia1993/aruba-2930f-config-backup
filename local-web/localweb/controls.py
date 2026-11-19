@@ -8,6 +8,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING
@@ -17,8 +18,10 @@ from aruba2930f_backup.batch_port_control import (
     MAX_BATCH_ACTIONS,
     BatchControlError,
     BatchPlan,
+    BatchPort,
     BatchPortController,
     BatchStatus,
+    BatchTarget,
     create_batch_plan,
     journal_results,
     validate_batch_target,
@@ -88,10 +91,11 @@ def _targets(payload: dict) -> list[tuple[DeviceTarget, str]]:
     return targets
 
 
-def _detail(enabled: bool, link: str | None, poe: bool | None, watts: float | None) -> str:
+def _detail(enabled: bool | None, link: str | None, poe: bool | None, watts: float | None) -> str:
     power = "미지원·미측정" if poe is None else ("ON" if poe else "OFF")
     observed_link = {"up": "Up", "down": "Down"}.get((link or "").strip().casefold(), "미확인")
-    parts = ["포트 사용" if enabled else "포트 비활성", f"PoE {power}", f"링크 {observed_link}"]
+    admin = "관리 상태 미확인" if enabled is None else ("포트 사용" if enabled else "포트 비활성")
+    parts = [admin, f"PoE {power}", f"링크 {observed_link}"]
     if watts is not None:
         parts.append(f"{watts:g} W")
     return " · ".join(parts)
@@ -150,8 +154,18 @@ class Controls:
         self._clock = clock
         self._approval: Approval | None = None
 
-    def invalidate(self) -> None:
+    def invalidate(self, *, observations_changed: bool = False) -> None:
+        plan = self._approval.batch if self._approval else None
+        if observations_changed and plan and plan.action is PortAction.DISABLE:
+            return
         self._approval = None
+
+    def _registered_ports(self) -> set[tuple[DeviceTarget, str]]:
+        return {
+            (group.target, port)
+            for group in self.operations._inventory
+            for port in group.interfaces
+        }
 
     def awaiting_confirmation(self) -> bool:
         approval = self._approval
@@ -248,19 +262,29 @@ class Controls:
                 snapshot=snapshot,
             )
         elif scope == "batch":
-            if self.operations.unverified_controls.intersection(targets):
-                raise ValueError(
-                    "이전 변경 결과 또는 전력 측정을 확인하지 못했습니다. 포트를 다시 조회하세요."
-                )
             query = self.operations.last_results
-            rows = {(row.group.target, row.interface): row for row in query}
-            try:
-                selected = [rows[key] for key in targets]
-            except KeyError:
-                raise ValueError(
-                    "실시간 SSH 조회에 포함된 포트만 선택하세요. 대상을 다시 조회하세요."
-                ) from None
-            batch = create_batch_plan(selected, action)
+            if action is PortAction.DISABLE:
+                if not self._registered_ports().issuperset(targets):
+                    raise ValueError("먼저 선택한 포트를 조회 대상으로 등록하세요.")
+                batch = BatchPlan(
+                    uuid.uuid4().hex,
+                    datetime.now(UTC).isoformat(),
+                    action,
+                    tuple(BatchPort(*target) for target in targets),
+                )
+            else:
+                if self.operations.unverified_controls.intersection(targets):
+                    raise ValueError(
+                        "이전 변경 결과 또는 전력 측정을 확인하지 못했습니다. 포트를 다시 조회하세요."
+                    )
+                rows = {(row.group.target, row.interface): row for row in query}
+                try:
+                    selected = [rows[key] for key in targets]
+                except KeyError:
+                    raise ValueError(
+                        "실시간 SSH 조회에 포함된 포트만 선택하세요. 대상을 다시 조회하세요."
+                    ) from None
+                batch = create_batch_plan(selected, action)
             approval = self._batch_approval(batch, credentials, query)
         else:
             raise ValueError("지원하지 않는 제어 방식입니다.")
@@ -278,8 +302,7 @@ class Controls:
         action = PortAction(body["operation"])
         targets = _targets(body)
         inventory = self.operations._inventory
-        registered = {(group.target, port) for group in inventory for port in group.interfaces}
-        if not set(targets).issubset(registered):
+        if not self._registered_ports().issuperset(targets):
             raise ValueError("먼저 선택한 포트를 조회 대상으로 등록하세요.")
         rows = {(r.group.target, r.interface): r for r in self.operations.last_results}
         locked = self.operations.unverified_controls.intersection(targets)
@@ -396,7 +419,7 @@ class Controls:
             assert approval.batch is not None
             chunk = (
                 approval.batch.targets
-                if approval.quick
+                if approval.quick or approval.action is PortAction.DISABLE
                 else approval.batch.targets[:BATCH_CHECKPOINT]
             )
             remaining = len(approval.batch.targets) - len(chunk)
@@ -404,20 +427,27 @@ class Controls:
             observed = {(r.group.target, r.interface): r.snapshot for r in approval.query}
             for item in chunk:
                 current = observed.get((item.target, item.interface))
-                detail = _detail(
-                    item.expected_enabled,
-                    current.link_status if current else "",
-                    item.expected_poe_enabled,
-                    current.watts if current else None,
-                )
-                if item.confirmed_ap535:
+                if current is not None and (current.target, current.interface) != (
+                    item.target,
+                    item.interface,
+                ):
+                    current = None
+                if current:
+                    detail = _detail(
+                        current.enabled, current.link_status, current.poe_enabled, current.watts
+                    )
+                    hostname = current.hostname
+                else:
+                    detail = "관측값 없음"
+                    hostname = ""
+                if isinstance(item, BatchTarget) and item.confirmed_ap535:
                     detail += " · LLDP AP-535"
                     if item.ap_name:
                         detail += f" {item.ap_name}"
                 targets.append(
                     {
                         **_target_fields(item.target, item.interface),
-                        "hostname": item.expected_hostname,
+                        "hostname": hostname,
                         "detail": detail,
                     }
                 )
@@ -428,7 +458,7 @@ class Controls:
                 later = [
                     {
                         **_target_fields(item.target, item.interface),
-                        "hostname": item.expected_hostname,
+                        "hostname": item.expected_hostname if isinstance(item, BatchTarget) else "",
                         "command": port_change_command(item.interface, approval.action.value),
                     }
                     for item in approval.batch.targets[len(chunk) :]
@@ -455,9 +485,15 @@ class Controls:
         # Consume before even opening a socket. A failed or interrupted HTTP
         # response must never make a possibly applied change replayable.
         self.invalidate()
+        if approval.batch and approval.action is PortAction.DISABLE:
+            targets_current = self._registered_ports().issuperset(
+                (item.target, item.interface) for item in approval.batch.targets
+            )
+        else:
+            targets_current = approval.query is self.operations.last_results
         if (
             approval.credentials is not self.operations.credentials
-            or approval.query is not self.operations.last_results
+            or not targets_current
             or not 0
             <= self._clock() - approval.issued
             < PortControlService.SNAPSHOT_MAX_AGE_SECONDS
@@ -525,11 +561,17 @@ class Controls:
         journal: _BatchJournal | None = None,
         offset: int = 0,
     ) -> dict:
-        chunk = batch.targets if quick else batch.targets[:BATCH_CHECKPOINT]
+        chunk = (
+            batch.targets
+            if quick or batch.action is PortAction.DISABLE
+            else batch.targets[:BATCH_CHECKPOINT]
+        )
         rest = batch.targets[len(chunk) :]
         job = replace(batch, targets=chunk)
         controller = BatchPortController(
-            controller_factory=self._factory, journal_directory=self.directory / "batch"
+            controller_factory=self._factory,
+            journal_directory=self.directory / "batch",
+            approve_host_key=first_use_host_key_policy(cancel),
         )
         journal = journal or controller.begin_journal(batch)
         stages = {}
