@@ -164,7 +164,7 @@ def exercise(page, url, switch, _second_switch, shots, _backup):
         # A scheme-less address that starts as HTTP and an explicit HTTPS address both work.
         assert peer.goto("http://" + endpoint.netloc).status == 200
         expect(peer.locator("nav")).to_be_visible()
-        assert peer.url.rstrip("/") == base
+        expect(peer).to_have_url(base + "/#ports")
         assert (
             peer.evaluate("fetch('/api/bootstrap').then(r=>r.json()).then(v=>v.lanClient)") is True
         )
