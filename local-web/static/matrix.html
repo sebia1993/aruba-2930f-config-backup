@@ -930,10 +930,11 @@ window.PortViews = (() => {
     const badges=node('div',null,'badges');
     badges.append(node('span',statusNames[row.status],'badge '+row.status),node('span','인터페이스 '+row.port,'badge'));
     if (row.lastGood) badges.append(node('span','갱신 지연','badge'));
+    const ap=embedded && state.presentation==='matrix' ? matrixApName(row) : row.apName;
     const fields = node('div',null,'dgrid');
     const values = [
       ['실측 전력',watts(row)],['PoE 공급 상태',row.poeStatus],['PoE 설정',row.poe],
-      ['LLDP AP 이름',row.apName],['LLDP 이웃 이름',row.ap],['LLDP 수집',collectionNames[row.lldp] || row.lldp],
+      ['LLDP AP 이름',ap],['LLDP 이웃 이름',row.ap],['LLDP 수집',collectionNames[row.lldp] || row.lldp],
       ['포트 조회',collectionNames[row.queryStatus] || row.queryStatus],['관리 상태',row.admin],
       ['관측 당시 링크',row.link],['관측 시각',timeText(row.observed)]
     ];
@@ -960,7 +961,6 @@ window.PortViews = (() => {
       const selection=node('div',null,'port-reading');
       badges.append(node('strong',watts(row),'observed-watts'));
       selection.append(identity,badges);
-      const ap=state.presentation==='matrix' ? matrixApName(row) : row.apName;
       badges.append(node('span','LLDP AP · '+(ap || (row.lldp==='ok'?'이름 없음':'미수집')),'ap-name'));
       addRefreshNotice(selection,row);
       facts=node('details',null,'port-facts');
