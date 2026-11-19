@@ -1,0 +1,13 @@
+#chooseBackupDirectory { justify-self: start; margin: .4rem 0; }
+#statusText { white-space: pre-line; max-height: 12rem; overflow: auto; }
+#backupDeviceProgress, #backupDiagnostics { margin: .75rem 1rem; }
+#backupDeviceProgress summary, #backupDiagnostics summary { cursor: pointer; padding: .35rem 0; }
+#backupDiagnostics pre, #uiRequestPreview { white-space: pre-wrap; overflow-wrap: anywhere; }
+#uiInspectorOpen { margin-top: .4rem; }
+#uiInspectorDock { position: fixed; z-index: 30; bottom: 1rem; right: 1rem; padding: .7rem; display: flex; flex-wrap: wrap; gap: .5rem; border: 1px solid var(--border); border-radius: .5rem; background: var(--surface); }
+#uiInspectorDock[hidden] { display: none; }
+#uiInspectorDialog { width: min(42rem, 92vw); max-height: 80vh; padding: 1rem; overflow: auto; }
+#uiInspectorDialog h2 { margin: .25rem 0 .75rem; }
+#uiInspectorDialog select { width: 100%; }
+#uiInspectorDialog pre { padding: .75rem; font: 0.9rem/1.6 monospace; background: var(--surface2); }
+.ui-inspected { outline: 3px solid #df8a2e !important; outline-offset: -3px; }

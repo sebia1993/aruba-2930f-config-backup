@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Aruba 2930F · 포트 운영 관제</title>
+<script>
+/* Apply the saved theme before the first paint. The preview also works with file:// URLs. */
+(function () {
+  const key = 'aruba2930f.portMatrix.theme';
+  let preference = 'dark';
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored === 'light' || stored === 'dark') preference = stored;
+  } catch (_) { /* storage may be disabled for local files */ }
+  window.__arubaThemePreference = preference;
+  document.documentElement.dataset.theme = preference;
+})();
+</script>
+<style>
+:root{color-scheme:dark;--bg:#091420;--sidebar:#0b1927;--surface:#102335;--surface2:#162c3e;--surface3:#1b3446;--hover:#223d51;--stroke:#294357;--stroke-light:#365369;--ink:#eff7fb;--muted:#93aab9;--sub:#bed0dc;--teal:#31aa92;--brand:#f7a461;--red:#e46b77;--amber:#edbb65;--gray:#8192a5;--blue:#699bcc;--focus:#8bdbed;--shadow:0 14px 34px rgba(0,0,0,.2);--cell-size:19px}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:13px/1.52 'Segoe UI','Malgun Gothic','Apple SD Gothic Neo',system-ui,sans-serif;letter-spacing:-.13px}
+button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.43;cursor:not-allowed}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--focus);outline-offset:3px}svg{display:block;width:18px;height:18px;flex-shrink:0}
+.app{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:100vh}.sidebar{background:var(--sidebar);border-right:1px solid var(--stroke);height:100vh;position:sticky;top:0;display:flex;flex-direction:column;z-index:8}.brand{display:flex;gap:11px;align-items:center;padding:25px 16px 24px;border-bottom:1px solid var(--stroke)}.brandmark{height:41px;width:41px;border-radius:11px;display:grid;place-items:center;background:linear-gradient(135deg,#2dbbac,#1d6e83);box-shadow:0 10px 24px #089b9d22}.brandmark svg{width:26px;height:26px;color:#eafffb}.brand-title{font-size:16px;font-weight:780;line-height:1.15}.brand-sub{font-size:9px;font-weight:700;letter-spacing:1.05px;color:var(--muted);margin-top:6px}.navhead{padding:23px 20px 8px;font-size:10px;letter-spacing:1.5px;font-weight:750;color:#7293aa}.nav{padding:0 10px;display:grid;gap:5px}.nav button{display:flex;align-items:center;text-align:left;gap:11px;background:none;border:1px solid transparent;border-radius:9px;color:#a0b5c6;min-height:43px;padding:0 12px;font-size:12px;font-weight:600}.nav button.active{background:linear-gradient(90deg,#244757,#203748);border-color:#386077;color:#e8fff8;box-shadow:inset 3px 0 var(--teal)}.nav button:not(.active):hover{background:#172e40;color:var(--ink)}.nav svg{width:17px;height:17px}.sidebar-bottom{margin-top:auto;padding:15px 17px 23px;border-top:1px solid var(--stroke);display:grid;gap:9px;color:var(--muted);font-size:11px}.status-line{display:flex;align-items:center;gap:7px;font-weight:760;color:#f3bd8e}.status-line i{height:7px;width:7px;background:var(--brand);border-radius:50%}.side-footnote{line-height:1.55;font-size:10px}
+.page{min-width:0}.topbar{height:65px;border-bottom:1px solid var(--stroke);background:#0d1d2de6;display:flex;align-items:center;justify-content:space-between;padding:0 26px;gap:10px}.crumb{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.crumb b{color:var(--ink);font-weight:690}.crumb svg{width:14px;height:14px}.top-actions{display:flex;align-items:center;gap:8px}.top-chip{border:1px solid var(--stroke-light);border-radius:99px;padding:6px 10px;font-size:10px;color:#b6cdde;font-weight:720;letter-spacing:.3px;white-space:nowrap}.top-chip.pending{border-color:#8d624a;color:#ffbd86;background:#432b251f}.top-chip.pending:before{content:'●';font-size:8px;margin-right:6px}.content{padding:26px clamp(16px,2vw,30px) 26px;max-width:1940px;margin:auto}.heading{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:20px}.eyebrow{color:#5edac0;font-size:10px;font-weight:820;letter-spacing:1.9px;margin-bottom:5px}.heading h1{font-size:26px;letter-spacing:-.7px;line-height:1.2;margin:0 0 7px;font-weight:780}.heading p{font-size:12px;color:var(--muted);margin:0}.heading-actions{display:flex;gap:8px;flex-wrap:wrap}.btn{background:var(--surface2);color:var(--ink);border:1px solid var(--stroke-light);border-radius:8px;padding:9px 13px;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;font-size:12px;font-weight:680;min-height:36px}.btn svg{width:15px;height:15px}.btn:hover{background:var(--hover)}.btn.primary{border-color:#319e8d;background:#1e806f;color:#effff9}.btn.primary:hover{background:#239b88}.btn.danger{background:#4b2834;border-color:#a04c5a;color:#ffb5bd}.btn.danger:hover{background:#703744}.btn.ghost{background:transparent}.notice{border:1px solid #2e594e;background:#123128;border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 15px;margin-bottom:16px;font-size:11px;color:#a8d7cc}.notice strong{color:#d1fff1;font-weight:720}.notice .noteright{white-space:nowrap;color:#91b5aa}.notice svg{color:#49c9a7;width:15px;height:15px}.notice-l{display:flex;align-items:center;gap:9px}
+.metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:11px;margin-bottom:15px}.metric{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--stroke);border-radius:12px;padding:15px 17px;min-height:94px}.metric label{display:block;font-size:11px;color:var(--muted);font-weight:600}.metric .value{font-size:27px;font-weight:780;letter-spacing:-.7px;line-height:1.24;margin-top:7px}.metric .suffix{font-size:12px;color:var(--muted);margin-left:4px;font-weight:530}.metric .metric-icon{position:absolute;right:14px;top:15px;width:23px;height:23px;color:#68889c}.metric.green .value{color:#59d6ba}.metric.red .value{color:#f38790}.metric.amber .value{color:#f0c784}.metric.gray .value{color:#acbfcc}
+.filterbar{background:var(--surface);border:1px solid var(--stroke);border-radius:11px;padding:12px;display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin-bottom:15px}.filterbar .search{min-width:240px;flex:1;display:flex;align-items:center;gap:7px;padding:0 10px;height:37px;border:1px solid var(--stroke-light);border-radius:8px;background:#0d1e2c}.filterbar .search svg{width:15px;height:15px;color:#8099aa}.filterbar input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--ink);font-size:12px}.filterbar input::placeholder{color:#7892a3}.filterbar select{background:#142a3d;color:#d5e5ed;border:1px solid var(--stroke-light);height:37px;padding:0 27px 0 10px;border-radius:8px;font-size:12px;min-width:124px}.filterbar .filter-help{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;white-space:nowrap}.filterbar input[type=range]{accent-color:var(--teal);width:72px}.filterbar .filter-help label{white-space:nowrap}.filterbar .btn{height:37px}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 338px;align-items:start;gap:15px}.leftcol,.rightcol{min-width:0;display:grid;gap:15px}.panel{border:1px solid var(--stroke);border-radius:12px;background:var(--surface);box-shadow:var(--shadow);min-width:0;overflow:hidden}.panel-head{min-height:64px;padding:15px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--stroke)}.panel-head h2{font-size:14px;margin:0 0 3px;font-weight:760}.panel-sub{font-size:10.5px;color:var(--muted)}.panel-right{font-size:11px;color:#bad0de;white-space:nowrap}.count{background:#1c3646;border:1px solid #35546a;padding:5px 8px;border-radius:6px;font-weight:670;font-size:11px}.matrix-area{padding:16px 18px 13px}.matrix-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px;gap:10px;flex-wrap:wrap}.matrix-top strong{font-size:11px;font-weight:730}.matrix-top .hint{font-size:11px;color:var(--muted)}.matrix-sections{display:grid;gap:13px}.siteheading{display:flex;justify-content:space-between;align-items:center;margin:2px 0 7px;font-size:10.5px;color:#a9c2d0}.siteheading b{color:#cce8ec;font-weight:690}.port-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--cell-size),1fr));gap:3px}.port-tile{width:100%;height:var(--cell-size);min-height:15px;border:0;border-radius:3px;position:relative;transition:transform .08s,outline .08s,filter .08s;box-shadow:inset 0 -1px rgba(0,0,0,.13)}.port-tile:hover{transform:scale(1.28);z-index:2;box-shadow:0 0 0 2px #c1ecf0,0 3px 9px rgba(0,0,0,.36)}.port-tile.selected{outline:2px solid #f6faff;outline-offset:1px;z-index:1}.port-tile.for-action:after{content:'';position:absolute;right:1px;bottom:1px;width:4px;height:4px;border-radius:50%;background:#f5f9ff;box-shadow:0 0 0 1px #143241}.port-tile.normal{background:#279e86}.port-tile.down{background:#d95d69}.port-tile.warn{background:#c7a054}.port-tile.unknown{background:#72879a}.port-tile.off{background:#598cba}.port-tile:active{transform:scale(.94)}.empty{border:1px dashed #3c5b6e;border-radius:8px;text-align:center;padding:34px 10px;color:var(--muted)}.matrix-footer{padding:11px 18px 14px;border-top:1px solid var(--stroke);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.legend{display:flex;align-items:center;flex-wrap:wrap;gap:13px;font-size:10px;color:#b6c8d4}.legend span{display:flex;align-items:center;gap:5px}.swatch{display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--teal)}.swatch.down{background:var(--red)}.swatch.warn{background:var(--amber)}.swatch.unknown{background:var(--gray)}.swatch.off{background:var(--blue)}.matrix-note{color:#82a0b1;font-size:10px}
+.issues{padding:0 5px;max-height:228px;overflow:auto}.issue-btn{width:100%;border:0;background:transparent;border-bottom:1px solid #263f52;color:var(--ink);display:flex;gap:9px;padding:10px 12px;text-align:left;align-items:start}.issue-btn:hover,.issue-btn.current{background:#193648}.issue-btn:last-child{border-bottom:0}.issue-dot{border-radius:3px;width:8px;height:28px;flex-shrink:0;background:var(--red);margin-top:1px}.issue-dot.warn{background:var(--amber)}.issue-dot.unknown{background:var(--gray)}.issue-mid{flex:1;min-width:0}.issue-mid strong{font-size:11px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.issue-mid small{display:block;color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}.issue-status{font-size:10px;color:#cbd8e0;white-space:nowrap}.priority-foot{color:var(--muted);border-top:1px solid var(--stroke);padding:10px 15px;font-size:10px}.detail{padding:17px}.detail-tag{color:#78dbc4;font-size:10px;font-weight:760;letter-spacing:.9px;margin-bottom:8px}.detail-name{font-size:16px;font-weight:760;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.detail-address{font-size:11px;color:var(--muted);margin-top:3px;margin-bottom:13px}.badges{display:flex;gap:6px;flex-wrap:wrap}.badge{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid #355268;border-radius:6px;background:#1b3344;font-size:10px;font-weight:650;color:#ccdce7}.badge.normal{border-color:#286e61;color:#7ee9cc;background:#173a34}.badge.down{border-color:#79464b;color:#f9a6af;background:#482930}.badge.warn{border-color:#826d43;color:#ffdc9e;background:#473c2a}.badge.unknown{border-color:#667684;color:#cfdae4;background:#334151}.badge.off{border-color:#416890;color:#a4d0fe;background:#213a52}.detail-divider{border-top:1px solid var(--stroke);margin:17px 0 15px}.dgrid{display:grid;grid-template-columns:1fr 1fr;gap:15px 12px}.dfield label{display:block;font-size:10px;color:var(--muted);margin-bottom:5px}.dfield .data{font-size:12px;font-weight:690;overflow-wrap:anywhere}.dfield.wide{grid-column:1/-1}.reason{border:1px solid #3c4d59;background:#1a2d3b;border-radius:8px;padding:11px;font-size:11px;line-height:1.6;color:#cadae3;margin-top:15px}.reason strong{display:block;font-size:10px;color:var(--muted);font-weight:700;margin-bottom:3px}.detail-actions{margin-top:14px;display:grid;gap:9px}.choice{border:1px solid var(--stroke-light);background:#172f41;color:#e0ecf4;border-radius:8px;display:flex;align-items:center;gap:8px;min-height:40px;padding:8px 11px;font-weight:670;text-align:left}.choice input{accent-color:var(--teal);width:16px;height:16px}.detail-foot{font-size:10px;color:var(--muted);line-height:1.6}.readhint{color:#8eaebd;margin-top:9px;font-size:10px}
+.table-head-tools{display:flex;gap:8px;align-items:center}.table-head-tools select{background:#193345;color:var(--ink);border:1px solid var(--stroke-light);border-radius:7px;font-size:11px;padding:6px 8px;max-width:128px}.tablewrap{overflow:auto;max-height:330px}.resulttable{border-collapse:collapse;width:100%;min-width:800px;font-size:11px}.resulttable thead{position:sticky;top:0;z-index:2;background:#193448}.resulttable th{color:#a8c1d0;text-align:left;white-space:nowrap;font-weight:690;font-size:10px;padding:10px 9px;border-bottom:1px solid #38546a}.resulttable td{padding:10px 9px;border-bottom:1px solid #253b4b;white-space:nowrap;color:#d7e5ed}.resulttable tbody tr{cursor:pointer}.resulttable tbody tr:hover{background:#1b384a}.resulttable tbody tr.selected{background:#1c424c}.resulttable td strong{font-size:11px}.resulttable td small{color:var(--muted);font-size:10px}.resulttable input[type=checkbox]{accent-color:var(--teal);width:14px;height:14px;cursor:pointer}.pillstat{padding:3px 7px;border-radius:5px;font-size:10px;font-weight:710;display:inline-block}.pillstat.normal{color:#8fe7c7;background:#1c463d}.pillstat.down{color:#faa7ad;background:#4d2c35}.pillstat.warn{color:#ffdc9f;background:#54432e}.pillstat.unknown{color:#cbd5de;background:#394758}.pillstat.off{color:#b1d8ff;background:#29435e}.table-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 15px;font-size:11px;color:var(--muted)}.paginate{display:flex;align-items:center;gap:7px}.paginate button{background:#1c3547;border:1px solid var(--stroke-light);color:var(--ink);padding:4px 9px;border-radius:6px}
+.actionbar{position:sticky;bottom:0;z-index:6;margin-top:15px;background:#10283bfa;border:1px solid #35566d;border-radius:11px;padding:11px 17px;display:flex;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -6px 30px #050e1cb8}.action-info{display:flex;gap:12px;align-items:center;flex-wrap:wrap;min-width:0}.action-count{border-radius:8px;background:#234b54;border:1px solid #3a8888;color:#b9fff0;padding:7px 10px;white-space:nowrap;font-weight:780;font-size:12px}.action-note{font-size:10px;color:#a2b9c8}.action-btns{display:flex;align-items:center;gap:8px}.action-btns .btn{min-width:102px}.action-btns .btn.offbtn{background:#56313a;border-color:#b95e6e;color:#ffd9de}.action-btns .btn.onbtn{background:#205c52;border-color:#2ba88d;color:#eafff5}.action-btns .btn.offbtn:hover{background:#6d3d49}.action-btns .btn.onbtn:hover{background:#25796a}
+.modal-backdrop{position:fixed;inset:0;background:rgba(1,8,17,.78);display:grid;place-items:center;z-index:30;padding:20px}.modal-backdrop[hidden]{display:none}.modal{width:min(500px,100%);background:#152b3d;border:1px solid #446175;border-radius:15px;box-shadow:0 22px 75px #0009;padding:22px}.modal h3{margin:0 0 10px;font-size:19px}.modal p{color:#c1d2dc;font-size:12px;line-height:1.7}.modal .preview-list{max-height:180px;overflow:auto;border:1px solid #3f5b6d;border-radius:8px;background:#0e2130;padding:10px 12px;color:#e1f3f8;font-size:11px;line-height:1.85}.modal .modal-alert{border-radius:8px;padding:12px;background:#422e2b;border:1px solid #7c5a4c;color:#ffd7b2;font-size:11px;line-height:1.7;margin:13px 0}.modal-actions{display:flex;justify-content:flex-end;margin-top:18px}.toast{position:fixed;bottom:85px;right:23px;max-width:min(410px,calc(100vw - 30px));background:#244b52;border:1px solid #379c91;color:#dcfff8;border-radius:9px;padding:11px 16px;box-shadow:0 12px 30px #0009;font-size:12px;z-index:29;opacity:0;transform:translateY(10px);pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:translateY(0)}.target-panel{background:#152e40;border:1px solid #36566a;border-radius:10px;padding:14px 17px;margin-bottom:15px}.target-panel[hidden]{display:none}.target-panel strong{font-size:13px}.target-panel p{font-size:11px;color:var(--muted);line-height:1.6}.target-samples{display:flex;gap:7px;flex-wrap:wrap}.target-samples span{padding:6px 9px;border-radius:6px;background:#203c4e;border:1px solid #35586c;font-size:11px;color:#c8e2ee}
+@media(max-width:1330px){.layout{grid-template-columns:minmax(0,1fr) 305px}.metrics{gap:8px}.metric{padding:14px 13px}.filterbar .filter-help{display:none}}
+@media(max-width:1050px){.app{grid-template-columns:70px minmax(0,1fr)}.brand{justify-content:center;padding:18px 7px}.brand .brand-copy,.navhead,.nav .navtxt,.sidebar-bottom .side-footnote{display:none}.nav{padding:17px 8px;gap:8px}.nav button{justify-content:center;padding:0;min-height:48px}.nav svg{width:20px;height:20px}.sidebar-bottom{padding:16px 11px;align-items:center}.status-line span{display:none}.topbar{padding:0 16px}.content{padding:19px 15px}.layout{grid-template-columns:minmax(0,1fr) 288px}.heading h1{font-size:23px}}
+@media(max-width:780px){.layout{grid-template-columns:1fr}.rightcol{grid-row:1;grid-template-columns:1fr 1fr;align-items:start}.issues{max-height:255px}.metrics{grid-template-columns:repeat(3,1fr)}.heading{align-items:start;flex-direction:column}.notice .noteright{white-space:normal}.filterbar .search{min-width:100%}}
+@media(max-width:600px){.app{grid-template-columns:1fr}.sidebar{height:auto;position:static;padding:0 10px}.brand{display:none}.nav{display:flex;gap:4px;overflow:auto;padding:8px 0}.nav button{min-width:45px;min-height:38px}.sidebar-bottom,.navhead{display:none}.topbar{height:55px}.top-chip:not(.pending){display:none}.content{padding:16px 11px}.metrics{grid-template-columns:repeat(2,1fr)}.metric{min-height:85px}.metric .value{font-size:23px}.rightcol{grid-template-columns:1fr;grid-row:2}.notice{align-items:start;flex-direction:column}.filterbar{gap:7px}.filterbar select{flex:1;min-width:120px}.panel-head{padding:14px}.matrix-area{padding:14px}.port-grid{gap:2px}.actionbar{padding:10px;flex-direction:column;align-items:stretch}.action-info{justify-content:space-between}.action-btns{justify-content:stretch}.action-btns .btn{flex:1}.toast{bottom:135px}.dgrid{grid-template-columns:1fr 1fr}}
+
+/* One-click two-state theme switch. Both options remain visible; no dropdown or OS setting. */
+.theme-switch{display:inline-flex;align-items:center;gap:2px;height:36px;padding:3px;border:1px solid var(--stroke-light);border-radius:9px;background:var(--surface2);flex-shrink:0;white-space:nowrap}
+.theme-option{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:28px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--muted);font:700 11px/1 'Segoe UI','Malgun Gothic',system-ui,sans-serif;cursor:pointer;transition:background-color .12s,color .12s}
+.theme-option svg{width:14px;height:14px;stroke:currentColor}
+.theme-option:hover:not([aria-pressed="true"]){background:var(--hover);color:var(--ink)}
+.theme-option[aria-pressed="true"]{background:#256f62;color:#fff;box-shadow:0 1px 5px #020e1433}
+.theme-option:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+[data-theme="light"] .theme-switch{background:#edf4f7;border-color:#c3d7df}
+[data-theme="light"] .theme-option[aria-pressed="true"]{background:#fff;color:#0c786b;box-shadow:0 1px 6px #123d4a26}
+@media(max-width:760px){.theme-option{padding:0 8px}}
+@media(max-width:440px){.theme-option svg{display:none}.theme-option{font-size:10px;padding:0 7px}}
+@media(max-width:445px){.top-actions .top-chip.pending{display:none}.topbar{padding-left:12px;padding-right:12px}.crumb{font-size:11px}}
+
+/* Light edition: independent component colors, including badges, table, dialog
+   and sticky PoE control bar (no loss of status differentiation). */
+:root[data-theme="light"]{
+ color-scheme:light;
+ --bg:#f2f6fa;--sidebar:#ffffff;--surface:#ffffff;--surface2:#f3f7fa;--surface3:#e8f1f5;
+ --hover:#e8f5f2;--stroke:#d8e4eb;--stroke-light:#c7d8e3;--ink:#193041;--muted:#526c7f;
+ --sub:#3c586a;--teal:#0b846f;--brand:#ba6b28;--red:#bd4758;--amber:#a76a10;
+ --gray:#61798e;--blue:#3576ac;--focus:#007d8b;--shadow:0 7px 24px rgba(28,66,91,.075)
+}
+[data-theme="light"] .sidebar{box-shadow:3px 0 16px rgba(21,59,81,.025)}
+[data-theme="light"] .brandmark{background:linear-gradient(135deg,#179d88,#167e8c);box-shadow:0 8px 15px #0b8f8326}
+[data-theme="light"] .navhead{color:#587587}
+[data-theme="light"] .nav button{color:#4e687a}
+[data-theme="light"] .nav button.active{background:linear-gradient(90deg,#e0f4ed,#eef9f5);border-color:#abdccd;color:#135e52;box-shadow:inset 3px 0 #078a76}
+[data-theme="light"] .nav button:not(.active):hover{background:#f0f6f9;color:#183b4f}
+[data-theme="light"] .status-line{color:#a85d20}
+[data-theme="light"] .topbar{background:#fffffff2;box-shadow:0 1px 5px #2b5b7610}
+[data-theme="light"] .top-chip{color:#456679;border-color:#cbdde6;background:#f5f9fb}
+[data-theme="light"] .top-chip.pending{background:#fff1e7;border-color:#e7bd94;color:#9d5419}
+[data-theme="light"] .eyebrow{color:#087e6b}
+[data-theme="light"] .heading p strong{color:#0c765f!important}
+[data-theme="light"] .heading p b{color:#087e6b!important}
+[data-theme="light"] .btn.primary{border-color:#0b826e;background:#087c68;color:#ffffff}
+[data-theme="light"] .btn.primary:hover{background:#0b6e5f}
+[data-theme="light"] .btn.danger{border-color:#d8a0a8;background:#fff0f1;color:#a32f42}
+[data-theme="light"] .btn.danger:hover{background:#fbe1e5}
+[data-theme="light"] .notice{border-color:#aedecb;background:#eaf8f2;color:#2c6355}
+[data-theme="light"] .notice strong{color:#155f4e}
+[data-theme="light"] .notice .noteright{color:#3c7167}
+[data-theme="light"] .notice svg{color:#11917a}
+[data-theme="light"] .metric .metric-icon{color:#8399a7}
+[data-theme="light"] .metric.green .value{color:#0c846b}
+[data-theme="light"] .metric.red .value{color:#b73f51}
+[data-theme="light"] .metric.amber .value{color:#a7660e}
+[data-theme="light"] .metric.gray .value{color:#577080}
+[data-theme="light"] .filterbar .search{background:#fff;border-color:#cadce5}
+[data-theme="light"] .filterbar .search svg{color:#738ca0}
+[data-theme="light"] .filterbar input::placeholder{color:#788e9d}
+[data-theme="light"] .filterbar select{background:#fff;color:#203e50;border-color:#cadce5}
+[data-theme="light"] .panel-right{color:#587488}
+[data-theme="light"] .count{background:#f0f6f9;border-color:#d3e2ea;color:#36576c}
+[data-theme="light"] .siteheading{color:#59778b}
+[data-theme="light"] .siteheading b{color:#284d60}
+[data-theme="light"] .port-tile.normal{background:#17947c}
+[data-theme="light"] .port-tile.down{background:#cf5060}
+[data-theme="light"] .port-tile.warn{background:#c98a2b}
+[data-theme="light"] .port-tile.unknown{background:#74899a}
+[data-theme="light"] .port-tile.off{background:#4485b5}
+[data-theme="light"] .port-tile.selected{outline:2px solid #1c344c;outline-offset:1px}
+[data-theme="light"] .port-tile:hover{box-shadow:0 0 0 2px #1b5670,0 3px 10px #0d30422b}
+[data-theme="light"] .port-tile.for-action:after{background:#ffffff;box-shadow:0 0 0 1px #234659}
+[data-theme="light"] .legend{color:#4c687b}
+[data-theme="light"] .matrix-note{color:#627d8f}
+[data-theme="light"] .empty{border-color:#c1d4df}
+[data-theme="light"] .issue-btn{border-color:#e3edf2}
+[data-theme="light"] .issue-btn:hover,[data-theme="light"] .issue-btn.current{background:#edf6f7}
+[data-theme="light"] .issue-status{color:#466779}
+[data-theme="light"] .detail-tag{color:#07856d}
+[data-theme="light"] .badge{background:#f1f6f9;border-color:#d0dfe8;color:#38596b}
+[data-theme="light"] .badge.normal{background:#e2f6ef;border-color:#a6dac6;color:#116a55}
+[data-theme="light"] .badge.down{background:#feebed;border-color:#edb2ba;color:#ab334a}
+[data-theme="light"] .badge.warn{background:#fff3dc;border-color:#e6c48c;color:#965d0d}
+[data-theme="light"] .badge.unknown{background:#edf1f5;border-color:#c8d4dd;color:#476376}
+[data-theme="light"] .badge.off{background:#e8f3fd;border-color:#b6d3ef;color:#246799}
+[data-theme="light"] .reason{border-color:#cbdce5;background:#f5f8fa;color:#385567}
+[data-theme="light"] .choice{background:#f2f9f7;border-color:#c1dfd7;color:#1c594c}
+[data-theme="light"] .readhint{color:#587583}
+[data-theme="light"] .table-head-tools select{background:#f5f9fb;color:#34566c;border-color:#cedfe7}
+[data-theme="light"] .resulttable thead{background:#edf4f7}
+[data-theme="light"] .resulttable th{border-color:#d5e4eb;color:#426375}
+[data-theme="light"] .resulttable td{border-color:#e6eef2;color:#284458}
+[data-theme="light"] .resulttable tbody tr:hover{background:#f0f7f9}
+[data-theme="light"] .resulttable tbody tr.selected{background:#e4f4f0}
+[data-theme="light"] .resulttable tr td[colspan]{color:#607b8d!important}
+[data-theme="light"] .pillstat.normal{background:#e1f5ed;color:#11684d}
+[data-theme="light"] .pillstat.down{background:#fae9ed;color:#ae3b4e}
+[data-theme="light"] .pillstat.warn{background:#fff3d9;color:#925c16}
+[data-theme="light"] .pillstat.unknown{background:#edf1f5;color:#4a6476}
+[data-theme="light"] .pillstat.off{background:#e6f1fb;color:#2b6e9f}
+[data-theme="light"] .paginate button{background:#f4f8fa;color:#294d63}
+[data-theme="light"] .actionbar{background:#fffffff7;border-color:#cbdde6;box-shadow:0 -6px 24px #143e521a}
+[data-theme="light"] .action-count{background:#e6f7f0;border-color:#a8d9ca;color:#136f5e}
+[data-theme="light"] .action-note{color:#597483}
+[data-theme="light"] .action-btns .btn.offbtn{background:#fff0f1;border-color:#dca9b0;color:#a53045}
+[data-theme="light"] .action-btns .btn.onbtn{background:#e5f6ef;border-color:#a1d5c4;color:#076a57}
+[data-theme="light"] .action-btns .btn.offbtn:hover{background:#fbe1e4}
+[data-theme="light"] .action-btns .btn.onbtn:hover{background:#d2eee1}
+[data-theme="light"] .modal-backdrop{background:#101f2e82}
+[data-theme="light"] .modal{background:#fff;border-color:#c5dae3;box-shadow:0 24px 80px #0c2c3f42}
+[data-theme="light"] .modal p{color:#466374}
+[data-theme="light"] .modal .preview-list{background:#f5f8fa;border-color:#d0e0e8;color:#2d4d60}
+[data-theme="light"] .modal .modal-alert{background:#fff7eb;border-color:#eccb97;color:#8c4e12}
+[data-theme="light"] .toast{background:#f1f9f5;border-color:#a5d5c4;color:#176450;box-shadow:0 12px 30px #143b502d}
+[data-theme="light"] .target-panel{background:#fff;border-color:#cedfe7}
+[data-theme="light"] .target-samples span{background:#edf7f8;border-color:#c8e0e5;color:#315d70}
+
+[hidden]{display:none!important}
+#offNote{display:block;color:var(--muted);font-size:10px;margin-top:2px}
+#sourceBar .notice-l{min-width:0;flex-wrap:wrap;gap:6px 9px}
+#sourceName,#sourceHint,#sourceTime{overflow-wrap:anywhere}
+#sourceBar .noteright{white-space:normal}
+.file-msg{margin:0 0 14px;padding:10px 14px;border:1px solid var(--red);border-radius:8px;color:var(--ink);background:var(--surface2)}
+.file-msg.warn{border-color:var(--amber)}
+.section-action,.all-issues,.row-select{font:inherit;color:inherit;background:none;border:0;padding:0;text-align:left}
+.section-action{display:inline-flex;align-items:center;gap:7px;font-weight:760}
+.section-action span{color:var(--teal);font-size:18px;line-height:1}
+.all-issues,.row-select{font-weight:700}.all-issues:hover,.row-select:hover,.section-action:hover{text-decoration:underline}
+.priority-foot{padding:0}.all-issues{padding:10px 15px;width:100%;color:var(--sub)}
+.siteheading{gap:8px}.siteheading b,.detail-address{overflow-wrap:anywhere}
+#matrix{max-height:clamp(250px,52vh,560px);overflow-y:auto;overscroll-behavior-y:contain;padding:3px;scrollbar-color:var(--stroke-light) var(--surface)}
+.issue-dot.down{background:var(--red)}.dgrid{min-width:0}.detail-name{white-space:normal;overflow-wrap:anywhere}
+#detail{scroll-margin-top:12px}.row-select:focus-visible{outline-offset:0}
+#dataMode:not(.pending){color:var(--teal)}.rightcol,.leftcol{min-width:0}
+@media(max-width:780px){.rightcol{grid-row:auto}.layout{display:flex;flex-direction:column}.leftcol,.rightcol{width:100%}.filterbar select{min-width:0}.filterbar .search{min-width:min(100%,240px)}}
+@media(max-width:600px){.nav .navtxt{display:inline}.nav button{padding:0 7px;gap:6px}.table-head-tools{flex-wrap:wrap}.table-head-tools .count{white-space:nowrap}.notice-l{flex-wrap:wrap}.topbar{gap:5px}.heading-actions{width:100%}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.port-tile,.theme-option{transition:none}}
+
+</style>
+<link rel=stylesheet href=/static/embed.css><script src=/static/embed.js defer></script></head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+ <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+ <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3z"/><path d="M9 20v-7h6v7"/></symbol>
+ <symbol id="i-backup" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+ <symbol id="i-switch" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><rect x="5" y="10" width="3" height="4"/><rect x="11" y="10" width="3" height="4"/><path d="M18 10h2v4h-2"/></symbol>
+ <symbol id="i-history" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 3"/></symbol>
+ <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9l2 2m10.2 10.2 2 2m0-14.2-2 2m-10.2 10.2-2 2"/></symbol>
+ <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+ <symbol id="i-reload" viewBox="0 0 24 24"><path d="M21 11a9 9 0 1 0-2.5 6"/><path d="M21 4v7h-7"/></symbol>
+ <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 18v3h16v-3"/></symbol>
+ <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 21h20L12 3zM12 9v5m0 3v1"/></symbol>
+ <symbol id="i-check" viewBox="0 0 24 24"><path d="m4 12 5 5L20 6"/></symbol>
+ <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="1"/><rect x="3" y="14" width="18" height="7" rx="1"/><path d="M7 7h2m-2 11h2"/></symbol>
+ <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/></symbol>
+ <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.5 1.5m11.2 11.2 1.5 1.5M2 12h2m16 0h2M4.9 19.1l1.5-1.5M17.6 6.4l1.5-1.5"/></symbol>
+ <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.8 15.5A8.6 8.6 0 0 1 8.5 3.2 8.7 8.7 0 1 0 20.8 15.5Z"/></symbol>
+ <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></symbol>
+</svg>
+<div class="app">
+ <aside class="sidebar">
+  <div class="brand"><div class="brandmark"><svg fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-switch"/></svg></div><div class="brand-copy"><div class="brand-title">2930F Network</div><div class="brand-sub">SWITCH OPERATIONS CONSOLE</div></div></div>
+  <div class="navhead">WORKSPACE</div>
+  <nav class="nav" aria-label="주 메뉴">
+<button class="navbtn" id="navOverview" title="포트 통합 관리" aria-label="포트 통합 관리"><svg aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-grid"/></svg><span class="navtxt">포트 통합 관리</span></button>
+<button class="navbtn" id="navReview" disabled title="우선 확인" aria-label="우선 확인"><svg aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-alert"/></svg><span class="navtxt">우선 확인</span></button>
+<button class="navbtn" id="navCompare" title="변화 비교" aria-label="변화 비교"><svg aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-history"/></svg><span class="navtxt">변화 비교</span></button>
+  </nav>
+<div class="sidebar-bottom"><div class="status-line"><i></i><span>LOCAL CSV</span></div><div class="side-footnote">브라우저에서 여는 조회 결과</div></div>
+ </aside>
+ <div class="page">
+  <header class="topbar"><div class="crumb"><svg fill="none" stroke="currentColor"><use href="#i-home"/></svg>네트워크 운영 <span>›</span><b>포트 통합 관리</b></div><div class="top-actions">
+   <div class="theme-switch" role="group" aria-label="화면 테마 선택">
+    <button id="themeLight" class="theme-option" type="button" aria-pressed="false" title="라이트 모드로 전환"><svg aria-hidden="true" fill="none" stroke-width="1.8"><use href="#i-sun"/></svg>라이트</button>
+    <button id="themeDark" class="theme-option" type="button" aria-pressed="true" title="다크 모드로 전환"><svg aria-hidden="true" fill="none" stroke-width="1.8"><use href="#i-moon"/></svg>다크</button>
+   </div>
+<span class="top-chip">ArubaOS-Switch · 2930F</span><span id="dataMode" class="top-chip pending">CSV 대기</span>
+  </div></header>
+  <main class="content">
+
+<div class="heading"><div><div class="eyebrow">MULTI-SWITCH PORT MONITORING</div><h1 id="pageTitle">포트 운영 관제</h1><p id="subtitle">사업장별 지정 포트의 링크와 전력을 확인합니다.</p></div>
+<div class="heading-actions"><button class="btn" type="button" id="addButton" disabled><svg aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-history"/></svg>비교할 CSV 추가</button><button class="btn primary" type="button" id="openButton"><svg aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-backup"/></svg>CSV 열기</button>
+<input hidden type="file" multiple id="openCsv" accept=".csv,text/csv" aria-label="조회 결과 CSV 한 개 또는 두 개 열기"><input hidden type="file" id="addCsv" accept=".csv,text/csv" aria-label="비교할 CSV 추가"></div></div>
+<div class="notice" id="sourceBar"><div class="notice-l"><svg aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-info"/></svg><strong id="sourceName">CSV 미선택</strong><span id="sourceHint">조회 CSV를 한 개 열면 포트 상태를 확인할 수 있습니다. 두 개를 함께 열면 포트별 변화를 비교합니다.</span></div><span class="noteright" id="sourceTime"></span></div>
+<div class="file-msg" id="fileError" role="alert" hidden></div><div class="file-msg warn" id="fileWarnings" role="status" hidden></div>
+<div id="overviewRoot" hidden>
+
+   <div class="metrics">
+    <div class="metric"><label>등록된 스위치</label><div class="value" id="mSwitch">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-server"/></svg></div>
+    <div class="metric green"><label>지정 조회 포트</label><div class="value" id="mPorts">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-grid"/></svg></div>
+    <div class="metric"><label>정상 포트</label><div class="value" id="mNormal">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-check"/></svg></div>
+    <div class="metric red"><label>링크 Down</label><div class="value" id="mDown">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-alert"/></svg></div>
+    <div class="metric amber"><label>확인 필요 · 수집 불가</label><div class="value" id="mReview">—</div><small id="offNote"></small><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-info"/></svg></div>
+   </div>
+   <div class="filterbar">
+    <label class="search"><svg fill="none" stroke="currentColor"><use href="#i-search"/></svg><input type="search" id="search" placeholder="스위치 Hostname / IP / 포트 / LLDP AP 검색" aria-label="스위치 및 포트 검색" autocomplete="off"></label>
+    <select id="site" aria-label="사업장 필터"><option value="all">전체 사업장</option></select>
+    <select id="status" aria-label="포트 상태 필터"><option value="all">전체 상태</option><option value="down">링크 Down</option><option value="warn">확인 필요</option><option value="unknown">수집 불가</option><option value="off">설정 OFF</option><option value="normal">정상</option></select>
+    <span class="filter-help"><label for="zoom">블록 크기</label><input id="zoom" type="range" min="15" max="31" value="19" aria-label="블록 크기"><span id="zoomValue">19px</span></span>
+    <button id="clearFilters" class="btn ghost">필터 초기화</button>
+   </div>
+   <div class="layout">
+    <div class="leftcol">
+     <section class="panel" aria-labelledby="matrixTitle"><div class="panel-head"><div><h2 id="matrixTitle">포트 상태 매트릭스</h2><div class="panel-sub">사각형을 클릭하면 우측에 해당 스위치의 해당 포트 정보만 표시합니다</div></div><div class="panel-right"><span id="matrixCount" class="count">— 포트</span></div></div>
+      <div class="matrix-area"><div class="matrix-top"><strong>지정 포트별 독립 상태</strong><span class="hint">기본 정렬 · 사업장 → 스위치 IP → 포트 번호</span></div><div id="matrix" class="matrix-sections" aria-label="지정 포트 상태 매트릭스"></div></div>
+      <div class="matrix-footer"><div class="legend"><span><i class="swatch"></i>정상</span><span><i class="swatch down"></i>링크 Down</span><span><i class="swatch warn"></i>확인 필요</span><span><i class="swatch unknown"></i>수집 불가</span><span><i class="swatch off"></i>설정 OFF</span></div><span class="matrix-note">블록을 선택하면 포트 상세가 열립니다</span></div>
+     </section>
+     <section class="panel" aria-labelledby="tableTitle"><div class="panel-head"><div><h2 id="tableTitle">포트별 조회 결과</h2><div class="panel-sub">포트를 선택하면 해당 장비의 조회 결과를 확인할 수 있습니다</div></div><div class="table-head-tools"><span class="count" id="tableCount">—</span><select id="sort" aria-label="결과 정렬"><option value="natural">IP·포트 순</option><option value="issues">이상 우선</option><option value="power">전력 높은 순</option></select></div></div>
+      <div class="tablewrap"><table class="resulttable"><thead><tr><th>스위치 Hostname</th><th>IP</th><th>Port</th><th>포트 상태</th><th>PoE 상태</th><th>전력</th><th>LLDP AP</th></tr></thead><tbody id="tbody"></tbody></table></div>
+      <div class="table-foot"><span id="tableRange">—</span><div class="paginate"><button id="prevPage" aria-label="이전 페이지">이전</button><span id="pageNum">1 / 1</span><button id="nextPage" aria-label="다음 페이지">다음</button></div></div>
+     </section>
+    </div>
+    <div class="rightcol">
+     <section class="panel" aria-labelledby="issuesTitle"><div class="panel-head"><div><h2 id="issuesTitle"><button class="section-action" id="priorityButton">우선 확인 <span aria-hidden="true">›</span></button></h2><div class="panel-sub">이상 / 확인 필요 / 수집 불가 포트</div></div><span class="count" id="issueCount">—</span></div><div class="issues" id="issues"></div><div class="priority-foot"><button class="all-issues" id="allIssues">점검 목록 전체 보기 →</button></div></section>
+     <section class="panel" aria-labelledby="detailTitle"><div class="panel-head"><div><h2 id="detailTitle">선택 포트 상세</h2><div class="panel-sub">스위치 식별과 포트별 상태를 별도 확인</div></div><span class="count">READ ONLY</span></div><div class="detail" id="detail"></div></section>
+    </div>
+   </div>
+</div><section id="extraView" hidden></section>
+  </main>
+ </div>
+</div>
+<script>
+(function(){'use strict';
+const $=id=>document.getElementById(id);
+
+/* A single click changes theme; no intermediary menu or system mode. */
+const themeStorageKey = 'aruba2930f.portMatrix.theme';
+function applyTheme(mode, save = true) {
+  if (mode !== 'dark' && mode !== 'light') return;
+  document.documentElement.dataset.theme = mode;
+  $('themeLight').setAttribute('aria-pressed', String(mode === 'light'));
+  $('themeDark').setAttribute('aria-pressed', String(mode === 'dark'));
+  if (save) { try { localStorage.setItem(themeStorageKey, mode); } catch (_) { /* non-persistent fallback */ } }
+}
+applyTheme(window.__arubaThemePreference || 'dark', false);
+$('themeLight').addEventListener('click', () => applyTheme('light'));
+$('themeDark').addEventListener('click', () => applyTheme('dark'));
+})();
+</script>
+<script>
+/* Reader for Aruba2930FConfigBackup's UTF-8 CSV exports. No network or storage. */
+(() => {
+  "use strict";
+  const missing = "미수집";
+  const unknown = "확인 불가";
+  const stateNames = {normal:"링크 Up", down:"링크 Down", warn:"확인 필요", unknown:"미수집 / 확인 불가", off:"설정 OFF"};
+  const queryNames = {ok:"완료", failed:"실패", cancelled:"취소", unsupported:"미지원"};
+  const lldpNames = {ok:"완료", failed:"실패", cancelled:"취소", pending:"대기"};
+  const collator = new Intl.Collator("en", {numeric:true});
+
+  function* records(text) {
+    let row = [], field = "", quoted = false, closed = false, start = 0, i = 0;
+    // Append runs between syntax characters so large quoted evidence fields stay inexpensive.
+    const tokens = /[",\r\n]/g;
+    let match;
+    while ((match = tokens.exec(text))) {
+      i = match.index;
+      if (closed && i !== start) throw new Error("닫는 따옴표 다음에 잘못된 문자가 있습니다.");
+      field += text.slice(start, i);
+      const char = text[i];
+      if (quoted) {
+        if (char === '"') {
+          if (text[i+1] === '"') { field += '"'; tokens.lastIndex++; }
+          else { quoted = false; closed = true; }
+        } else field += char;
+      } else if (char === '"') {
+        if (field || closed) throw new Error("CSV의 따옴표를 해석할 수 없습니다.");
+        quoted = true;
+      } else if (char === ",") {
+        row.push(field); field = ""; closed = false;
+      } else {
+        if (char === "\r" && text[i+1] === "\n") tokens.lastIndex++;
+        if (row.length || field.trim() || closed) { row.push(field); yield row; }
+        row = []; field = ""; closed = false;
+      }
+      start = tokens.lastIndex;
+    }
+    if (quoted) throw new Error("닫히지 않은 따옴표가 있습니다.");
+    if (closed && start !== text.length) throw new Error("닫는 따옴표 다음에 잘못된 문자가 있습니다.");
+    field += text.slice(start);
+    if (field.trim() || row.length || closed) { row.push(field); yield row; }
+  }
+
+  function ipv4(raw) {
+    const parts = raw.split(".");
+    if (parts.length !== 4 || !parts.every(p => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return "";
+    return parts.map(Number).join(".");
+  }
+
+  function intf(raw) {
+    if (raw.length > 12 || !/^\d+(?:\/\d+)?$/.test(raw)) return "";
+    const parts = raw.split("/").map(Number);
+    return parts.every(n => n > 0) ? parts.join("/") : "";
+  }
+
+  function setting(raw, on, off) {
+    const value = raw.toLowerCase();
+    if (["yes","on","true","enabled","enable","1"].includes(value)) return on;
+    if (["no","off","false","disabled","disable","0"].includes(value)) return off;
+    return unknown;
+  }
+
+  function measurement(raw) {
+    if (!/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw)) return null;
+    const number = Number(raw);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function jsonCell(raw) {
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (_) { return null; }
+  }
+
+  function normalizeIdentifier(value) {
+    const id = String(value || "").trim();
+    if (/^(?:[\da-f]{2}[:-]){5}[\da-f]{2}$|^(?:[\da-f]{4}\.){2}[\da-f]{4}$/i.test(id))
+      return id.replace(/[:.\-]/g,"").toUpperCase().match(/../g).join(":");
+    return id;
+  }
+
+  function neighborIdentity(n) {
+    if (!n || typeof n !== "object") return unknown;
+    const parts = [n.system_name, n.model].filter(Boolean);
+    if (n.chassis_id) parts.push("섀시 " + normalizeIdentifier(n.chassis_id) + (n.chassis_type ? " (" + n.chassis_type.trim().toLowerCase() + ")" : ""));
+    if (n.port_id) parts.push("포트 " + normalizeIdentifier(n.port_id) + (n.port_type ? " (" + n.port_type.trim().toLowerCase() + ")" : ""));
+    if (n.port_description) parts.push("포트 설명 " + n.port_description);
+    if (Array.isArray(n.management_addresses) && n.management_addresses.length)
+      parts.push("관리 주소 " + [...new Set(n.management_addresses.map(a => String(a).trim().toLowerCase()))].sort().join(", "));
+    return parts.join(" · ") || "식별 정보 없음";
+  }
+
+  function neighbors(raw, names, lldp) {
+    const list = jsonCell(raw);
+    const unobserved = lldp ? "LLDP " + (lldpNames[lldp] || lldp) : missing;
+    const none = lldp === "ok" ? "이웃 없음" : unobserved;
+    const decoded = Array.isArray(list);
+    const ids = names ? names.split(/\s*\|\s*/) : decoded ? list.map(n => n?.system_name || "이름 없음") : [];
+    const fallback = raw && !decoded ? unknown : none;
+    return {
+      names:ids.length ? ids.sort().join(" / ") : fallback,
+      identity:decoded && list.length ? list.map(neighborIdentity).sort().join("\n") : fallback
+    };
+  }
+
+  // The switch's raw PoE read and the AP assessment can report different evidence.
+  // Compare the structured raw values separately from the assessment or free-text notes.
+  function powerEvidence(raw) {
+    const item = jsonCell(raw);
+    if (!item || typeof item !== "object" || Array.isArray(item)) return raw ? unknown : missing;
+    const fields = [
+      ["requested_watts","요청 W"],["allocated_watts","할당 W"],["power_class","전력 등급"],
+      ["plc_class","PLC 등급"],["plc_type","PLC 유형"],["dlc_class","DLC 등급"],["dlc_type","DLC 유형"],
+      ["allocation_method","할당 방식"],["device_type","장치 유형"],["allocation_field","할당 항목"]
+    ];
+    const values = [];
+    for (const [key,label] of fields) {
+      if (item[key] === null || item[key] === undefined || item[key] === "") continue;
+      const value = key.endsWith("_watts") ? measurement(String(item[key])) : item[key];
+      if (value !== null) values.push(label + " " + value);
+    }
+    return values.join(" · ") || missing;
+  }
+
+  function classify(row, v) {
+    if (v("complete").toLowerCase() === "no")
+      return ["unknown", "수집이 완료되기 전에 저장한 포트입니다."];
+    if (row.queryStatus !== "ok")
+      return ["unknown", v("message") || (row.errorCode ? "조회 결과 · " + row.errorCode : "최신 포트 측정값이 없습니다.")];
+    if (row.admin === "Disable") return ["off","포트 관리 설정이 Disable입니다. PoE 설정은 별도 항목입니다."];
+    if (row.poe === "OFF") return ["off","PoE 설정이 OFF입니다. 운영 의도는 별도 확인이 필요합니다."];
+    if (row.link === "Down") return ["down","포트 링크 Down이 관측됐습니다."];
+    if (row.admin === unknown && row.link === unknown) return ["unknown","링크와 관리 상태를 확인하지 못했습니다."];
+    if (row.poe === unknown || /^(?:fault|other fault|disabled)$/i.test(row.poeStatus))
+      return ["warn",v("port_poe_explanation") || "PoE 설정 또는 공급 상태를 확인하세요."];
+    if (["failed","cancelled"].includes(row.lldp))
+      return ["warn",v("lldp_message") || "LLDP 조회가 완료되지 않았습니다. 수집한 링크와 PoE 값은 표시합니다."];
+    if (v("assessment_label") === "확인 필요")
+      return ["warn",v("assessment_reason") || "장비의 전력 평가를 확인하세요."];
+    if (row.link === "Up" && row.admin !== unknown)
+      return ["normal",v("message") || "포트 Enable 및 링크 Up이 관측됐습니다."];
+    return ["unknown","최신 관측에서 관리 상태와 링크를 확정하지 못했습니다."];
+  }
+
+  function mapRow(cells, columns, number) {
+    const v = name => columns.has(name) ? cells[columns.get(name)].trim() : "";
+    const ip = ipv4(v("ip")), port = intf(v("interface"));
+    const sshRaw = v("ssh_port") || (columns.has("ssh_port") ? "" : "22");
+    const sshPort = Number(sshRaw);
+    if (!ip || !port || !/^\d{1,5}$/.test(sshRaw) || sshPort < 1 || sshPort > 65535)
+      throw new Error(number + "번째 레코드의 IP, SSH 포트 또는 인터페이스를 확인하세요.");
+    const rawLink = v("link_status");
+    const link = /^up$/i.test(rawLink) ? "Up" : /^down$/i.test(rawLink) ? "Down" : rawLink || unknown;
+    const queryStatus = v("status").toLowerCase();
+    const lldp = v("lldp_status").toLowerCase();
+    const neighbor = neighbors(v("lldp_neighbors"),v("ap_names"),lldp);
+    const row = {
+      key:ip + ":" + sshPort + "/" + port, ip, sshPort, port,
+      hostname:v("hostname") || unknown, site:v("site") || v("site_name") || v("사업장") || "사업장 미지정",
+      label:v("label"), model:v("model"), link, poe:setting(v("poe_enabled"),"ON","OFF"),
+      admin:setting(v("enabled"),"Enable","Disable"),
+      watts:queryStatus === "ok" ? measurement(v("watts")) : null,
+      ap:neighbor.names, neighborIdentity:neighbor.identity, observed:v("observed_at") || v("finished_at"),
+      finished:v("finished_at"), lldp, queryStatus, poeStatus:v("poe_status") || unknown,
+      errorCode:v("error_code"), lldpError:v("lldp_error_code"),
+      assessment:v("assessment_label"), assessmentStatus:v("assessment_status"), assessmentModel:v("assessment_model"),
+      requestedWatts:measurement(v("requested_watts")), allocatedWatts:measurement(v("allocated_watts")),
+      negotiation:v("negotiation"), diagnosis:v("port_poe_state"), powerEvidence:powerEvidence(v("power_evidence")),
+      complete:v("complete").toLowerCase()
+    };
+    [row.status,row.reason] = classify(row,v);
+    return row;
+  }
+
+  function order(a,b) {
+    return collator.compare(a.ip,b.ip) || a.sshPort-b.sshPort || collator.compare(a.port,b.port);
+  }
+
+  function parse(text,filename = "") {
+    if (typeof text !== "string") throw new Error("CSV 내용을 읽지 못했습니다.");
+    if (text.includes("\u0000")) throw new Error("UTF-8 형식의 포트 조회 CSV를 열어 주세요.");
+    const stream = records(text.replace(/^\uFEFF/,""));
+    const header = stream.next().value?.map(h => h.trim().toLowerCase());
+    if (!header) throw new Error("빈 CSV 파일입니다.");
+    const columns = new Map(header.map((h,i) => [h,i]));
+    if (columns.size !== header.length || header.includes("")) throw new Error("중복되거나 비어 있는 CSV 열 이름이 있습니다.");
+    const required = ["ip","interface","status"];
+    const absent = required.filter(h => !columns.has(h));
+    if (absent.length) throw new Error("프로그램의 포트 조회 결과 CSV가 필요합니다. 누락된 열 · " + absent.join(", "));
+    const rows = [], seen = new Set(), warnings = [];
+    let record = 1, latest = -Infinity;
+    for (const cells of stream) {
+      record++;
+      if (cells.length !== header.length) throw new Error(record + "번째 레코드의 열 개수가 헤더와 다릅니다.");
+      const row = mapRow(cells,columns,record);
+      if (seen.has(row.key)) throw new Error("동일 포트가 중복되어 한 시점으로 비교할 수 없습니다. " + row.key);
+      seen.add(row.key); rows.push(row);
+      for (const stamp of [row.observed,row.finished]) {
+        const time = Date.parse(stamp);
+        if (Number.isFinite(time)) latest = Math.max(latest,time);
+      }
+    }
+    if (!rows.length) warnings.push("유효한 조회 결과 CSV이며 기록된 포트가 0개입니다.");
+    if (!columns.has("ssh_port")) warnings.push("SSH 포트 열이 없어 기본값 22를 적용했습니다.");
+    return {filename,rows:rows.sort(order),warnings,columns:[...columns.keys()],
+      latestObserved:Number.isFinite(latest) ? new Date(latest).toISOString() : ""};
+  }
+
+  const formatWatts = n => n === null ? "미측정" : n + " W";
+  const comparison = [
+    ["status","포트 상태",null,v => stateNames[v]], ["hostname","Hostname","hostname"],
+    ["model","스위치 모델","model"], ["label","장비 별칭","label"],
+    ["admin","포트 관리 설정","enabled"], ["link","링크","link_status"],
+    ["poe","PoE 설정","poe_enabled"], ["poeStatus","PoE 공급 상태","poe_status"],
+    ["watts","실측 전력","watts",formatWatts], ["queryStatus","조회 결과","status",v => queryNames[v] || v || missing],
+    ["lldp","LLDP 조회","lldp_status",v => lldpNames[v] || v || missing],
+    ["ap","LLDP 이웃","ap_names"], ["neighborIdentity","LLDP 이웃 장비·포트","lldp_neighbors"],
+    ["assessment","전력 평가","assessment_label"], ["assessmentStatus","전력 평가 상태","assessment_status"],
+    ["assessmentModel","전력 평가 모델","assessment_model"], ["requestedWatts","요청 전력","requested_watts",formatWatts],
+    ["allocatedWatts","할당 전력","allocated_watts",formatWatts], ["negotiation","PoE 협상","negotiation"],
+    ["diagnosis","포트 전력 진단","port_poe_state"], ["powerEvidence","PoE 수집 근거","power_evidence"],
+    ["errorCode","조회 오류","error_code"], ["lldpError","LLDP 오류","lldp_error_code"]
+  ];
+  function compare(before,after) {
+    const old = new Map(before.rows.map(row => [row.key,row]));
+    const recent = new Map(after.rows.map(row => [row.key,row]));
+    const columnsA = new Set(before.columns), columnsB = new Set(after.columns);
+    const fields = comparison.filter(([, ,column]) => !column || (columnsA.has(column) && columnsB.has(column)));
+    const keys = new Set([...old.keys(),...recent.keys()]), result = [];
+    for (const key of keys) {
+      const a = old.get(key) || null, b = recent.get(key) || null;
+      const changes = [];
+      if (a && b) {
+        for (const [field,label,,format] of fields) {
+          if (a[field] !== b[field]) {
+            const show = format || (v => v || "없음");
+            changes.push({label,from:show(a[field]),to:show(b[field])});
+          }
+        }
+        if (!changes.length) continue;
+      }
+      result.push({key,before:a,after:b,kind:!a ? "added" : !b ? "removed" : "changed",changes});
+    }
+    return result.sort((a,b) => order(a.after || a.before,b.after || b.before));
+  }
+  window.PortCsv = Object.freeze({parse,compare});
+})();
+
+</script>
+<script>
+/* Read-only drill-downs for the CSV viewer. CSV values are inserted as text. */
+window.PortViews = (() => {
+  'use strict';
+  const pageSize = 40;
+  const issueLabels = {down:'Link Down', warn:'확인 필요', unknown:'수집 불가'};
+  const issueOrder = {down:0, warn:1, unknown:2};
+  const kinds = {changed:'상태 변화', added:'비교 파일에만 있음', removed:'기준 파일에만 있음'};
+  const collectionLabels = new Map([['ok','완료'],['failed','실패'],['cancelled','취소'],['pending','대기'],['unsupported','미지원']]);
+  const localClock = new Intl.DateTimeFormat('ko-KR',{
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',
+    hourCycle:'h23',timeZoneName:'short'
+  });
+  const num = value => value.toLocaleString('ko-KR');
+  const text = value => value == null || value === '' ? '미수집' : String(value);
+  const watts = value => value == null ? '미측정' : value + ' W';
+  function el(tag, cls, content) {
+    const result = document.createElement(tag);
+    if (cls) result.className = cls;
+    if (content !== undefined) result.textContent = content;
+    return result;
+  }
+  function button(cls, label, callback) {
+    const item = el('button', cls, label);
+    item.type = 'button';
+    item.addEventListener('click', callback);
+    return item;
+  }
+  function installStyles() {
+    if (document.getElementById('csv-port-drill-styles')) return;
+    const style = el('style');
+    style.id = 'csv-port-drill-styles';
+    style.textContent = `
+      .csv-drill{color:var(--ink);min-width:0}
+      .csv-drill .dr-sources{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 14px}
+      .csv-drill .dr-src{min-width:0;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--stroke);border-radius:10px;padding:11px 15px}
+      .csv-drill .dr-src small,.csv-drill .dr-ident,.csv-drill .dr-key,.csv-drill .dr-evidence dt{display:block;color:var(--muted);font-size:11px}
+      .csv-drill .dr-src strong{display:block;font-size:14px;margin-top:2px}
+      .csv-drill .dr-src time,.csv-drill .dr-clock{display:block;color:var(--muted);font-size:11px;margin-top:5px}
+      .csv-drill .dr-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px;align-items:start}
+      .csv-drill .dr-search:focus-within{outline:2px solid var(--focus);outline-offset:2px}
+      .csv-drill .dr-search input{width:100%}
+      .csv-drill .dr-section h2{margin:0}
+      .csv-drill .dr-list{list-style:none;padding:0;margin:0}
+      .csv-drill .dr-row{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;text-align:left;background:transparent;color:var(--ink);border:0;border-bottom:1px solid var(--stroke);padding:11px 16px;white-space:normal}
+      .csv-drill .dr-row:hover{background:var(--hover)}
+      .csv-drill .dr-row[aria-pressed=true]{background:var(--surface3);box-shadow:inset 3px 0 var(--teal)}
+      .csv-drill .dr-row:focus-visible{outline-offset:-3px}
+      .csv-drill .dr-title,.csv-drill .dr-ident,.csv-drill .dr-key,.csv-drill .dr-evidence dd{overflow-wrap:anywhere;min-width:0}
+      .csv-drill .dr-title{font-size:13px}
+      .csv-drill .dr-ident{grid-column:1/-1}
+      .csv-drill .dr-tag{align-self:start;white-space:normal;text-align:center}
+      .csv-drill .dr-evidence{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px;margin:16px 0}
+      .csv-drill .dr-evidence dd{font-weight:640;margin:3px 0 0}
+      .csv-drill .dr-evidence .dr-wide{grid-column:1/-1}
+      .csv-drill .dr-detail{padding:16px}
+      .csv-drill .dr-detail h3{margin:7px 0 3px;font-size:17px;overflow-wrap:anywhere}
+      .csv-drill .dr-detail .reason{margin:14px 0}
+      .csv-drill .dr-diff{width:100%;table-layout:fixed;border-collapse:collapse;margin-top:15px;text-align:left}
+      .csv-drill .dr-diff th,.csv-drill .dr-diff td{font-size:12px;padding:8px 5px;border-bottom:1px solid var(--stroke);overflow-wrap:anywhere;vertical-align:top}
+      .csv-drill .dr-diff th{color:var(--muted);font-weight:550}
+      .csv-drill .dr-diff tbody td:last-child{font-weight:700}
+      .csv-drill .dr-diff thead{background:var(--surface2)}
+      .csv-drill .dr-empty{padding:22px 16px;margin:0;color:var(--muted);overflow-wrap:anywhere}
+      .csv-drill .dr-back{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+      .csv-drill .table-foot{flex-wrap:wrap}
+      .csv-drill .dr-showing{font-variant-numeric:tabular-nums}
+      @media(max-width:840px){.csv-drill .dr-grid{grid-template-columns:minmax(0,1fr)}}
+      @media(max-width:540px){.csv-drill .dr-sources{grid-template-columns:minmax(0,1fr)}.csv-drill .filterbar .search{min-width:100%}.csv-drill .filterbar select{width:100%}.csv-drill .dr-title{font-size:12px}.csv-drill .dr-row{padding:11px}.csv-drill .dr-detail{padding:12px}}
+    `;
+    document.head.append(style);
+  }
+  function portTitle(row) { return (row.hostname || row.ip || '장비명 미수집') + ' · ' + row.port; }
+  function portAddress(row) {
+    const address = row.ip + (row.sshPort && String(row.sshPort) !== '22' ? ' (SSH ' + row.sshPort + ')' : '');
+    return [row.site, address, row.label].filter(Boolean).join(' · ');
+  }
+  function searchText(row) {
+    return [row.hostname,row.ip,row.sshPort,row.port,row.label,row.site,row.ap,row.reason].join(' ').toLocaleLowerCase('ko-KR');
+  }
+  function toolbar(host,onBack,onSwap) {
+    installStyles();
+    const container = el('div','csv-drill');
+    const actions = el('nav','dr-back');
+    actions.setAttribute('aria-label','보기 전환');
+    if (onSwap) actions.append(button('btn','비교 순서 바꾸기',onSwap));
+    actions.append(button('btn','관제 화면으로',onBack));
+    container.append(actions);
+    host.replaceChildren(container);
+    return container;
+  }
+  function panel(title) {
+    const section = el('section','panel dr-section');
+    const top = el('div','panel-head');
+    top.append(el('h2',null,title));
+    section.append(top);
+    return {section,top};
+  }
+  function evidence(row) {
+    const grid = el('dl','dr-evidence');
+    const fields = [
+      ['관리 상태',row.admin],['Link 상태',row.link],['PoE 설정',row.poe],['실측 전력',watts(row.watts)],
+      ['PoE 공급 상태',row.poeStatus],['포트 조회',collectionLabels.get(row.queryStatus) || row.queryStatus],
+      ['LLDP 수집',collectionLabels.get(row.lldp) || row.lldp],['LLDP 이웃 AP',row.ap],['관측 시각',row.observed]
+    ];
+    for (const [label,value] of fields) {
+      const pair = el('div',label === '관측 시각' ? 'dr-wide' : '');
+      pair.append(el('dt',null,label),el('dd',null,text(value)));
+      grid.append(pair);
+    }
+    return grid;
+  }
+  function reasonBlock(message) {
+    const block = el('div','reason');
+    block.append(el('strong',null,'확인 근거'),document.createTextNode(text(message)));
+    return block;
+  }
+  function reviewDetails(box,row,onSelect) {
+    box.append(el('span','pillstat '+row.status,issueLabels[row.status]),el('h3',null,portTitle(row)),
+      el('div','dr-key',portAddress(row)),evidence(row),reasonBlock(row.reason),
+      button('btn primary','관제에서 이 포트 보기',() => onSelect(row.key)));
+  }
+  function compareDetails(box,entry) {
+    const row = entry.after || entry.before;
+    box.append(el('span','badge',kinds[entry.kind]),el('h3',null,portTitle(row)),el('div','dr-key',portAddress(row)));
+    if (entry.kind !== 'changed') {
+      box.append(el('p','panel-sub',entry.kind === 'added' ? '기준 CSV에 같은 IP·SSH 포트·인터페이스의 행이 없습니다.' :
+        '비교 CSV에 같은 IP·SSH 포트·인터페이스의 행이 없습니다.'),evidence(row));
+      return;
+    }
+    const table = el('table','dr-diff');
+    table.setAttribute('aria-label','포트별 변경 전후 값');
+    const header = table.createTHead().insertRow();
+    for (const column of ['항목','기준 값','비교 값']) {
+      const th = el('th',null,column);
+      th.scope = 'col';
+      header.append(th);
+    }
+    const body = table.createTBody();
+    for (const field of entry.changes) {
+      const tr = body.insertRow();
+      const label = el('th',null,field.label);
+      label.scope = 'row';
+      tr.append(label,el('td',null,text(field.from)),el('td',null,text(field.to)));
+    }
+    box.append(table);
+    const dates = el('dl','dr-evidence');
+    for (const [label, item] of [['기준 관측 시각',entry.before],['비교 관측 시각',entry.after]]) {
+      const pair = el('div');
+      pair.append(el('dt',null,label),el('dd',null,text(item.observed)));
+      dates.append(pair);
+    }
+    box.append(dates);
+  }
+  function explorer(container,items,options) {
+    const bar = el('div','filterbar');
+    const searchLabel = el('label','search dr-search');
+    const search = el('input');
+    search.type = 'search';
+    search.placeholder = '스위치 이름, IP, 포트, AP 검색';
+    search.setAttribute('aria-label','포트 검색');
+    searchLabel.append(search);
+    const filter = el('select');
+    filter.setAttribute('aria-label',options.filterTitle);
+    const counts = new Map();
+    for (const item of items) counts.set(item.category,(counts.get(item.category) || 0) + 1);
+    filter.add(new Option('전체 유형 · ' + num(items.length), ''));
+    for (const [value,label] of Object.entries(options.categories)) {
+      filter.add(new Option(label + ' · ' + num(counts.get(value) || 0), value));
+    }
+    bar.append(searchLabel,filter);
+    const grid = el('div','dr-grid');
+    const left = panel(options.title), right = panel(options.detailTitle);
+    const total = el('span','count');
+    total.setAttribute('aria-live','polite');
+    left.top.append(total);
+    const list = el('ul','dr-list');
+    const footer = el('div','table-foot');
+    const pageRange = el('span','dr-showing');
+    const nav = el('div','paginate');
+    const prev = button('','이전',() => { page--; drawPage(); });
+    const next = button('','다음',() => { page++; drawPage(); });
+    const pageNumber = el('span');
+    nav.append(prev,pageNumber,next);
+    footer.append(pageRange,nav);
+    left.section.append(list,footer);
+    const details = el('div','dr-detail');
+    right.section.append(details);
+    grid.append(left.section,right.section);
+    container.append(bar,grid);
+    let matches = items, page = 0, currentKey = null;
+    function drawDetail(item) {
+      details.replaceChildren();
+      if (item) options.details(details,item.entry);
+      else details.append(el('p','dr-empty','표시할 포트가 없습니다.'));
+    }
+    function drawPage() {
+      const pages = Math.max(1,Math.ceil(matches.length / pageSize));
+      page = Math.max(0,Math.min(page,pages-1));
+      const start = page*pageSize;
+      const batch = matches.slice(start,start+pageSize);
+      const selected = batch.find(item => item.key === currentKey) || batch[0];
+      currentKey = selected?.key ?? null;
+      total.textContent = num(matches.length) + '포트';
+      pageRange.textContent = matches.length ? num(start+1)+'–'+num(start+batch.length)+' / '+num(matches.length) : '0개';
+      pageNumber.textContent = (page+1)+' / '+pages;
+      prev.disabled = page === 0;
+      next.disabled = page+1 === pages;
+      list.replaceChildren();
+      let activeButton = null;
+      for (const item of batch) {
+        const li = el('li');
+        const rowButton = button('dr-row','',() => {
+          if (activeButton) activeButton.setAttribute('aria-pressed','false');
+          rowButton.setAttribute('aria-pressed','true');
+          activeButton = rowButton;
+          currentKey = item.key;
+          drawDetail(item);
+          if (window.matchMedia('(max-width:840px)').matches) right.section.scrollIntoView({block:'start'});
+        });
+        rowButton.setAttribute('aria-pressed',String(item === selected));
+        if (item === selected) activeButton = rowButton;
+        rowButton.append(el('strong','dr-title',portTitle(item.row)),
+          el('span','dr-tag '+(options.categories === issueLabels ? 'pillstat '+item.category : 'badge'),options.categories[item.category]),
+          el('span','dr-ident',item.note));
+        li.append(rowButton);
+        list.append(li);
+      }
+      if (!batch.length) list.append(el('li','dr-empty',items.length ? '검색 조건에 맞는 포트가 없습니다.' : options.empty));
+      drawDetail(selected);
+    }
+    function refilter() {
+      const query = search.value.trim().toLocaleLowerCase('ko-KR');
+      matches = items.filter(item => (!filter.value || filter.value === item.category) && (!query || item.search.includes(query)));
+      page = 0;
+      drawPage();
+    }
+    search.addEventListener('input',refilter);
+    filter.addEventListener('change',refilter);
+    drawPage();
+  }
+  function renderReview(host,rows,onBack,onSelect) {
+    const container = toolbar(host,onBack);
+    const items = rows.filter(row => Object.hasOwn(issueLabels,row.status)).map(row => ({
+      key:row.key,category:row.status,row,entry:row,search:searchText(row),
+      note:[portAddress(row),row.reason].filter(Boolean).join(' · ')
+    })).sort((a,b) => issueOrder[a.category]-issueOrder[b.category]);
+    explorer(container,items,{title:'점검 목록',detailTitle:'선택 포트 상세',filterTitle:'점검 유형',
+      categories:issueLabels,empty:'현재 조회 결과에 우선 확인할 포트가 없습니다.',details:(box,row) => reviewDetails(box,row,onSelect)});
+  }
+  function snapshotTime(value) {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) return el('small','dr-clock','파일 내 시각 없음');
+    const clock = el('time',null,'파일 내 최근 시각 · '+localClock.format(date));
+    clock.dateTime = date.toISOString();
+    return clock;
+  }
+  function renderCompare(host,diff,beforeName,afterName,onBack,onSwap,times={},addAction) {
+    const container = toolbar(host,onBack,onSwap);
+    const sources = el('div','dr-sources');
+    for (const [label,name,stamp] of [['기준 CSV',beforeName,times.beforeTime],['비교 CSV',afterName,times.afterTime]]) {
+      const src = el('div','dr-src');
+      src.append(el('small',null,label),el('strong',null,name),snapshotTime(stamp));
+      sources.append(src);
+    }
+    container.append(sources);
+    const items = diff.map(entry => {
+      const row = entry.after || entry.before;
+      const search = [entry.before,entry.after].filter(Boolean).map(searchText).join(' ');
+      const fields = entry.kind === 'changed' ? entry.changes.map(field => field.label).join(' · ') : '';
+      return {key:entry.key,category:entry.kind,row,entry,search,note:[portAddress(row),fields].filter(Boolean).join(' · ')};
+    });
+    explorer(container,items,{title:'변화 목록',detailTitle:'변경 전후',filterTitle:'변화 유형',categories:kinds,
+      empty:'두 CSV에서 포트별 차이가 발견되지 않았습니다.',details:(box,entry)=>{
+        compareDetails(box,entry);
+        if (addAction) addAction(box,entry.after || entry.before,'compareObservedPort');
+      }});
+  }
+  return Object.freeze({renderReview,renderCompare});
+})();
+
+</script>
+<script>
+(() => {
+  'use strict';
+  const el = id => document.getElementById(id);
+  const statusNames = {normal:'정상', down:'링크 Down', warn:'확인 필요', unknown:'수집 불가', off:'설정 OFF'};
+  const collectionNames = {ok:'완료', failed:'실패', cancelled:'취소', pending:'대기', unsupported:'미지원'};
+  const severity = {down:0, warn:1, unknown:2, off:3, normal:4};
+  const collator = new Intl.Collator('ko', {numeric:true, sensitivity:'base'});
+  const pageSize = 18;
+  const state = {current:null, before:null, diff:[], view:'overview', rows:[], found:[],
+    selected:null, page:0, issueRows:[], lookup:new Map(), tileByKey:new Map()};
+  let importVersion = 0;
+  let searchFrame = 0;
+  const embedded=parent!==window && new URLSearchParams(location.search).get('embedded')==='1';
+  function publishSource() {
+    if (embedded) parent.postMessage({type:'aruba-port-source'},location.origin);
+  }
+
+  function node(tag, value, className) {
+    const part = document.createElement(tag);
+    if (value != null) part.textContent = String(value);
+    if (className) part.className = className;
+    return part;
+  }
+  function option(value, label) { return new Option(label, value); }
+  function button(label, className) {
+    const item = node('button', label, className);
+    item.type = 'button';
+    return item;
+  }
+  function isIssue(row) { return severity[row.status] < severity.off; }
+  function endpoint(row) { return row.sshPort === 22 ? row.ip : row.ip + ':' + row.sshPort; }
+  function watts(row) { return row.watts == null ? '미측정' : row.watts + ' W'; }
+  function timeText(value) {
+    if (!value) return '기록 없음';
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return value;
+    return date.toLocaleString('ko-KR', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+  }
+  function portOrder(a,b) {
+    return collator.compare(a.site,b.site) || collator.compare(a.ip,b.ip) || a.sshPort-b.sshPort || collator.compare(a.port,b.port);
+  }
+  function setDataset() {
+    state.rows = [...state.current.rows].sort(portOrder);
+    state.lookup = new Map(state.rows.map(row => [row.key,row]));
+    const sites = [...new Set(state.rows.map(row => row.site))];
+    el('site').replaceChildren(option('', '전체 사업장'), ...sites.map(site => option(site,site)));
+    clearFilters();
+    state.selected = null;
+  }
+  function clearFilters() {
+    el('search').value = '';
+    el('site').value = '';
+    el('status').value = 'all';
+    el('sort').value = 'natural';
+    state.page = 0;
+  }
+  function filterRows() {
+    const site = el('site').value;
+    const status = el('status').value;
+    const query = el('search').value.trim().toLowerCase();
+    state.found = state.rows.filter(row => (!site || site === row.site) && (status === 'all' || status === row.status)
+      && (!query || [row.hostname,endpoint(row),row.port,row.ap,row.site,row.label].some(value => String(value).toLowerCase().includes(query))));
+    state.issueRows = state.found.filter(isIssue).sort((a,b) => severity[a.status]-severity[b.status]);
+    if (!state.found.some(row => row.key === state.selected)) {
+      state.selected = (state.issueRows[0] || state.found[0])?.key ?? null;
+    }
+  }
+  function renderMetrics() {
+    const counts = {normal:0,down:0,warn:0,unknown:0,off:0};
+    const equipment = new Set();
+    for (const row of state.found) { counts[row.status]++; equipment.add(endpoint(row)); }
+    function count(id,n,unit='') { el(id).replaceChildren(document.createTextNode(n.toLocaleString('ko-KR')),node('span',unit,'suffix')); }
+    count('mSwitch',equipment.size,'대');
+    count('mPorts',state.found.length,'개');
+    count('mNormal',counts.normal);
+    count('mDown',counts.down);
+    count('mReview',counts.warn+counts.unknown);
+    el('offNote').textContent = '별도 · 설정 OFF ' + counts.off + '개';
+  }
+  function renderMatrix() {
+    const groups = new Map();
+    const tiles = new Map();
+    const fragment = document.createDocumentFragment();
+    el('matrixCount').textContent = state.found.length.toLocaleString('ko-KR')+' / '+state.rows.length.toLocaleString('ko-KR')+'포트';
+    for (const row of state.found) {
+      let group = groups.get(row.site);
+      if (!group) {
+        const section = node('section');
+        const heading = node('div',null,'siteheading');
+        const count = node('span');
+        const grid = node('div',null,'port-grid');
+        heading.append(node('b',row.site),count);
+        grid.setAttribute('role','group');
+        grid.setAttribute('aria-label',row.site+' 지정 포트');
+        section.append(heading, grid);
+        fragment.append(section);
+        group = {grid, count, endpoints:new Set(), ports:0};
+        groups.set(row.site,group);
+      }
+      group.ports++;
+      group.endpoints.add(endpoint(row));
+      const tile = button(null,'port-tile '+row.status);
+      tile.dataset.portKey = row.key;
+      const label = row.hostname+' ('+endpoint(row)+') · '+row.port+' · '+statusNames[row.status];
+      tile.setAttribute('aria-label',label);
+      tile.title = label+'\n'+row.reason;
+      tile.setAttribute('aria-pressed',String(row.key===state.selected));
+      tile.classList.toggle('selected',row.key===state.selected);
+      group.grid.append(tile);
+      tiles.set(row.key,tile);
+    }
+    for (const group of groups.values()) group.count.textContent = group.endpoints.size+'대 · '+group.ports+'개 포트';
+    if (!state.found.length) fragment.append(node('div','조건에 일치하는 포트가 없습니다.','empty'));
+    el('matrix').replaceChildren(fragment);
+    state.tileByKey = tiles;
+  }
+  function renderIssues() {
+    const container = el('issues');
+    const frag = document.createDocumentFragment();
+    for (const row of state.issueRows.slice(0,8)) {
+      const item = button(null,'issue-btn'+(state.selected===row.key?' current':''));
+      item.dataset.portKey=row.key;
+      const mid=node('span',null,'issue-mid');
+      mid.append(node('strong',row.hostname+' · '+row.port),node('small',row.reason));
+      item.append(node('span',null,'issue-dot '+row.status),mid,node('span',statusNames[row.status],'issue-status'));
+      frag.append(item);
+    }
+    if (!state.issueRows.length) frag.append(node('div','현재 조건에서 확인할 포트가 없습니다.','empty'));
+    container.replaceChildren(frag);
+    el('issueCount').textContent = state.issueRows.length+'포트';
+    el('allIssues').textContent = '점검 목록 전체 보기 ('+state.issueRows.length+') →';
+  }
+  function renderDetail() {
+    const row = state.lookup.get(state.selected);
+    const box = el('detail');
+    if (!row) { box.replaceChildren(node('div','표시할 포트가 없습니다.','empty')); return; }
+    const badges=node('div',null,'badges');
+    badges.append(node('span',statusNames[row.status],'badge '+row.status),node('span','인터페이스 '+row.port,'badge'));
+    const fields = node('div',null,'dgrid');
+    const values = [['포트 번호',row.port],['관리 상태',row.admin],['Link 상태',row.link],['PoE 설정',row.poe],['실측 전력',watts(row)],['PoE 공급 상태',row.poeStatus || '미확인'],['LLDP 수집',collectionNames[row.lldp] || row.lldp],['LLDP 이웃 AP',row.ap],['관측 시각',timeText(row.observed)]];
+    if (row.label) values.push(['장비 라벨',row.label]);
+    for (const [name,value] of values) {
+      const cell=node('div',null,name==='관측 시각'?'dfield wide':'dfield');
+      cell.append(node('label',name),node('div',value || '기록 없음','data'));
+      fields.append(cell);
+    }
+    const reason=node('div',null,'reason');
+    reason.append(node('strong','상태 판단 및 확인 근거'),document.createTextNode(row.reason || '기록 없음'));
+    box.replaceChildren(node('div','SELECTED PORT · READ ONLY','detail-tag'),node('div',row.hostname,'detail-name'),
+      node('div',endpoint(row)+' · '+row.site,'detail-address'),badges,node('div',null,'detail-divider'),fields,reason);
+    addPortAction(box,row,'inspectObservedPort');
+  }
+  let observedAction=null;
+  function addPortAction(box,row,id) {
+    if (embedded) {
+      const action=button(state.current.liveId && !state.before?'이 포트 제어':'이 포트 실시간 조회','btn');
+      action.id=id;
+      action.addEventListener('click',()=>{
+        observedAction={row,action};
+        parent.postMessage({type:'aruba-observed-port',ip:row.ip,sshPort:row.sshPort,port:row.port},location.origin);
+      });
+      box.append(action);
+    }
+  }
+  function renderTable() {
+    const order=el('sort').value;
+    const sorted=order==='natural'?state.found:[...state.found].sort(order==='power'?
+      (a,b)=>(b.watts??-1)-(a.watts??-1):(a,b)=>severity[a.status]-severity[b.status]);
+    const max=Math.max(1,Math.ceil(sorted.length/pageSize));
+    state.page=Math.max(0,Math.min(state.page,max-1));
+    const start=state.page*pageSize;
+    const frag=document.createDocumentFragment();
+    for (const row of sorted.slice(start,start+pageSize)) {
+      const tr=node('tr'); tr.dataset.portKey=row.key;
+      tr.classList.toggle('selected',row.key===state.selected);
+      const hostname=node('td');
+      const pick=button(row.hostname,'row-select');
+      pick.setAttribute('aria-label',row.hostname+' '+row.port+' 상세 보기');
+      hostname.append(pick);
+      const link=node('td'), poe=node('td');
+      const linkTone=/^up$/i.test(row.link)?'normal':/^down$/i.test(row.link)?'down':'unknown';
+      const poeTone=/^on$/i.test(row.poe)?'normal':/^off$/i.test(row.poe)?'off':'unknown';
+      link.append(node('span',row.link,'pillstat '+linkTone));
+      poe.append(node('span',row.poe,'pillstat '+poeTone));
+      tr.append(hostname,node('td',endpoint(row)),node('td',row.port),link,poe,node('td',watts(row)),node('td',row.ap));
+      frag.append(tr);
+    }
+    if (!sorted.length) { const tr=node('tr'), td=node('td','일치하는 포트가 없습니다.'); td.colSpan=7; tr.append(td); frag.append(tr); }
+    el('tbody').replaceChildren(frag);
+    el('pageNum').textContent=(state.page+1)+' / '+max;
+    el('tableCount').textContent=sorted.length+'개';
+    el('tableRange').textContent=(sorted.length?start+1:0)+'–'+Math.min(start+pageSize,sorted.length)+' / '+sorted.length+'개 표시';
+    el('prevPage').disabled=state.page===0;
+    el('nextPage').disabled=state.page===max-1;
+  }
+  function selectPort(key, scroll) {
+    if (!state.lookup.has(key)) return;
+    const oldTile=state.tileByKey.get(state.selected);
+    oldTile?.classList.remove('selected'); oldTile?.setAttribute('aria-pressed','false');
+    state.selected=key;
+    const tile=state.tileByKey.get(key);
+    tile?.classList.add('selected'); tile?.setAttribute('aria-pressed','true');
+    for (const item of el('issues').children) item.classList.toggle('current',item.dataset.portKey===key);
+    for (const item of el('tbody').children) item.classList.toggle('selected',item.dataset.portKey===key);
+    renderDetail();
+    if (scroll) el('detailTitle').scrollIntoView({block:'center'});
+  }
+  function renderOverview() {
+    filterRows(); renderMetrics(); renderMatrix(); renderIssues(); renderDetail(); renderTable();
+  }
+  function showView(view, scopedRows) {
+    state.view=view;
+    const extra = el('extraView');
+    const isOverview=view==='overview';
+    const isReview=view==='review';
+    el('overviewRoot').hidden=!state.current || !isOverview;
+    extra.hidden=isOverview;
+    const title=isOverview?'포트 운영 관제':isReview?'우선 확인 포트':'포트별 변화 비교';
+    el('pageTitle').textContent=title;
+    document.querySelector('.crumb b').textContent=isOverview?'포트 통합 관리':title;
+    el('subtitle').textContent=isOverview?'사업장별 지정 포트의 링크와 전력을 확인합니다.':isReview?'링크 Down, 일부 수집, 수집 실패의 근거를 포트별로 확인합니다.':'같은 장비와 인터페이스를 기준으로 두 조회 결과를 대조합니다.';
+    for(const [id,target] of [['navOverview','overview'],['navReview','review'],['navCompare','compare']]) {
+      const nav=el(id); nav.classList.toggle('active',view===target);
+      if(view===target) nav.setAttribute('aria-current','page'); else nav.removeAttribute('aria-current');
+    }
+    if (!state.current) return;
+    if (isOverview) { extra.replaceChildren(); renderOverview(); }
+    else if (isReview) {
+      window.PortViews.renderReview(extra,scopedRows||state.rows,()=>openView('overview'),key=>{
+        if (!state.found.some(r=>r.key===key)) clearFilters();
+        state.selected=key; showView('overview'); selectPort(key,true);
+      });
+    } else {
+      window.PortViews.renderCompare(extra,state.diff,state.before.filename,state.current.filename,
+        ()=>openView('overview'),()=>{
+          [state.before,state.current]=[state.current,state.before];
+          state.diff=window.PortCsv.compare(state.before,state.current);
+          setDataset(); updateSource(); showView('compare');
+        }, {beforeTime:state.before.latestObserved, afterTime:state.current.latestObserved},addPortAction);
+    }
+  }
+  function openView(view, rows) { showView(view,rows); window.scrollTo({top:0,behavior:'instant'}); }
+  function updateSource() {
+    const file=state.current;
+    el('sourceName').textContent=file.filename;
+    let hint='비교할 CSV를 추가하면 두 시점의 변화를 확인할 수 있습니다.';
+    if (state.before) {
+      hint='관제 화면은 비교 CSV를 표시합니다.';
+      if (!state.before.latestObserved || !file.latestObserved || state.before.latestObserved===file.latestObserved) hint+=' 관측 시각만으로 전후를 구분할 수 없습니다. 비교 순서를 확인하세요.';
+    }
+    el('sourceHint').textContent=hint;
+    el('sourceTime').textContent=file.latestObserved?'최근 기록 · '+timeText(file.latestObserved):'';
+    el('dataMode').textContent=state.before?'변화 비교':file.liveId?'실시간 조회':'CSV 조회';
+    el('dataMode').classList.remove('pending');
+    el('addButton').disabled=false;
+    el('navReview').disabled=false;
+    const warnings = [state.before,file].filter(Boolean).flatMap(f=>f.warnings.map(w=>f.filename+' · '+w));
+    el('fileWarnings').textContent=warnings.slice(0,4).join(' / ')+(warnings.length>4?' 외 '+(warnings.length-4)+'건':'');
+    el('fileWarnings').hidden=!warnings.length;
+    publishSource();
+  }
+  async function readSnapshot(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let text;
+    if (bytes[0]===0xff && bytes[1]===0xfe) text=new TextDecoder('utf-16le').decode(bytes);
+    else if (bytes[0]===0xfe && bytes[1]===0xff) text=new TextDecoder('utf-16be').decode(bytes);
+    else {
+      try { text=new TextDecoder('utf-8',{fatal:true}).decode(bytes); }
+      catch { text=new TextDecoder('euc-kr',{fatal:true}).decode(bytes); }
+    }
+    return window.PortCsv.parse(text,file.name);
+  }
+  async function importFiles(files, append, liveId) {
+    if (!files.length && !liveId) return;
+    const version=++importVersion;
+    const error=el('fileError');
+    error.hidden=true; error.textContent='';
+    try {
+      if (liveId) {
+        const response=await fetch('/download/'+liveId);
+        if (!response.ok) throw new Error('실시간 조회 결과를 읽지 못했습니다.');
+        files=[new File([await response.blob()],'실시간 조회 결과.csv',{type:'text/csv'})];
+      }
+      if (files.length>(append?1:2)) throw new Error('CSV를 한 번에 한 개 또는 두 개 선택하세요.');
+      let snapshots=await Promise.all(files.map(async file=>{
+        try { return await readSnapshot(file); }
+        catch (e) { throw new Error(file.name+' · '+e.message); }
+      }));
+      if (version!==importVersion) return;
+      if (liveId) snapshots[0].liveId=liveId;
+      const liveComparison=append && state.current?.liveId;
+      if (append && state.current) snapshots=liveComparison?[snapshots[0],state.current]:[state.current,snapshots[0]];
+      if (snapshots.length===2 && !liveComparison) {
+        const t1=Date.parse(snapshots[0].latestObserved),t2=Date.parse(snapshots[1].latestObserved);
+        if (Number.isFinite(t1)&&Number.isFinite(t2)&&t1>t2) snapshots.reverse();
+      }
+      const before=snapshots.length===2?snapshots[0]:null;
+      const current=snapshots[snapshots.length-1];
+      const diff=before?window.PortCsv.compare(before,current):[];
+      Object.assign(state,{before,current,diff});
+      setDataset(); updateSource(); openView(before?'compare':'overview');
+    } catch (e) {
+      if (version!==importVersion) return;
+      error.textContent='CSV를 열 수 없습니다. '+e.message;
+      error.hidden=false;
+      error.scrollIntoView({block:'nearest'});
+    }
+  }
+  function readSelection(input, append) {
+    const files=Array.from(input.files);
+    input.value='';
+    importFiles(files,append);
+  }
+  if (embedded) {
+    window.PortMonitor={
+      loadLive: id=>importFiles([],false,id),
+      source: ()=>({hasData:!!state.current,liveId:state.before?null:state.current?.liveId}),
+      selected: ()=>observedAction?.action.isConnected && !observedAction.action.closest('[hidden]') ? observedAction.row : null,
+      invalidateLive: ()=>{
+        ++importVersion;
+        const live=[state.current,state.before].filter(file=>file?.liveId);
+        for (const file of live) {
+          delete file.liveId;
+          file.filename='이전 실시간 조회 결과';
+        }
+        if (live.length) { updateSource(); showView(state.view); }
+      }
+    };
+    el('openButton').hidden=true;
+    el('sourceHint').textContent='실시간 조회를 실행하거나 저장한 조회 CSV를 여세요. 두 시점을 선택하면 포트별 변화가 표시됩니다.';
+  }
+  el('openButton').addEventListener('click',()=>el('openCsv').click());
+  el('addButton').addEventListener('click',()=>el('addCsv').click());
+  el('openCsv').addEventListener('change',()=>readSelection(el('openCsv'),false));
+  el('addCsv').addEventListener('change',()=>readSelection(el('addCsv'),true));
+  el('navOverview').addEventListener('click',()=>openView('overview'));
+  el('navReview').addEventListener('click',()=>openView('review'));
+  el('navCompare').addEventListener('click',()=>{
+    if (state.before) openView('compare');
+    else if (state.current) el('addCsv').click();
+    else el('openCsv').click();
+  });
+  for(const id of ['priorityButton','allIssues']) el(id).addEventListener('click',()=>openView('review',state.found));
+  for(const id of ['matrix','issues','tbody']) el(id).addEventListener('click',event=>{
+    const item=event.target.closest('[data-port-key]');
+    if(item) selectPort(item.dataset.portKey,id==='tbody'||window.matchMedia('(max-width:780px)').matches);
+  });
+  function filtersChanged() { state.page=0; renderOverview(); }
+  el('search').addEventListener('input',()=>{
+    cancelAnimationFrame(searchFrame); searchFrame=requestAnimationFrame(filtersChanged);
+  });
+  for(const id of ['site','status']) el(id).addEventListener('change',filtersChanged);
+  el('clearFilters').addEventListener('click',()=>{clearFilters();renderOverview();});
+  el('sort').addEventListener('change',()=>{state.page=0;renderTable();});
+  el('prevPage').addEventListener('click',()=>{state.page--;renderTable();});
+  el('nextPage').addEventListener('click',()=>{state.page++;renderTable();});
+  el('zoom').addEventListener('input',event=>{
+    const size=Number(event.target.value)+'px';
+    document.documentElement.style.setProperty('--cell-size',size); el('zoomValue').textContent=size;
+  });
+  showView('overview');
+})();
+
+</script>
+</body>
+</html>
