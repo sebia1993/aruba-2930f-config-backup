@@ -28,7 +28,7 @@
     const count=scope.groups?.reduce((sum,g)=>sum+g.interfaces.length,0);
     $('cableScope').textContent=scope.label+(count ? ' · '+scope.groups.length+'대 / '+count+'포트' : '');
     $('cableTargets').textContent=(scope.groups ? describe(scope.groups) : scope.targets) ||
-      '관제·제어에서 스위치 주소와 포트를 지정하세요.';
+      '포트·PoE 관리에서 스위치 주소와 포트를 지정하세요.';
     for (const id of ['cableShow','cableTest']) $(id).disabled=ui.busy || !ui.token || !scope.targets;
   }
   function reading(row) {

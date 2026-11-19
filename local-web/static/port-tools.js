@@ -188,11 +188,11 @@
     if (directCableTarget && $('controlMode').value==='single') {
       const ip=$('singleIP').value.trim(), port=$('singlePort').value.trim();
       const complete=ip && !/\s/.test(ip) && /^\d+(?:\/\d+)*$/.test(port);
-      return {label:'관제·제어에서 직접 지정한 단일 포트',targets:complete ? ip+' '+port : ''};
+      return {label:'포트·PoE 관리에서 직접 지정한 단일 포트',targets:complete ? ip+' '+port : ''};
     }
     // An edited or cleared query supersedes selections from the previous inventory.
     if (raw.value !== registeredText) {
-      return {label:'관제·제어에 입력한 조회 대상', targets:raw.value.trim()};
+      return {label:'포트·PoE 관리에 입력한 조회 대상', targets:raw.value.trim()};
     }
     const items=inventory();
     const tile=ui.liveId ? ui.tileRow : null;
@@ -200,8 +200,8 @@
     const keys=ui.selected.size ? ui.selected : focusKey ? new Set([focusKey]) : null;
     const chosen=keys ? items.map(g=>({...g,interfaces:g.interfaces.filter(p=>keys.has(address(g)+'|'+p))})).filter(g=>g.interfaces.length) : items;
     const count=targetCount(chosen);
-    const label=keys ? '포트 상태 매트릭스에서 선택한 대상' : '관제·제어의 전체 조회 대상';
-    if (keys && count!==keys.size) return {label:'관제·제어에서 포트를 다시 선택하세요.', targets:''};
+    const label=keys ? '포트 상태 매트릭스에서 선택한 대상' : '포트·PoE 관리의 전체 조회 대상';
+    if (keys && count!==keys.size) return {label:'포트·PoE 관리에서 포트를 다시 선택하세요.', targets:''};
     return {label, groups:chosen, targets:chosen.map(g=>address(g)+' '+g.interfaces.join(',')).join('\n')};
   }
   function currentScope() {

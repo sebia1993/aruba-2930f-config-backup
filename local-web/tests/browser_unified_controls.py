@@ -230,11 +230,14 @@ def exercise(page, url, switch, second, shots, _backup):
     page_errors = []
     page.on("pageerror", lambda error: page_errors.append(str(error)))
     page.goto(url)
-    page.get_by_role("link", name="관제·제어", exact=True).click()
+    ports_menu = page.get_by_role("link", name="포트·PoE 관리", exact=True)
+    ports_menu.click()
+    expect(ports_menu).to_have_attribute("href", "#ports")
+    expect(page.locator("#crumb")).to_have_text("포트·PoE 관리")
     combined = page.locator("#portMonitorTab")
     expect(combined).to_have_accessible_name("관제")
     workspace = page.locator('[data-page="ports"]')
-    expect(workspace.get_by_role("heading", name="관제·제어", exact=True)).to_have_count(1)
+    expect(workspace.get_by_role("heading", name="포트·PoE 관리", exact=True)).to_have_count(1)
     expect(workspace.locator("#portLiveTab")).to_have_count(0)
     expect(workspace.get_by_role("button", name="실시간 조회", exact=True)).to_have_count(0)
     expect(workspace.locator("#queryForm")).to_be_visible()
@@ -270,8 +273,14 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(panel.locator("summary")).to_have_text("제어 옵션")
     expect(page.locator("#singleIP")).to_be_hidden()
     expect(page.locator("#queryPorts")).to_be_enabled()
+    subtitle = ports_menu.get_by_text("Port & PoE Management", exact=True)
     for width, height in WORKSPACE_SIZES:
         resize_workspace(page, width, height)
+        expect(ports_menu).to_have_accessible_name("포트·PoE 관리")
+        expect(ports_menu.get_by_text("포트·PoE 관리", exact=True)).to_be_visible()
+        expect(ports_menu.locator(".port-nav-icon")).to_be_visible()
+        if width >= 1280:
+            expect(subtitle).to_be_visible()
         for selector in ("#queryTargets", "#queryPorts", "#controlHeading"):
             hit_point(page.locator(selector))
     resize_workspace(page, 1440, 960)
