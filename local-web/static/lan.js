@@ -7,60 +7,72 @@
     return;
   }
   const dialog = $('lanDialog'), message = $('lanMessage'), address = $('lanAddress');
-  const actions = ['lanStart', 'lanRenew', 'lanStop'];
-  const busy = flag => actions.forEach(id => { $(id).disabled = flag; });
+  const toggle = $('lanToggle'), link = $('lanLink');
+  let state = null, pending = false;
 
-  function render(data) {
-    $('lanSetup').hidden = data.active;
-    $('lanRunning').hidden = !data.active;
-    $('lanAccess').textContent = data.active ? 'LAN 공유 중' : 'LAN 공유';
-    if (data.active) {
-      $('lanEndpoint').textContent = '서버 주소 ' + data.url;
-      $('lanLink').value = data.invitation || '';
-      $('lanCopy').disabled = !data.invitation;
-      $('lanFingerprint').textContent = data.fingerprint;
-      if (!data.invitation) message.textContent = '새 링크를 발급해 다른 기기를 초대하세요.';
-    } else {
-      $('lanLink').value = '';
-      if (data.interfaces) {
-        address.replaceChildren(...data.interfaces.map(n => new Option(n.address, n.address)));
-      }
-      $('lanStart').disabled = !address.value;
-      if (!address.value) message.textContent = '이 PC의 유선 또는 Wi-Fi 연결을 확인하세요.';
-    }
+  function render() {
+    const active = state?.active === true;
+    toggle.setAttribute('aria-checked', String(active));
+    $('lanState').textContent = state ? (active ? 'ON' : 'OFF') : '상태 확인';
+    toggle.disabled = pending || !state || (!active && !address.value);
+    address.disabled = pending || !state || active || !address.value;
+    $('lanRunning').hidden = !active;
+    link.value = active ? state.url : '';
+    $('lanFingerprint').textContent = active ? state.fingerprint : '';
+    $('lanCopy').disabled = pending || !active;
   }
+
+  function receive(data) {
+    if (data.interfaces) {
+      const selected = data.address || address.value;
+      const choices = data.interfaces.map(n => n.address);
+      if (data.active && !choices.includes(data.address)) choices.push(data.address);
+      address.replaceChildren(...choices.map(ip => new Option(ip, ip)));
+      if (choices.includes(selected)) address.value = selected;
+    }
+    state = data;
+  }
+
   async function request(path, body) {
-    busy(true);
-    message.textContent = '';
+    if (pending) return;
+    pending = true;
+    render();
+    message.textContent = body === undefined ? '공유 상태를 확인하고 있습니다.' :
+      state.active ? '공유를 끄고 있습니다.' : '공유를 켜고 있습니다.';
     try {
-      const data = await api(path, body);
-      busy(false);
-      render(data);
+      receive(await api(path, body));
+      message.textContent = state.active || address.value ? '' : '이 PC의 유선 또는 Wi-Fi 연결을 확인하세요.';
     } catch (error) {
-      busy(false);
+      state = null;
+      if (body !== undefined) {
+        // The change may have succeeded even if its response was lost.
+        try { receive(await api('/api/sharing')); } catch { /* Keep the switch disabled. */ }
+      }
       message.textContent = error.message;
+      if (!state) message.textContent += ' 이 창을 다시 열어 공유 상태를 확인하세요.';
+    } finally {
+      pending = false;
+      render();
     }
   }
+
   $('lanAccess').hidden = false;
   $('lanAccess').onclick = () => {
     dialog.showModal();
     request('/api/sharing');
   };
-  $('lanStart').onclick = () => request('/api/sharing/enable', {address: address.value});
-  $('lanRenew').onclick = () => request('/api/sharing/renew', {});
-  $('lanStop').onclick = async () => {
-    await request('/api/sharing/stop', {});
-    if (!$('lanRunning').hidden) return;
-    await request('/api/sharing');
-  };
+  toggle.onclick = () => state.active ? request('/api/sharing/stop', {}) :
+    request('/api/sharing/enable', {address: address.value});
   $('lanCopy').onclick = async () => {
+    const url = link.value;
     try {
-      await navigator.clipboard.writeText($('lanLink').value);
-      message.textContent = '초대 링크를 복사했습니다.';
+      await navigator.clipboard.writeText(url);
+      if (link.value === url && !pending) message.textContent = '접속 주소를 복사했습니다.';
     } catch {
-      $('lanLink').select();
-      message.textContent = '선택된 링크를 복사하세요.';
+      if (link.value === url && !pending) {
+        link.select();
+        message.textContent = '선택한 접속 주소를 복사하세요.';
+      }
     }
   };
-  dialog.addEventListener('close', () => { $('lanLink').value = ''; });
 })();

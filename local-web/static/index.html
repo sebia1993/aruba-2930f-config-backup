@@ -29,7 +29,7 @@
   </aside>
   <main>
     <header class="topbar"><div class="crumb"><span class="crumb-path">네트워크 운영 › </span><b id="crumb">AP 로그 관제</b></div>
-      <div class="tools"><details id="mobileServerInfo"><summary>서버 정보</summary></details><button type="button" id="lanAccess" hidden>LAN 공유</button>
+      <div class="tools"><details id="mobileServerInfo"><summary>서버 정보</summary></details><button type="button" id="lanAccess" aria-haspopup="dialog" aria-controls="lanDialog" hidden>네트워크 공유</button>
       <button type="button" id="themeToggle" class="theme-toggle" aria-label="라이트 모드로 전환" title="라이트 모드로 전환">
         <svg aria-hidden="true" focusable="false" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <defs>
@@ -129,15 +129,18 @@
 </div>
 <dialog id="review" aria-labelledby="reviewTitle"><form method="dialog" class="dialog-head"><h2 id="reviewTitle">작업 검토</h2><button aria-label="검토 닫기">닫기</button></form><div id="reviewBody"></div></dialog>
 <dialog id="lanDialog" aria-labelledby="lanTitle">
-  <form method="dialog" class="dialog-head"><h2 id="lanTitle">HTTPS로 다른 기기 초대</h2><button aria-label="LAN 공유 닫기">닫기</button></form>
+  <form method="dialog" class="dialog-head"><h2 id="lanTitle">네트워크 공유</h2><button aria-label="네트워크 공유 닫기">닫기</button></form>
   <div class="panelbody">
-    <p>선택한 서버 주소로 연결할 수 있는 모든 IPv4 네트워크에서 HTTPS 초대 링크를 사용할 수 있습니다. 초대한 기기는 이 PC의 SSH 세션과 관제·제어 권한을 함께 사용합니다.</p>
-    <div id="lanSetup"><label>서버에서 사용할 IPv4 주소<select id="lanAddress"></select></label>
-      <button type="button" id="lanStart" class="primary">LAN 공유 시작</button></div>
+    <div class="lan-setting"><b>다른 기기 접속</b>
+      <button type="button" id="lanToggle" role="switch" aria-label="네트워크 공유" aria-checked="false" aria-describedby="lanHelp" aria-controls="lanRunning" disabled><span class="lan-track" aria-hidden="true"></span><span id="lanState">확인 중</span></button>
+    </div>
+    <p id="lanHelp" class="hint">공유를 켜면 이 주소에 연결할 수 있는 기기가 이 PC의 SSH 세션을 사용해 스위치를 조회하고 제어할 수 있습니다.</p>
+    <label>이 PC의 IPv4 주소<select id="lanAddress" disabled></select></label>
     <div id="lanRunning" hidden>
-      <p id="lanEndpoint"></p><label>1회용 초대 링크<input id="lanLink" readonly autocomplete="off" spellcheck="false"></label>
-      <div class="bar"><button type="button" id="lanCopy" class="primary">링크 복사</button><button type="button" id="lanRenew">새 링크 발급</button><button type="button" id="lanStop">공유 종료</button></div>
-      <details><summary>접속 및 인증서 확인</summary><p>초대할 기기의 브라우저에서 10분 안에 링크를 여세요. 다른 기기를 초대하려면 새 링크를 발급하세요.</p>
+      <div class="lan-address-row"><label for="lanLink">접속 주소</label>
+        <input id="lanLink" readonly autocomplete="off" spellcheck="false"><button type="button" id="lanCopy">주소 복사</button></div>
+      <p class="hint">다른 기기의 브라우저 주소창에 IP주소:포트만 입력해도 HTTPS로 연결됩니다.</p>
+      <details><summary>인증서와 방화벽 확인</summary>
       <p>인증서 경고가 나오면 브라우저의 인증서 SHA-256 지문이 아래 값과 같은지 확인하세요.</p><code id="lanFingerprint" style="overflow-wrap:anywhere"></code>
       <p>다른 PC에서 연결 시간이 초과되면 서버 PC의 배포 폴더에서 <b>Enable-LAN-Firewall.ps1</b>을 관리자 PowerShell로 실행하세요.</p></details>
     </div>
