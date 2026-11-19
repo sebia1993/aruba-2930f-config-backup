@@ -32,7 +32,7 @@ class OperationsTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
-        self.base = Path(temp.name)
+        self.base = Path(temp.name).resolve()
         self.ops = Operations(self.base)
         self.ops.legacy_key_store = HostKeyStore(self.base / "unused-desktop-key-store")
         self.ops.legacy_backup_dir = self.base / "desktop-backup"

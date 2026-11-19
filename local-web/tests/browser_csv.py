@@ -47,6 +47,7 @@ def assert_comparison(view, earlier, later):
 
 def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     page.goto(url)
+    expect(page.locator("#inspectSingle")).to_have_count(1)
     page.get_by_role("link", name="포트 관제·제어").click()
     embedded = page.frame_locator("#csvViewer")
     assert_empty(embedded)

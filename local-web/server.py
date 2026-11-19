@@ -222,6 +222,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class LocalServer(ThreadingHTTPServer):
+    # Chrome loads the dashboard scripts, styles and embedded viewer concurrently.
+    request_queue_size = 64
+
     daemon_threads = True
 
     def handle_error(self, request, client_address):
