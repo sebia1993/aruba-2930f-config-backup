@@ -25,14 +25,12 @@
       <a href="#ports"><span aria-hidden="true">⇄</span>포트 관제·제어</a>
       <a href="#backup"><span aria-hidden="true">▤</span>구성 백업</a>
       <a href="#history"><span aria-hidden="true">◷</span>작업 이력</a>
-      <a href="#connect"><span aria-hidden="true">⚙</span>SSH 접속 설정</a>
     </nav>
     <div class="sidefoot"><b><i></i>로컬 웹 서버</b><span id="version">버전 읽는 중</span><button id="shutdown" type="button" class="textbtn">서버 종료</button></div>
   </aside>
   <main>
     <header class="topbar"><div class="crumb">네트워크 운영 <span>›</span> <b id="crumb">AP 로그 관제</b></div><div class="tools">
       <div class="theme" aria-label="화면 테마" role="group"><button data-theme-choice="light" aria-pressed="false">라이트</button><button data-theme-choice="dark" aria-pressed="true">다크</button></div>
-      <a class="session-chip" id="sessionChip" href="#connect">SSH 계정 설정</a>
     </div></header>
     <div id="statusBar" class="status" hidden><span id="statusText" role="status"></span><button id="stopJob" type="button" hidden>작업 취소</button><button id="dismissStatus" aria-label="메시지 닫기" hidden>닫기</button></div>
     <section data-page="home" hidden>
@@ -43,7 +41,7 @@
     </section>
     <section data-page="logs" aria-label="AP 로그 관제">
       <details class="live-source" id="sshLogs"><summary>스위치에서 로그 가져오기 <span>SSH · show logging</span></summary>
-        <form id="logForm" class="formrow"><label class="grow">스위치 주소 <textarea id="logTargets" rows="2" placeholder="스위치 IP 또는 IP:SSH포트 (한 줄에 한 대)" required></textarea></label><button class="primary" data-live>로그 수집</button><a href="#connect" class="session-link">SSH 접속 설정</a></form>
+        <form id="logForm" class="formrow"><label class="grow">스위치 주소 <textarea id="logTargets" rows="2" placeholder="스위치 IP 또는 IP:SSH포트 (한 줄에 한 대)" required></textarea></label><button class="primary" data-job>로그 수집</button></form>
         <div id="logResults" class="output" hidden></div>
       </details>
       <iframe id="logViewer" class="viewer" title="AP 포트 이벤트 상태 · 로그 파일과 붙여넣기" src="/logs?embedded=1"></iframe>
@@ -62,19 +60,19 @@
       <div id="portTargets" hidden>
       <article class="panel"><header><h2>조회 대상</h2><span>스위치별 한 줄</span></header><form id="queryForm" class="panelbody">
         <label>스위치 주소와 포트 <textarea id="queryTargets" rows="3" placeholder="한 줄에 스위치 주소와 조회할 포트 목록을 입력하세요." required></textarea></label>
-        <div class="bar"><button id="queryPorts" class="primary" data-job disabled>포트 조회</button><button type="button" data-import="queryTargets">대상 / 프로필 열기</button><button type="button" id="exportProfile" data-job>대상 프로필 저장</button><a class="session-link" href="#connect">SSH 접속 설정</a></div><div id="profileFiles" class="filelinks" hidden></div>
+        <div class="bar"><button id="queryPorts" class="primary" data-job disabled>포트 조회</button><button type="button" data-import="queryTargets">대상 / 프로필 열기</button><button type="button" id="exportProfile" data-job>대상 프로필 저장</button></div><div id="profileFiles" class="filelinks" hidden></div>
       </form></article>
       </div>
       <div id="portLiveControl">
       <p id="controlSourceHint" class="empty" hidden>저장한 관측값입니다. 매트릭스나 점검·비교 목록에서 포트를 선택하고 ‘이 포트 실시간 조회’를 누르면 현재 장비 상태를 확인하고 제어할 수 있습니다.</p>
-      <div id="liveScope" class="bar" hidden><button type="button" id="refreshPorts" data-live>선택 포트 재조회</button><button type="button" id="refreshSwitch" data-live>현재 스위치 재조회</button></div>
+      <div id="liveScope" class="bar" hidden><button type="button" id="refreshPorts" data-job>선택 포트 재조회</button><button type="button" id="refreshSwitch" data-job>현재 스위치 재조회</button></div>
       <article class="panel" id="controlPanel"><header><h2 id="controlHeading" tabindex="-1">포트 제어</h2><span id="selectedCount" aria-live="polite">선택 0개</span></header><div class="panelbody">
         <p id="controlTarget" class="control-target" hidden></p>
         <div class="bar"><label>제어 방식<select id="controlMode"><option value="batch">조회 결과에서 선택</option><option value="single" selected>단일 포트 직접 지정</option></select></label><label>작업<select id="operation"><option value="poe_off">PoE 전원 OFF</option><option value="poe_on">PoE 전원 ON</option><option value="disable">포트 비활성화 (Disable)</option><option value="enable">포트 활성화 (Enable)</option></select></label></div>
         <div id="batchControls" class="bar" hidden><label>선택 범위<select id="selectionScope"><option value="filtered">검색 결과</option><option value="switch">현재 스위치</option><option value="all">조회된 전체</option></select></label><button type="button" id="selectVisible">범위 전체 선택</button><button type="button" id="selectEligible">제어 가능 포트만 선택</button><button type="button" id="clearSelection">선택 해제</button></div>
         <div id="singleControls" class="bar"><label>스위치 주소<input id="singleIP" placeholder="스위치 IP 또는 IP:SSH포트"></label><label>포트<input id="singlePort" placeholder="인터페이스 번호"></label></div>
         <p id="controlHint" class="hint">직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.</p>
-        <button id="preview" type="button" class="primary" data-live>제어 대상과 명령 검토</button><div id="controlResult" class="output" hidden></div>
+        <button id="preview" type="button" class="primary" data-job>제어 대상과 명령 검토</button><div id="controlResult" class="output" hidden></div>
       </div></article>
       </div>
     </section>
@@ -84,7 +82,7 @@
         <label>스위치 주소<textarea id="backupTargets" rows="5" placeholder="스위치 IP 또는 IP:SSH포트 (한 줄에 한 대)" required></textarea></label>
         <label>추가 저장 폴더 (선택)<input id="backupDirectory" placeholder="백업을 저장할 폴더의 전체 경로" autocomplete="off"><span class="hint">이 PC에 있는 폴더의 전체 경로를 입력하면 백업 결과를 그곳에도 저장합니다. 비워 두면 기본 폴더에 저장합니다.</span></label>
         <div class="bar"><label>파일 이름<select id="fileMode"><option value="hostname_ip">호스트 이름 + IP</option><option value="hostname">호스트 이름</option><option value="ip">IP 주소</option></select></label><label>동시 접속<input id="concurrency" type="number" min="1" max="20" value="10" required></label><label>최대 시도<input id="attempts" type="number" min="1" max="4" value="4" required></label></div>
-        <div class="bar"><button class="primary" data-live>백업 시작</button><button type="button" data-import="backupTargets">대상 열기</button><button type="button" data-save="backupTargets">대상 저장</button><a href="#connect" class="session-link">SSH 접속 설정</a></div>
+        <div class="bar"><button class="primary" data-job>백업 시작</button><button type="button" data-import="backupTargets">대상 열기</button><button type="button" data-save="backupTargets">대상 저장</button></div>
       </form></article>
       <article class="panel"><header><h2>백업 결과</h2><div id="backupFiles" class="filelinks"></div></header><div class="panelbody" id="backupResult"><p class="empty">완료된 백업이 없습니다.</p></div></article>
     </section>
@@ -95,10 +93,10 @@
       <article class="panel"><header><h2>포트별 명령 실행 기록</h2><button type="button" id="controlHistory" data-job>기록 불러오기</button></header><div class="panelbody" id="controlHistoryTable"><p class="empty">기록 불러오기를 누르면 실행 시각과 포트별 결과를 표시합니다.</p></div></article>
     </section>
     <section data-page="connect" hidden>
-      <div class="heading"><div><div class="eyebrow">SSH CONNECTION</div><h1>SSH 접속 설정</h1><p>이 PC에서 스위치 접속에 사용할 계정과 호스트 키를 설정합니다.</p></div></div>
+      <div class="heading"><div><div class="eyebrow">SSH CONNECTION</div><h1 id="connectionHeading">SSH 접속 설정</h1><p>이 PC에서 스위치 접속에 사용할 계정과 호스트 키를 설정합니다.</p></div></div>
       <article class="panel"><header><h2>접속 계정</h2><span id="connectionState">계정 미설정</span></header><form id="loginForm" class="panelbody" autocomplete="off">
         <div class="formgrid"><label>사용자 이름<input id="username" required autocomplete="off" maxlength="128"></label><label>비밀번호<input id="password" type="password" required autocomplete="off"></label><label>Enable 비밀번호 (선택)<input id="enableSecret" type="password" autocomplete="off"></label></div>
-        <div class="bar"><button class="primary" data-job>계정 적용</button><button id="logout" type="button" data-live>세션 해제</button><span class="hint">계정 정보는 실행 중인 로컬 서버의 메모리에 보관됩니다.</span></div>
+        <div class="bar"><button class="primary" data-job>계정 적용</button><button id="logout" type="button" disabled>세션 해제</button><span class="hint">계정 정보는 실행 중인 로컬 서버의 메모리에 보관됩니다.</span></div>
       </form></article>
       <article class="panel"><header><h2>SSH 호스트 키</h2></header><form id="inspectForm" class="panelbody">
         <label>스위치 주소<textarea id="trustTargets" rows="3" placeholder="스위치 IP 또는 IP:SSH포트 (한 줄에 한 대)" required></textarea></label>
@@ -110,13 +108,13 @@
 </div>
 <dialog id="review"><form method="dialog" class="dialog-head"><h2 id="reviewTitle">작업 검토</h2><button aria-label="검토 닫기">닫기</button></form><div id="reviewBody"></div></dialog>
 <dialog id="queryCredentials" aria-labelledby="queryCredentialsTitle">
-  <header class="dialog-head"><h2 id="queryCredentialsTitle">포트 조회용 SSH 계정</h2></header>
+  <header class="dialog-head"><h2 id="queryCredentialsTitle">SSH 접속 계정</h2></header>
   <form id="queryLoginForm" class="panelbody" autocomplete="off">
     <label>사용자 이름<input id="queryUsername" required maxlength="128" autocomplete="off" data-job autofocus></label>
     <label>비밀번호<input id="queryPassword" type="password" required autocomplete="off" data-job></label>
     <label>Enable 비밀번호 (선택)<input id="queryEnableSecret" type="password" autocomplete="off" data-job></label>
     <p id="queryLoginError" class="warning" role="alert" hidden></p>
-    <div class="bar"><button type="submit" id="submitQueryCredentials" class="primary" data-job>계정 적용 후 조회</button><button type="button" id="cancelQueryCredentials">취소</button></div>
+    <div class="bar"><button type="submit" id="submitQueryCredentials" class="primary" data-job>계정 적용 후 계속</button><button type="button" id="cancelQueryCredentials">취소</button></div>
   </form>
 </dialog>
 <input id="targetFile" type="file" accept=".txt,.csv,.tsv,.json,text/plain,text/csv,application/json" hidden>

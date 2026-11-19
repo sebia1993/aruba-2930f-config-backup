@@ -2,7 +2,7 @@
 
 from threading import Event
 
-from browser_qa import run_browser_case
+from browser_qa import enter_ssh_credentials, run_browser_case
 from playwright.sync_api import expect
 from verify_http_ssh import MonitorFixture, interface_status_table
 
@@ -91,15 +91,11 @@ def refresh_without_result(page, port, final_state, selected_tile):
 
 def exercise(page, url, switch, _second, _shots, _backup):
     page.goto(url)
-    page.locator('nav a[href="#connect"]').click()
-    page.locator("#username").fill(switch.username)
-    page.locator("#password").fill(switch.password)
-    page.locator("#loginForm button.primary").click()
-    expect(page.locator("#connectionState")).to_contain_text(switch.username)
     page.locator('nav a[href="#ports"]').click()
     page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1-5")
     page.locator("#queryForm .primary").click()
+    enter_ssh_credentials(page, switch)
     csv = page.frame_locator("#csvViewer")
     csv_tiles = csv.locator("#matrix [data-port-key]")
     expected = ["unpowered", "limited", "normal", "limited", "unclassified"]

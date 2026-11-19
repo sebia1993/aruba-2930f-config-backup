@@ -36,13 +36,8 @@ function notify(message, error = false) {
 }
 function sync() {
   const active = ui.session.active;
-  $('sessionChip').classList.toggle('active', active);
-  $('sessionChip').textContent = active ? 'SSH · ' + ui.session.username : 'SSH 계정 설정';
   $('connectionState').textContent = active ? ui.session.username + ' 계정 적용 중' : '계정 미설정';
-  for (const node of all('[data-live]')) {
-    node.disabled = ui.busy || !ui.token || !active;
-    node.title = !active ? 'SSH 접속 설정에서 계정을 먼저 적용하세요.' : '';
-  }
+  $('logout').disabled = ui.busy || !ui.token || !active;
   for (const node of all('[data-job]')) node.disabled = ui.busy || !ui.token;
   $('queryTargets').readOnly = ui.busy;
   document.querySelector('[data-import="queryTargets"]').disabled = ui.busy;
@@ -276,7 +271,7 @@ function selectObservedPort(message) {
   const row=monitor()?.selected();
   if (!row || row.ip!==message.ip || row.port!==message.port || row.sshPort!==message.sshPort) return;
   if (!ui.session.active) {
-    requestQueryAccount(()=>{ if (row===monitor()?.selected()) selectObservedPort(message); });
+    withSshAccount(()=>{ if (row===monitor()?.selected()) selectObservedPort(message); });
     return;
   }
   const source=monitor().source();
@@ -369,13 +364,15 @@ function route() {
     setPortView('monitor');
   }
   const key = location.hash.slice(1);
-  const link = all('nav a').find(a => a.hash === '#' + key) || document.querySelector('nav a');
-  const name = link.hash.slice(1);
-  for (const node of all('nav a')) {
+  const admin = key === 'connect';
+  const links = all('nav a');
+  const link = admin ? null : links.find(a => a.hash === '#' + key) || links[0];
+  const name = admin ? 'connect' : link.hash.slice(1);
+  for (const node of links) {
     if (node === link) node.setAttribute('aria-current','page'); else node.removeAttribute('aria-current');
   }
   for (const node of all('[data-page]')) node.hidden = node.dataset.page !== name;
-  $('crumb').textContent = link.lastChild.textContent;
+  $('crumb').textContent = admin ? $('connectionHeading').textContent : link.lastChild.textContent;
   if (name === 'ports' && !$('csvViewer').hasAttribute('src')) $('csvViewer').src = $('csvViewer').dataset.src;
   if (name === 'history' && ui.token) loadHistory();
   if (name === 'home' && ui.token) loadHome();
@@ -468,8 +465,8 @@ async function applySshAccount(username, password, enableSecret) {
   let applied = false;
   await run('session.open',credentials,(result,cancelled) => {
     if (!result.connected) return;
+    if (ui.session.active || ui.rows.length || ui.matrixFile || ui.inspectedRow) clearPorts();
     ui.session = {active:true, username:user};
-    clearPorts();
     applied = !cancelled;
   });
   return applied;
@@ -566,7 +563,7 @@ function showStoredKeys(keys) {
 }
 $('listKeys').onclick = () => run('hostkey.list',{},r=>showStoredKeys(r.keys || []));
 form('logForm', () => {
-  run('logs.query',{targets:$('logTargets').value.trim()},r => {
+  runSsh('logs.query',{targets:$('logTargets').value.trim()},r => {
     ui.logs = r.logs || [];
     const first = ui.logs.find(log => log.status === 'success' && log.text);
     const output = $('logResults');
@@ -579,7 +576,7 @@ form('logForm', () => {
   });
 });
 function backup(body) {
-  run('backup.run',body,r => {
+  runSsh('backup.run',body,r => {
     const rows = r.rows || [], area = $('backupResult');
     $('backupFiles').replaceChildren(filelinks(r.files));
     area.replaceChildren(simpleTable([
@@ -603,7 +600,7 @@ function backup(body) {
     if (retry.length) {
       const again = button('접속 실패 장비만 다시 시도 (' + retry.length + ')',()=>
         backup({...body, targets:retry.map(x=>x.endpoint).join('\n')}));
-      again.dataset.live = ''; area.append(again);
+      again.dataset.job = ''; area.append(again);
     }
   });
 }
@@ -689,12 +686,16 @@ function queryPorts(targets) {
   const canDisplay=capturePortIntent();
   return run('ports.query',{targets},result=>receivePorts(result,canDisplay,true));
 }
-let credentialQuery=null;
-function requestQueryAccount(onConnected) {
+let credentialRequest=null;
+function withSshAccount(onConnected) {
   if (queryCredentials.open || ui.busy || !ui.token) return;
-  credentialQuery=onConnected;
+  if (ui.session.active) return onConnected();
+  credentialRequest=onConnected;
   $('queryLoginError').hidden=true;
   queryCredentials.showModal();
+}
+function runSsh(action, body, receive) {
+  return withSshAccount(()=>run(action,body,receive));
 }
 form('queryForm', () => {
   if (ui.busy || !ui.token || queryCredentials.open) return;
@@ -704,23 +705,22 @@ form('queryForm', () => {
     input.reportValidity();
     return;
   }
-  if (ui.session.active) {
-    queryPorts(targets);
-    return;
-  }
-  requestQueryAccount(()=>queryPorts(targets));
+  withSshAccount(()=>queryPorts(targets));
 });
 $('cancelQueryCredentials').onclick = () => queryCredentials.close();
-queryCredentials.addEventListener('close', () => { credentialQuery=null; $('queryLoginForm').reset(); });
+queryCredentials.addEventListener('close', () => {
+  if (queryCredentials.open) return;
+  credentialRequest=null; $('queryLoginForm').reset();
+});
 form('queryLoginForm', async () => {
   if (!queryCredentials.open || ui.busy || !ui.token) return;
-  const onConnected=credentialQuery;
+  const onConnected=credentialRequest;
   const submit = $('submitQueryCredentials'), error = $('queryLoginError');
   error.hidden = true;
   submit.textContent = '계정 적용 중…';
   const applied = await applySshAccount($('queryUsername'), $('queryPassword'), $('queryEnableSecret'));
-  submit.textContent = '계정 적용 후 조회';
-  if (!queryCredentials.open) return;
+  submit.textContent = '계정 적용 후 계속';
+  if (!queryCredentials.open || credentialRequest!==onConnected) return;
   if (!applied) {
     error.textContent = $('statusText').textContent;
     error.hidden = false;
@@ -733,7 +733,7 @@ form('queryLoginForm', async () => {
 function refreshTargets(bySwitch) {
   const targets=window.portTools.refreshTargets(bySwitch);
   const canDisplay=capturePortIntent();
-  if (targets) run('ports.refresh',{targets},result=>receivePorts(result,canDisplay));
+  if (targets) runSsh('ports.refresh',{targets},result=>receivePorts(result,canDisplay));
 }
 $('refreshPorts').onclick = () => refreshTargets(false);
 $('refreshSwitch').onclick = () => refreshTargets(true);
@@ -843,7 +843,7 @@ $('preview').onclick = () => {
   }
   window.controlTools.clearQuickResult();
   $('controlResult').replaceChildren(); $('controlResult').hidden = true;
-  run('control.preview',{operation:$('operation').value,scope:mode,targets},plan => {
+  runSsh('control.preview',{operation:$('operation').value,scope:mode,targets},plan => {
     if (!plan.planId) return;
     if (controlContextMatches(inspected) && choice===controlChoice()) renderPlan(plan,inspected);
     else showChangedControlChoice();

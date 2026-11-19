@@ -17,7 +17,7 @@ def query_with_inline_credentials(page, switch):
     targets = page.locator("#queryTargets")
     original_targets = targets.input_value()
     submit = page.get_by_role("button", name="포트 조회", exact=True)
-    dialog = page.get_by_role("dialog", name="포트 조회용 SSH 계정")
+    dialog = page.get_by_role("dialog", name="SSH 접속 계정")
     actions = []
 
     def record_action(request):
@@ -52,7 +52,7 @@ def query_with_inline_credentials(page, switch):
 
     submit.click()
     page.locator("#queryUsername").fill(switch.username)
-    accept = dialog.get_by_role("button", name="계정 적용 후 조회")
+    accept = dialog.get_by_role("button", name="계정 적용 후 계속")
     accept.click()
     expect(dialog).to_be_visible()
     expect(page.locator("#queryPassword")).to_be_focused()
@@ -77,7 +77,8 @@ def query_with_inline_credentials(page, switch):
     expect(page.locator("#queryPassword")).to_have_value("")
     assert switch.auth_attempts
     assert actions == ["session.open", "session.open", "ports.query"]
-    expect(page.locator("#sessionChip")).to_contain_text(switch.username)
+    expect(page.locator('a[href="#connect"]')).to_have_count(0)
+    expect(page.locator('[data-page="connect"]')).to_be_hidden()
 
     page.locator("#portLiveTab").click()
     submit.click()

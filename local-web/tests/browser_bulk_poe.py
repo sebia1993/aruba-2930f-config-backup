@@ -3,7 +3,7 @@
 from threading import Event
 from unittest.mock import patch
 
-from browser_qa import click_quick_poe, run_browser_case
+from browser_qa import click_quick_poe, enter_ssh_credentials, run_browser_case
 from playwright.sync_api import expect
 from verify_http_ssh import MonitorFixture, interface_status_table
 
@@ -95,12 +95,33 @@ def cancel_before_off(page, switch, address):
 
 def run_range(page, url, switch, second, shots, output):
     page.goto(url)
-    page.locator('nav a[href="#connect"]').click()
-    page.locator("#username").fill(switch.username)
-    page.locator("#password").fill(switch.password)
-    page.locator("#loginForm button.primary").click()
-    expect(page.locator("#connectionState")).to_contain_text(switch.username)
     page.locator('nav a[href="#ports"]').click()
+    # Registration is offline. The first quick action asks for the account in place.
+    address = f"127.0.0.1:{switch.port}"
+    page.locator("#portLiveTab").click()
+    page.locator("#queryTargets").fill(address + " 2")
+    page.locator("#targetVerify").click()
+    page.locator("#acceptTargets").click()
+    page.locator("#portMonitorTab").click()
+    page.get_by_role("button", name="범위 전체 선택", exact=True).click()
+    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+    page.get_by_role("button", name="PoE OFF 즉시 실행").click()
+    expect(page.locator("#queryCredentials")).to_be_visible()
+    assert not switch.auth_attempts
+    with page.expect_request(
+        lambda req: (
+            req.method == "POST"
+            and req.url.endswith("/api/jobs")
+            and req.post_data_json["action"] == "control.quick-execute"
+        )
+    ) as resumed:
+        enter_ssh_credentials(page, switch)
+    assert resumed.value.post_data_json["body"]["targets"] == [
+        {"ip": "127.0.0.1", "sshPort": switch.port, "port": "2"}
+    ]
+    expect(page.locator("#quickResult")).to_contain_text("이미 OFF 1개", timeout=90000)
+    expect(page.locator("#review")).to_be_hidden()
+    assert "configure terminal" not in switch.commands
     for rotate_key in (False, True):
         # Simulate a pair of powered-off access ports without attached PDs.
         switch.linked.clear()

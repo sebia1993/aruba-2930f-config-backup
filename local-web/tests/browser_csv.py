@@ -4,7 +4,7 @@ from threading import Event
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
-from browser_qa import run_browser_case
+from browser_qa import enter_ssh_credentials, run_browser_case
 from playwright.sync_api import expect
 from verify_http_ssh import Http
 
@@ -117,6 +117,7 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
 
     http = Http(parsed.port, parsed.path.rsplit("/", 1)[-1])
     earlier, later = exports_from_switch(http, switch)
+    http.job("session.close")
     direct.locator("#openCsv").set_input_files(earlier)
     expect(direct.locator("#sourceName")).to_have_text(earlier["name"])
     expect(direct.locator("#fileError")).to_be_hidden()
@@ -174,11 +175,6 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     embedded.locator("#openCsv").set_input_files([later, invalid])
     expect(embedded.locator("#fileError")).to_contain_text(invalid["name"])
     assert_comparison(embedded, earlier, later)
-    page.locator('nav a[href="#connect"]').click()
-    page.locator("#username").fill(switch.username)
-    page.locator("#password").fill(switch.password)
-    page.locator("#loginForm button.primary").click()
-    expect(page.locator("#connectionState")).to_contain_text(switch.username)
     page.locator('nav a[href="#ports"]').click()
     embedded.locator("#openCsv").set_input_files(earlier)
     expect(embedded.locator("#sourceName")).to_have_text(earlier["name"])
@@ -192,6 +188,7 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     embedded.locator("#matrix [data-port-key]").click()
     command_count = len(switch.commands)
     embedded.locator("#inspectObservedPort").click()
+    enter_ssh_credentials(page, switch)
     expect(page.locator("#singleControls")).to_be_visible(timeout=60000)
     expect(page.locator("#singleIP")).to_have_value(f"127.0.0.1:{switch.port}")
     expect(page.locator("#singlePort")).to_have_value("1")

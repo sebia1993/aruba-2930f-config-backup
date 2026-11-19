@@ -45,15 +45,20 @@ def exercise(page, http, url, switch, folder):
         page.locator("#backupHistoryTable").get_by_role("button", name="파일 위치 열기").first
     ).to_be_visible()
 
-    page.locator("nav a[href='#connect']").click()
-    page.locator("#password").fill(invalid_password)
+    page.locator("nav a[href='#backup']").click()
+    page.locator("#backupTargets").fill(endpoint + " " + invalid_password)
     page.locator("#uiInspectorOpen").click()
     page.get_by_role("button", name="요소 선택", exact=True).click()
-    page.locator("#password").click()
+    page.locator("#backupTargets").click()
     expect(page.locator("#uiInspectorDialog")).to_be_visible()
+    expect(
+        page.locator("#uiInspectorDialog option").filter(has_text="SSH 접속 설정")
+    ).to_have_count(0)
     text = page.locator("#uiRequestPreview").inner_text()
     assert (
-        "UI 식별자: password" in text and invalid_password not in text and "127.0.0.1" not in text
+        "UI 식별자: backupTargets" in text
+        and invalid_password not in text
+        and "127.0.0.1" not in text
     )
     page.locator("#uiInspectorDialog select").select_option(label="구성 백업 · 기본 SSH 포트")
     expect(page.locator("#uiRequestPreview")).to_contain_text("backupSSHPort")
