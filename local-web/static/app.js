@@ -198,6 +198,7 @@ function clearInspection() {
   window.controlTools?.hideInspection();
   $('controlMode').value='batch';
   $('controlMode').onchange();
+  updatePortActions();
 }
 function updatePortActions() {
   const blocked=!!historicalControlOnly();
@@ -294,7 +295,7 @@ window.addEventListener('message',e=>{
     if (e.data.type==='aruba-observed-batch' || e.data.type==='aruba-port-checks')
       selectObservedBatch(e.data.type==='aruba-observed-batch');
     if (e.data.type==='aruba-port-context' && ui.inspectedRow && !currentInspection()) {
-      clearInspection(); updatePortActions();
+      clearInspection();
     }
     if (e.data.type==='aruba-port-source') {
       if (!currentInspection()) clearInspection();

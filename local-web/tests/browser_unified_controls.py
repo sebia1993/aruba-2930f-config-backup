@@ -40,6 +40,42 @@ def change_target_while_previewing(page, switch, address):
     assert switch.poe_enabled
 
 
+def leave_live_inspection_for_batch(page, csv_view, changed, available):
+    page.locator("#portLiveTab").click()
+    page.locator("#queryPorts").click()
+    changed_row = csv_view.locator(f'#tbody tr[data-port-key="{changed}/1"] input')
+    other_row = csv_view.locator(f'#tbody tr[data-port-key="{available}/1"] input')
+    expect(changed_row).to_be_enabled(timeout=60000)
+    changed_row.check()
+    page.locator("#quickOn").click()
+    review = page.locator("#review")
+    expect(review.locator("tbody tr")).to_have_count(1, timeout=60000)
+    expect(review.locator("tbody tr")).to_contain_text(changed)
+    review.get_by_role("button", name="승인하고 명령 실행").click()
+    expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
+    expect(changed_row).to_be_disabled()
+    expect(other_row).to_be_enabled()
+
+    csv_view.locator(f'#matrix [data-port-key="{changed}/1"]').click()
+    csv_view.locator("#inspectObservedPort").click()
+    mode = page.locator("#controlMode")
+    expect(mode).to_have_value("single", timeout=60000)
+    expect(mode).to_be_disabled()
+    expect(page.locator("#singleIP")).to_have_value(changed)
+    expect(page.locator("#singlePort")).not_to_be_editable()
+    expect(page.locator("#liveScope")).to_be_hidden()
+
+    other_row.check()
+    expect(mode).to_have_value("batch")
+    expect(mode).to_be_enabled()
+    expect(page.locator("#liveScope")).to_be_visible()
+    expect(page.locator("#controlRows")).to_be_visible()
+    expect(page.locator("#controlTarget")).to_contain_text(available)
+    mode.select_option("single")
+    expect(page.locator("#singleIP")).to_be_editable()
+    expect(page.locator("#singlePort")).to_be_editable()
+
+
 def exercise(page, url, switch, second, shots, _backup):
     page_errors = []
     page.on("pageerror", lambda error: page_errors.append(str(error)))
@@ -135,6 +171,8 @@ def exercise(page, url, switch, second, shots, _backup):
     if shots:
         page.screenshot(path=shots / "unified-port-mobile.png")
     page.set_viewport_size({"width": 1440, "height": 960})
+    leave_live_inspection_for_batch(page, csv_view, addresses[1], addresses[0])
+    assert second.poe_enabled and not switch.poe_enabled
     assert not page_errors, page_errors
     page.locator("#shutdown").click()
     page.locator("#reviewBody").get_by_role("button", name="서버 종료").click()
