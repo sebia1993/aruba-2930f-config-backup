@@ -125,7 +125,7 @@ async function poll(id,resuming=false) {
     await delay(450);
   }
 }
-async function run(action, body, receive, keepMatrix=false) {
+async function run(action, body, receive, retryKeys=null) {
   if (ui.busy || !ui.token) return;
   ui.busy = true;
   window.powerMonitoring?.foregroundStarted();
@@ -141,7 +141,7 @@ async function run(action, body, receive, keepMatrix=false) {
       // The server may have accepted the operation. Read its original job without submitting again.
       return {id:requestId};
     });
-    window.portTools?.onJob?.(action,'running',body,keepMatrix);
+    window.portTools?.onJob?.(action,'running',body,!!retryKeys);
     body = null;
     ui.jobId = submitted.id;
     sync();
@@ -160,21 +160,27 @@ async function run(action, body, receive, keepMatrix=false) {
       notify(jobNames[action] + (cancelled ? ' 취소됨' : ' 완료') + ' · 전력 자동 재조회 ' + measured + '개 측정' +
         (missing ? ' · ' + missing + '개 미측정' : '') + singlePowerChange(result),missing>0);
     } else {
-      const portRead=action==='ports.query' || (action==='ports.refresh' && keepMatrix);
-      if (portRead && !cancelled && Array.isArray(result.rows)) {
-        const failed=result.rows.filter(portReadFailed);
-        if (failed.length || (action==='ports.query' && !result.rows.some(portObserved))) {
-          const sample=failed.find(row=>row.message || row.lldp_message) || result.rows.find(row=>row.message);
-          const reason=sample?.message || sample?.lldp_message;
+      // Refresh returns the whole matrix, including errors from earlier requests.
+      const readings=retryKeys ? result.rows?.filter(row=>retryKeys.has(portKey(row))) : result.rows;
+      if (!cancelled && retryKeys && readings?.length!==retryKeys.size) {
+        notify('재조회한 포트의 결과를 확인할 수 없습니다.',true);
+        return;
+      }
+      const label=retryKeys && readings?.length===1
+        ? endpoint(readings[0])+' 포트 '+readings[0].interface+' 재조회' : jobNames[action];
+      if ((action==='ports.query' || retryKeys) && !cancelled && Array.isArray(readings)) {
+        const failed=readings.filter(portReadFailed);
+        if (failed.length || !readings.some(portObserved)) {
+          const reason=failed.length ? PowerMatrix.readFailure(failed[0]) : readings.find(row=>row.message)?.message;
           const summary=failed.length ? '조회 실패 '+failed.length+'포트' : '조회에 성공한 포트가 없습니다.';
           const partial=result.rows.some(portObserved);
-          notify(jobNames[action]+' 완료 · '+summary+(reason?' · '+reason:''),!partial,partial);
+          notify(label+' 완료 · '+summary+(reason?' · '+reason:''),!partial,partial);
           return;
         }
       }
       const shownInMatrix=!cancelled && ['ports.query','ports.refresh'].includes(action) &&
-        result.rows?.length>0 && result.rows.every(portObserved);
-      notify(jobNames[action] + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'),false,shownInMatrix);
+        readings?.length>0 && readings.every(portObserved);
+      notify(label + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'),false,shownInMatrix);
     }
   } catch (error) {
     if (action==='ports.query') {
@@ -330,7 +336,7 @@ function portObserved(row) {
   return row.status==='ok' || row.status==='unsupported';
 }
 function portReadFailed(row) {
-  return row.status==='failed' || row.lldp_status==='failed';
+  return !!PowerMatrix.readFailure(row);
 }
 function updateQuerySummary() {
   const failedCount=ui.rows.filter(portReadFailed).length;
@@ -392,6 +398,12 @@ window.addEventListener('message',e=>{
   if (e.origin !== location.origin || !e.data) return;
   if (e.source === $('matrixViewer').contentWindow) {
     if (e.data.type==='aruba-observed-port') selectObservedPort(e.data);
+    if (e.data.type==='aruba-retry-failed-port') {
+      const viewer=monitor(), row=viewer?.selected();
+      if (ui.liveId && e.data.liveId===ui.liveId && viewer?.source().liveId===ui.liveId && row && row.key===e.data.key) {
+        retryFailedPorts(controlPortKey(row));
+      }
+    }
     if (e.data.type==='aruba-port-checks') selectObservedBatch();
     if (e.data.type==='aruba-port-context') {
       if (ui.tileRow!==monitor()?.selected()) ui.tileRow=null;
@@ -828,18 +840,25 @@ function refreshTargets(bySwitch) {
   const targets=window.portTools.refreshTargets(bySwitch);
   if (targets) runSsh('ports.refresh',{targets},result=>receivePorts(result,true));
 }
-$('retryFailedPorts').onclick=()=>withSshAccount(()=>{
-  const failed=ui.rows.filter(portReadFailed);
-  if (!failed.length || !ui.rows.some(portObserved)) return;
-  const byEndpoint=new Map();
-  for (const row of failed) {
-    const address=endpoint(row);
-    if (!byEndpoint.has(address)) byEndpoint.set(address,new Set());
-    byEndpoint.get(address).add(row.interface);
-  }
-  const targets=[...byEndpoint].map(([address,ports])=>address+' '+[...ports].join(',')).join('\n');
-  run('ports.refresh',{targets},result=>receivePorts(result,true,undefined,true),true);
-});
+function retryFailedPorts(key=null) {
+  const liveId=ui.liveId;
+  withSshAccount(()=>{
+    if (ui.liveId!==liveId || $('portMonitor').closest('[data-page]').hidden) return;
+    if (key && window.portTools.currentKey()!==key) return;
+    const failed=ui.rows.filter(row=>(!key || portKey(row)===key) && portReadFailed(row));
+    if (!failed.length || (!key && !ui.rows.some(portObserved))) return;
+    const byEndpoint=new Map();
+    for (const row of failed) {
+      const address=endpoint(row);
+      if (!byEndpoint.has(address)) byEndpoint.set(address,new Set());
+      byEndpoint.get(address).add(row.interface);
+    }
+    const targets=[...byEndpoint].map(([address,ports])=>address+' '+[...ports].join(',')).join('\n');
+    const retryKeys=new Set(failed.map(portKey));
+    run('ports.refresh',{targets},result=>receivePorts(result,true,retryKeys,true),retryKeys);
+  });
+}
+$('retryFailedPorts').onclick=()=>retryFailedPorts();
 $('refreshPorts').onclick = () => refreshTargets(false);
 $('refreshSwitch').onclick = () => refreshTargets(true);
 function selectScope(eligibleOnly) {

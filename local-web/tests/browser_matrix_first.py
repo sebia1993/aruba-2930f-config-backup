@@ -47,6 +47,37 @@ def current_rows(page):
     return {(row["ip"], row["ssh_port"], row["interface"]): row for row in rows}
 
 
+def retry_from_tile(page, frame, address, port, reason, mobile, shots):
+    tile = frame.locator(f'#matrix [data-port-key="{address}/{port}"]')
+
+    def activate(element):
+        if mobile:
+            element.tap()
+        else:
+            element.click()
+
+    activate(tile)
+    detail = frame.locator("#detail")
+    failure = detail.locator("#portReadFailure")
+    expect(failure).to_be_visible()
+    expect(failure).to_contain_text("LLDP 조회 실패" if port == "2" else "포트 조회 실패")
+    expect(failure).to_contain_text(reason)
+    button = detail.get_by_role("button", name="이 포트만 재조회", exact=True)
+    expect(button).to_be_enabled()
+    hit_point(button)
+    if shots:
+        page.screenshot(path=shots / f"port-{port}-failure-{page.viewport_size['width']}.png")
+    with page.expect_request(
+        lambda request: request.url.endswith("/api/jobs") and request.method == "POST"
+    ) as sent:
+        activate(button)
+    payload = sent.value.post_data_json
+    assert (
+        payload["action"] == "ports.refresh" and payload["body"]["targets"] == f"{address} {port}"
+    )
+    expect(page.locator("#queryPorts")).to_be_enabled(timeout=60000)
+
+
 def check_matrix_at_top(page):
     workspace = page.locator("#matrixWorkspace")
     expect(page.locator("[data-page=ports]")).to_have_class(re.compile(r"\bmatrix-first\b"))
@@ -124,6 +155,22 @@ def exercise(page, url, switch, other, shots, _backup):
     expect(retry).to_be_enabled()
     check_matrix_at_top(page)
     hit_point(settings)
+    frame = page.frame_locator("#matrixViewer")
+    first_failure = frame.locator(f'#matrix [data-port-key="{address}/1"]')
+    expect(first_failure).to_have_accessible_name(re.compile("조회 실패"))
+    markers = frame.locator('#matrix [data-read-failed="true"]')
+    expect(markers).to_have_count(2)
+    for port in ("1", "2"):
+        expect(
+            frame.locator(f'#matrix [data-port-key="{address}/{port}"] .port-failure-mark')
+        ).to_be_visible()
+    for key in (f"{address}/3", f"{address}/4", f"{address}/5", f"{other_address}/1"):
+        expect(frame.locator(f'#matrix [data-port-key="{key}"]')).not_to_have_accessible_name(
+            re.compile("조회 실패")
+        )
+    expect(frame.locator(f'#matrix [data-port-key="{address}/5"]')).to_have_attribute(
+        "data-state", "unpowered"
+    )
     settings.click()
     expect(input_field).to_be_editable()
     expect(page.locator("#monitorInterval")).to_be_visible()
@@ -138,6 +185,12 @@ def exercise(page, url, switch, other, shots, _backup):
         assert page.locator("[data-page=ports]").evaluate("el => !window.scrollY && !el.scrollTop")
         if shots:
             page.screenshot(path=shots / "matrix-first-partial-320.png")
+        first_failure.tap()
+        expect(page.locator("#portActionStrip")).to_be_visible()
+        detail_retry = frame.locator("#detail").get_by_role("button", name="이 포트만 재조회")
+        expect(detail_retry).to_be_in_viewport()
+        resize_workspace(page, 320, 568)
+        hit_point(detail_retry)
         resize_workspace(page, width, height)
 
     before = current_rows(page)
@@ -156,7 +209,6 @@ def exercise(page, url, switch, other, shots, _backup):
     assert unpowered["lldp_neighbors"] == []
     first_log, second_log = len(switch.commands), len(other.commands)
     page.locator("#listView").click()
-    frame = page.frame_locator("#matrixViewer")
     device_filter = frame.locator("#device")
     if not device_filter.is_visible():
         frame.locator("#shortFilterToggle").click()
@@ -164,11 +216,33 @@ def exercise(page, url, switch, other, shots, _backup):
     selected = frame.locator(f'#tbody tr[data-port-key="{other_address}/1"] input')
     selected.check()
 
+    # The checked port shares an IP and interface number with the failed port.
+    # The explicit detail action must ignore that selection.
+    device_filter.select_option("")
+    page.locator("#matrixView").click()
+    if mobile:
+        resize_workspace(page, 320, 568)
+    retry_from_tile(page, frame, address, "1", "show power-over-ethernet 1", mobile, shots)
+    expect(markers).to_have_count(2)
+    expect(first_failure).to_have_accessible_name(re.compile("조회 실패"))
+    expect(frame.locator("#detail #portReadFailure")).to_contain_text("show power-over-ethernet 1")
+    assert switch.commands[first_log:].count("show power-over-ethernet 1") == 1
+    assert "show power-over-ethernet 2" not in switch.commands[first_log:]
+    assert len(other.commands) == second_log
+    after_one = current_rows(page)
+    for key in unchanged | {failed_neighbor}:
+        assert after_one[key]["observed_at"] == before[key]["observed_at"]
+        assert after_one[key]["watts"] == before[key]["watts"]
+    if mobile:
+        resize_workspace(page, width, height)
+    page.locator("#listView").click()
+    if not device_filter.is_visible():
+        frame.locator("#shortFilterToggle").click()
+    device_filter.select_option(other_address)
+    expect(selected).to_be_checked()
+
     # Retrying while a filter hides the failure must address that failure only.
-    switch.failed_ports.clear()
-    for retry_ports in ("1,2", "2"):
-        if retry_ports == "2":
-            switch.failed_lldp.clear()
+    def retry_filtered_failures(retry_ports):
         with page.expect_request(
             lambda req: (
                 req.url.endswith("/api/jobs")
@@ -182,18 +256,52 @@ def exercise(page, url, switch, other, shots, _backup):
         expect(page.locator("#listView")).to_have_attribute("aria-pressed", "true")
         expect(device_filter).to_have_value(other_address)
         expect(selected).to_be_checked()
-        results = current_rows(page)
-        assert results[failed]["status"] == "ok"
-        assert results[failed_neighbor]["lldp_status"] == ("failed" if switch.failed_lldp else "ok")
-        for key in unchanged:
-            assert results[key]["observed_at"] == before[key]["observed_at"]
-            assert results[key]["watts"] == before[key]["watts"]
-        if switch.failed_lldp:
-            expect(retry).to_be_enabled()
+
+    retry_filtered_failures("1,2")
+    results = current_rows(page)
+    assert (
+        results[failed]["status"] == "failed"
+        and results[failed_neighbor]["lldp_status"] == "failed"
+    )
+    device_filter.select_option("")
+    page.locator("#matrixView").click()
+    expect(markers).to_have_count(2)
+    retry_from_tile(page, frame, address, "2", "show lldp info remote-device 2", mobile, shots)
+    status = page.locator("#statusText")
+    expect(status).to_contain_text("LLDP 조회 실패")
+    expect(status).to_contain_text(f"{address} 포트 2")
+    expect(status).not_to_contain_text("show power-over-ethernet 1")
+    expect(markers).to_have_count(2)
+    switch.failed_lldp.clear()
+    retry_from_tile(page, frame, address, "2", "show lldp info remote-device 2", mobile, shots)
+    expect(status).to_contain_text(re.compile("완료|성공"))
+    expect(status).to_contain_text(f"{address} 포트 2")
+    expect(status).not_to_contain_text("실패")
+    expect(markers).to_have_count(1)
+    expect(first_failure).to_have_attribute("data-read-failed", "true")
+    expect(frame.locator("#detail #portReadFailure")).to_be_hidden()
+    expect(frame.get_by_role("button", name="이 포트만 재조회")).to_be_hidden()
+    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+    recovered = current_rows(page)
+    assert recovered[failed_neighbor]["lldp_status"] == "ok"
+    for key in unchanged | {failed}:
+        assert recovered[key]["observed_at"] == results[key]["observed_at"]
+        assert recovered[key]["watts"] == results[key]["watts"]
+    page.locator("#listView").click()
+    if not device_filter.is_visible():
+        frame.locator("#shortFilterToggle").click()
+    device_filter.select_option(other_address)
+    switch.failed_ports.clear()
+    retry_filtered_failures("1")
     expect(retry).to_be_hidden()
+    final = current_rows(page)
+    assert final[failed]["status"] == "ok"
+    for key in unchanged:
+        assert final[key]["observed_at"] == before[key]["observed_at"]
+        assert final[key]["watts"] == before[key]["watts"]
     retried = switch.commands[first_log:]
-    assert retried.count("show power-over-ethernet 1") == 1
-    assert retried.count("show power-over-ethernet 2") == 2
+    assert retried.count("show power-over-ethernet 1") == 3
+    assert retried.count("show power-over-ethernet 2") == 3
     for port in ("3", "4", "5"):
         assert f"show power-over-ethernet {port}" not in retried
         assert f"show lldp info remote-device {port}" not in retried
@@ -207,7 +315,9 @@ def exercise(page, url, switch, other, shots, _backup):
 
 if __name__ == "__main__":
     engine = sys.argv[1] if len(sys.argv) > 1 else "chromium"
-    run_browser_case(exercise, switch_factory=QuerySwitch, browser_engine=engine)
+    run_browser_case(
+        exercise, switch_factory=QuerySwitch, browser_engine=engine, touch=engine == "webkit"
+    )
     print(
-        f"PASS {engine}: matrix-first at SSH query start, editable all-failure draft, exact failed-port retries and preserved filters, readings and selection."
+        f"PASS {engine}: matrix-first query, failed tiles and reasons, exact one-port and bulk retries, preserved filters, readings and selection."
     )

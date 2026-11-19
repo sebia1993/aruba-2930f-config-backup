@@ -11,6 +11,16 @@
   const text = value => typeof value === 'string' ? value.trim() : '';
   const token = value => text(value).toLowerCase();
 
+  function readFailure(row) {
+    const portFailed = row?.status === 'failed';
+    if (!portFailed && row?.lldp_status !== 'failed') return '';
+    const stage = portFailed ? '포트 조회 실패' : 'LLDP 조회 실패';
+    const message = text(portFailed ? row.message : row.lldp_message);
+    const code = text(portFailed ? row.error_code : row.lldp_error_code);
+    const reason = message || (code ? '' : '상세 사유가 기록되지 않았습니다.');
+    return [stage, reason, code && !reason.includes(code) ? code : ''].filter(Boolean).join(' · ');
+  }
+
   function linkLabel(value) {
     switch (token(value)) {
       case 'up': return 'Up';
@@ -94,5 +104,5 @@
     return result('normal', '스위치에서 전력 공급과 LLDP 이웃 AP 이름을 확인했습니다.');
   }
 
-  globalThis.PowerMatrix = Object.freeze({labels, classify, linkLabel});
+  globalThis.PowerMatrix = Object.freeze({labels, classify, linkLabel, readFailure});
 })();
