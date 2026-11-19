@@ -39,7 +39,7 @@ def change_target_while_previewing(page, switch, address):
     assert switch.poe_enabled
 
 
-def leave_live_inspection_for_batch(page, csv_view, changed, available, untouched_switch):
+def select_measured_port(page, csv_view, changed, available, untouched_switch):
     page.locator("#portLiveTab").click()
     page.locator("#queryPorts").click()
     changed_row = csv_view.locator(f'#tbody tr[data-port-key="{changed}/1"] input')
@@ -61,13 +61,23 @@ def leave_live_inspection_for_batch(page, csv_view, changed, available, untouche
     csv_view.locator(f'#matrix [data-port-key="{changed}/1"]').click()
     csv_view.locator("#inspectObservedPort").click()
     mode = page.locator("#controlMode")
+    expect(mode).to_have_value("batch")
+    expect(changed_row).to_be_checked()
+    expect(other_row).not_to_be_checked()
+    expect(page.locator("#controlTarget")).to_contain_text(changed)
+
+
+def leave_failed_port_inspection_for_batch(page, csv_view, failed, available):
+    csv_view.locator(f'#matrix [data-port-key="{failed}/1"]').click()
+    csv_view.locator("#inspectObservedPort").click()
+    mode = page.locator("#controlMode")
     expect(mode).to_have_value("single", timeout=60000)
     expect(mode).to_be_disabled()
-    expect(page.locator("#singleIP")).to_have_value(changed)
+    expect(page.locator("#singleIP")).to_have_value(failed)
     expect(page.locator("#singlePort")).not_to_be_editable()
     expect(page.locator("#liveScope")).to_be_hidden()
 
-    other_row.check()
+    csv_view.locator(f'#tbody tr[data-port-key="{available}/1"] input').check()
     expect(mode).to_have_value("batch")
     expect(mode).to_be_enabled()
     expect(page.locator("#liveScope")).to_be_visible()
@@ -233,6 +243,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(failed_row).not_to_contain_text("8.1 W")
     expect(ready_row.get_by_role("checkbox")).to_be_enabled()
     expect(ready_row).to_contain_text("0 W")
+    leave_failed_port_inspection_for_batch(page, csv_view, addresses[0], addresses[1])
 
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -277,7 +288,7 @@ def exercise(page, url, switch, second, shots, _backup):
         return respond_on(channel, command)
 
     with patch.object(second, "_respond", delayed_draw):
-        leave_live_inspection_for_batch(page, csv_view, addresses[1], addresses[0], switch)
+        select_measured_port(page, csv_view, addresses[1], addresses[0], switch)
     assert second.commands.count(on_command) == 1
     assert second.poe_enabled and not switch.poe_enabled
     assert not page_errors, page_errors
