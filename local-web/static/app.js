@@ -228,18 +228,21 @@ function controlChoice() {
   const targets=mode==='single' ? [$('singleIP').value.trim(),$('singlePort').value.trim()] : matrixControlTargets().map(controlPortKey).sort();
   return JSON.stringify([mode,$('operation').value,targets]);
 }
-function matrixControlTargets() {
+function freshControlRow(row) {
+  return row.status==='ok' && !row.controlUsed && !row.refreshInvalidated;
+}
+function matrixControlTargets(operation=$('operation').value) {
   const viewer=monitor();
   if (ui.liveId) {
     const checked=viewer?.batch();
     if (!checked || checked.liveId!==ui.liveId || checked.rows.length!==ui.selected.size ||
         checked.rows.some(target=>!ui.selected.has(controlPortKey(target)))) return [];
   }
-  if (ui.selected.size) return window.portTools?.checkedTargets() || [];
   const tile=ui.tileRow;
-  if (!tile || tile!==viewer?.selected() || viewer.source().multiSelect) return [];
-  const record=tile.raw;
-  return record.status==='ok' && !record.controlUsed && !record.refreshInvalidated ? [targetFromRow(record)] : [];
+  if (!ui.selected.size && (!tile || tile!==viewer?.selected() || viewer.source().multiSelect)) return [];
+  const keys=ui.selected.size ? ui.selected : new Set([controlPortKey(tile)]);
+  const targets=window.portTools.availableControlTargets(operation).filter(target=>keys.has(controlPortKey(target)));
+  return targets.length===keys.size ? targets : [];
 }
 function showChangedControlChoice() {
   $('controlResult').replaceChildren(elem('p','검토 중 제어 대상 또는 작업이 변경되었습니다. 현재 선택으로 다시 검토하세요.'));
@@ -322,8 +325,8 @@ function selectObservedBatch() {
   if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
   const batch=monitor()?.batch();
   if (!batch?.liveId || batch.liveId!==ui.liveId || !Array.isArray(batch.rows)) return;
-  const available=new Set(ui.rows.filter(row=>row.status==='ok' && !row.controlUsed && !row.refreshInvalidated).map(portKey));
-  const keys=batch.rows.map(row=>portKey({ip:row.ip,ssh_port:row.sshPort,interface:row.port}));
+  const available=new Set(window.portTools.availableControlTargets().map(controlPortKey));
+  const keys=batch.rows.map(controlPortKey);
   if (keys.some(key=>!available.has(key))) { syncMonitorChecks(); return; }
   clearInspection();
   ui.tileRow=null;
@@ -653,6 +656,7 @@ function updateControlTarget() {
   const batch=$('controlMode').value==='batch';
   const targets=batch ? matrixControlTargets() : [];
   const observed=batch && observedInspectionTarget();
+  $('selectEligible').hidden=$('operation').value==='disable';
   if (currentInspection()) {
     target.textContent='실시간으로 다시 조회한 대상 · '+$('singleIP').value+' / 포트 '+$('singlePort').value;
   } else if (targets.length) {
@@ -676,7 +680,7 @@ function updateControlTarget() {
   target.hidden=!target.textContent;
   $('selectedCount').hidden=!batch;
   $('selectedCount').textContent='선택 '+targets.length+'개';
-  $('quickActions').hidden=!targets.length;
+  $('quickActions').hidden=!targets.length || ($('operation').value==='disable' && !matrixControlTargets('poe_off').length);
   $('liveScope').hidden=!!currentInspection() || !(ui.liveId || displayingInventory());
   const inspect=$('inspectSingle');
   const strip=$('portActionStrip');
@@ -690,12 +694,10 @@ function updateControlTarget() {
 function syncMonitorChecks() {
   const viewer=monitor();
   if (!ui.liveId || viewer?.source().liveId!==ui.liveId) return;
-  const selected=[], excluded=[];
-  for (const row of ui.rows) {
-    if (row.status!=='ok' || row.controlUsed || row.refreshInvalidated) excluded.push(targetFromRow(row));
-    else if (ui.selected.has(portKey(row))) selected.push(targetFromRow(row));
-  }
-  viewer.setControlSelection?.(ui.liveId,selected,excluded);
+  const available=window.portTools.availableControlTargets();
+  const selected=available.filter(target=>ui.selected.has(controlPortKey(target)));
+  const stale=ui.rows.filter(row=>!freshControlRow(row)).map(targetFromRow);
+  viewer.setControlSelection(ui.liveId,selected,stale,available);
 }
 function renderPorts() {
   syncMonitorChecks();
@@ -707,7 +709,7 @@ function receivePorts(result,keepView=false,refreshedKeys,periodic=false) {
   const selectedKey=periodic && ui.tileRow?.key;
   ui.tileRow=null;
   ui.rows = window.portTools.reconcileRows(result.rows,refreshedKeys);
-  const available = new Set(ui.rows.filter(row=>row.status === 'ok' && !row.controlUsed && !row.refreshInvalidated).map(portKey));
+  const available = new Set(window.portTools.availableControlTargets($('operation').value,true).map(controlPortKey));
   ui.selected = new Set([...ui.selected].filter(key=>available.has(key)));
   if (ui.rows.length && !ui.rows.some(row=>row.status==='refresh_pending')) {
     ui.liveId=++observationSequence;
@@ -783,7 +785,7 @@ function selectScope(eligibleOnly) {
   const keys=window.portTools.scopeKeys();
   if (!keys) return;
   ui.tileRow=null;
-  const allowed=eligibleOnly && new Set(ui.rows
+  const allowed=eligibleOnly && $('operation').value!=='disable' && new Set(ui.rows
     .filter(row=>!row.controlUsed && (row.eligible_operations || []).includes($('operation').value)).map(portKey));
   ui.selected=new Set(allowed ? keys.filter(key=>allowed.has(key)) : keys);
   renderPorts();
@@ -791,6 +793,11 @@ function selectScope(eligibleOnly) {
 $('selectVisible').onclick=()=>selectScope(false);
 $('selectEligible').onclick=()=>selectScope(true);
 $('clearSelection').onclick = () => { ui.tileRow=null; ui.selected.clear(); renderPorts(); };
+$('operation').onchange=()=>{
+  const available=new Set(window.portTools.availableControlTargets().map(controlPortKey));
+  for (const key of ui.selected) if (!available.has(key)) ui.selected.delete(key);
+  renderPorts();
+};
 $('controlMode').onchange = () => {
   const single = $('controlMode').value === 'single';
   $('batchControls').hidden = single; $('singleControls').hidden = !single;
@@ -798,7 +805,7 @@ $('controlMode').onchange = () => {
     const detail = ui.rows.find(row=>portKey(row) === window.portTools?.currentKey());
     if (detail) { $('singleIP').value = endpoint(detail); $('singlePort').value = detail.interface; }
   }
-  $('controlHint').textContent = single ? '직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.' : 'PoE OFF는 AP 모델이나 링크 상태와 관계없이 전원을 끕니다. 일괄 포트 비활성화에는 링크 Up과 LLDP에서 확인한 AP-535가 필요합니다.';
+  $('controlHint').textContent = single ? '직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.' : '포트 비활성화는 링크 상태, LLDP, 전력값과 관계없이 선택한 등록 포트에 적용합니다.';
   updateControlTarget();
 };
 function controlAfterText(row) {

@@ -281,7 +281,7 @@ class JobTests(unittest.TestCase):
                 self.assertNotIn("lastSuccessfulObservation", row)
                 self.assertFalse(self.jobs.monitor_status()["error"])
             else:
-                self.assertEqual(row["eligible_operations"], [])
+                self.assertEqual(row["eligible_operations"], ["disable"])
                 self.assertTrue(row["controlUsed"])
                 self.assertIsNone(row["watts"])
                 self.assertEqual(row["lastSuccessfulObservation"]["watts"], 2)
@@ -472,9 +472,49 @@ class JobTests(unittest.TestCase):
                 )
                 self.assertIsNone(invalid["watts"])
                 self.assertTrue(invalid["controlUsed"] and invalid["refreshInvalidated"])
-                self.assertEqual(invalid["eligible_operations"], [])
+                self.assertEqual(invalid["eligible_operations"], ["disable"])
                 self.assertIsNone(ops.last_results[1].snapshot)
                 self.assertEqual([row["watts"] for row in view["rows"]], [1.0, None, 3.0])
+
+    def test_refresh_job_preserves_reviewed_batch_disable_on_the_same_registered_port(self):
+        self.initial_query()
+        ops = self.jobs.operations
+        snapshot = ops.last_results[1].snapshot
+        target = {
+            "ip": snapshot.target.ip,
+            "sshPort": snapshot.target.port,
+            "port": snapshot.interface,
+        }
+        prepared = self.finished(
+            self.jobs.submit(
+                "control.preview", {"scope": "batch", "operation": "disable", "targets": [target]}
+            )
+        )
+        self.assertEqual(prepared["state"], "done")
+        with patch.object(ops.query_service, "collect", self.collect_ports):
+            refresh = self.finished(
+                self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2222 2"})
+            )
+        self.assertEqual(refresh["state"], "done")
+        plan = prepared["result"]
+        service = Mock(spec=PortControlService)
+        service.inspect.return_value = snapshot
+        service.apply.return_value = PortOperationResult(
+            "verified", "", snapshot, replace(snapshot, enabled=False)
+        )
+        with patch.object(self.jobs.controls, "_factory", return_value=service):
+            applied = self.finished(
+                self.jobs.submit(
+                    "control.apply",
+                    {
+                        "planId": plan["planId"],
+                        "confirmation": plan["confirmationText"],
+                    },
+                )
+            )
+        self.assertEqual(applied["state"], "done")
+        self.assertEqual(applied["result"]["results"][0]["status"], "verified")
+        service.apply.assert_called_once()
 
     def test_reviewed_poe_refreshes_matrix_without_creating_downloads(self):
         self.initial_query()

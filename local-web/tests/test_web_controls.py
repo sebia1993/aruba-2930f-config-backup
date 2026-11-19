@@ -174,7 +174,7 @@ class WebControlTests(unittest.TestCase):
                     self.apply(plan)
         self.service.apply.assert_not_called()
 
-    def test_poe_off_and_admin_down_have_separate_batch_eligibility(self):
+    def test_poe_off_and_admin_down_accept_any_link_or_lldp(self):
         self.query(1)
         original = self.state.last_results[0]
         unconfirmed = (
@@ -197,13 +197,11 @@ class WebControlTests(unittest.TestCase):
                         self.preview()["targets"][0]["command"],
                         "no interface 1 power-over-ethernet",
                     )
-                    if link == "Up" and lldp == original.lldp:
-                        self.assertIn("disable", allowed)
-                        self.preview(operation="disable")
-                    else:
-                        self.assertNotIn("disable", allowed)
-                        with self.assertRaises(ValueError):
-                            self.preview(operation="disable")
+                    self.assertIn("disable", allowed)
+                    self.assertEqual(
+                        self.preview(operation="disable")["targets"][0]["command"],
+                        "interface 1 disable",
+                    )
 
     def test_batch_requires_completed_query_for_the_selected_endpoint_and_port(self):
         self.query(1)
@@ -261,12 +259,66 @@ class WebControlTests(unittest.TestCase):
         self.assertTrue(all(item["status"] == "verified" for item in history))
         self.assertNotIn("test-secret", json.dumps(history))
 
-    def test_admin_down_rechecks_confirmed_lldp_identity_at_the_write(self):
-        self.query(1)
-        self.apply(self.preview(operation="disable"))
+    def test_admin_down_uses_registration_without_cached_status(self):
+        self.query(2)
+        row = self.state.last_results[1]
+        failed = replace(row, status=QueryStatus.FAILED, snapshot=None, lldp=None)
+        self.state.last_results = (failed,)
+        self.state._unreported_ports.add((self.target, "2"))
+        self.assertEqual(self.state._matrix_rows()[0]["eligible_operations"], ["disable"])
+        for other in ("enable", "poe_on", "poe_off"):
+            with self.subTest(other=other), self.assertRaises(ValueError):
+                self.preview(("1", "2"), operation=other)
+        for invalid in (("3",), ("1", "1")):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.preview(invalid, operation="disable")
+        plan = self.preview(("1", "2"), operation="disable")
+        self.assertEqual([row["sshPort"] for row in plan["targets"]], [2222, 2222])
+        self.service.inspect.assert_not_called()
+        self.service.apply.assert_not_called()
+        # A new observation can legitimately arrive while the operator reviews the same targets.
+        self.query(2)
+        result = self.apply(plan)
+        self.assertEqual([row["status"] for row in result["results"]], ["verified", "verified"])
         self.assertEqual(
-            self.service.apply.call_args.kwargs["expected_lldp_identity"], ("fixture", "eth0")
+            [
+                (c.args[0].target, c.args[0].interface, c.args[1])
+                for c in self.service.apply.call_args_list
+            ],
+            [(self.target, "1", PortAction.DISABLE), (self.target, "2", PortAction.DISABLE)],
         )
+        for call in self.service.apply.call_args_list:
+            self.assertNotIn("expected_lldp_identity", call.kwargs)
+        next_plan = self.preview(("2",), operation="disable")
+        self.state._inventory = (PoETarget(DeviceTarget(self.target.ip, 22), ("2",)),)
+        with self.assertRaises(ValueError):
+            self.apply(next_plan)
+        self.assertEqual(self.service.apply.call_count, 2)
+
+    def test_admin_down_does_not_replay_uncertain_port_or_pause_other_ports(self):
+        self.query(12)
+
+        def change(snapshot, action, credentials, **kwargs):
+            status = "unverified" if snapshot.interface == "1" else "verified"
+            return PortOperationResult(
+                status, status, snapshot, snapshot if status == "verified" else None
+            )
+
+        self.service.apply.side_effect = change
+        ports = tuple(str(i) for i in range(1, 13))
+        plan = self.preview(ports, operation="disable")
+        self.assertEqual(len(plan["targets"]), len(ports))
+        result = self.apply(plan)
+        self.assertNotIn("nextPlan", result)
+        statuses = {row["port"]: row["status"] for row in result["results"]}
+        self.assertEqual(statuses, {p: "verified" if p != "1" else "unverified" for p in ports})
+        self.assertCountEqual(
+            [call.args[0].interface for call in self.service.apply.call_args_list], ports
+        )
+        self.assertNotIn("expected_lldp_identity", self.service.apply.call_args.kwargs)
+        with self.assertRaises(ValueError):
+            self.apply(plan)
+        self.assertEqual(self.service.apply.call_count, len(ports))
 
     def test_quick_off_reaches_selected_ports_with_no_link_or_lldp(self):
         self.query(2)
@@ -520,7 +572,7 @@ class WebControlTests(unittest.TestCase):
         self.assertEqual(result["powerRefresh"]["readings"][0]["watts"], 0.0)
         first, second = result["rows"]
         self.assertTrue(first["controlUsed"] and first["powerObserved"])
-        self.assertEqual(first["eligible_operations"], [])
+        self.assertEqual(first["eligible_operations"], ["disable"])
         self.assertEqual(second["watts"], 8.0)
         self.assertEqual(self.quick(["1"], "poe_on", direct=True)["blocked"][0]["port"], "1")
         self.service.apply.assert_called_once()

@@ -384,7 +384,9 @@ class Jobs:
                 "session.close",
                 "hostkey.forget",
             }:
-                self.controls.invalidate()
+                self.controls.invalidate(
+                    observations_changed=action in {"ports.query", "ports.refresh"}
+                )
             service = self.controls if action.startswith("control.") else self.operations
             result = service.dispatch(action, body, cancel)
             if cancel.is_set():

@@ -636,7 +636,7 @@ class Operations:
         return [
             dict(
                 matrix_observation(row),
-                eligible_operations=[],
+                eligible_operations=[PortAction.DISABLE.value],
                 controlUsed=True,
                 refreshInvalidated=True,
             )
@@ -685,7 +685,11 @@ class Operations:
         for native in self.last_results:
             key = native.group.target, native.interface
             locked = key in self.unverified_controls
-            allowed = [] if locked or key in self._unreported_ports else _eligible(native)
+            allowed = (
+                [PortAction.DISABLE.value]
+                if locked or key in self._unreported_ports
+                else _eligible(native)
+            )
             values = matrix_observation(native)
             values.update(
                 eligible_operations=allowed, eligibleOff=PortAction.POE_OFF.value in allowed

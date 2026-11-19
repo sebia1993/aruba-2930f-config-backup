@@ -1,4 +1,4 @@
-"""Exercise scoped PoE OFF and lost PoE ON acknowledgements using loopback SSH only."""
+"""Exercise batch PoE and administrative control on loopback SSH fixtures."""
 
 from threading import Event
 from unittest.mock import patch
@@ -20,6 +20,9 @@ class RangeSwitch(MonitorFixture):
     def __init__(self):
         super().__init__()
         self.power = {"1": False, "2": False}
+        self.admin_enabled = {"1": True, "2": True, "3": True}
+        self.unreadable_admin = set()
+        self.unreadable_after_disable = set()
         self.replacement_key = None
         self.auth_at_disconnect = 0
         self.stale_port = None
@@ -32,7 +35,9 @@ class RangeSwitch(MonitorFixture):
         prompt = self.prompt
         if command == "show interfaces brief":
             lines = ["Port Type | Alert Enabled Status Mode"]
-            lines.extend(f"{p} 100/1000T | No Yes Down Auto" for p in self.power)
+            for p, enabled in self.admin_enabled.items():
+                if p not in self.unreadable_admin:
+                    lines.append(f"{p} 100/1000T | No {'Yes' if enabled else 'No'} Down Auto")
         elif command == "show interfaces status":
             lines = interface_status_table(
                 (p, "", "Up" if p in self.linked else "Down") for p in self.power
@@ -52,6 +57,15 @@ class RangeSwitch(MonitorFixture):
             ]
         elif command.startswith("show lldp info remote-device ") and port in self.no_neighbor:
             lines = []
+        elif command in ("interface 1 disable", "interface 2 disable", "interface 3 disable"):
+            p = command.split()[1]
+            self.admin_enabled[p] = False
+            if p in self.unreadable_after_disable:
+                self.unreadable_admin.add(p)
+            else:
+                self.unreadable_admin.discard(p)
+            lines = []
+            prompt = self.prompt[:-1] + "(config)#"
         elif command == "configure terminal":
             lines = []
             prompt = self.prompt[:-1] + "(config)#"
@@ -146,9 +160,10 @@ def exercise_port_off(page, switch, address):
     second = table.locator(f'tr[data-port-key="{address}/2"] input')
     open_port_controls(page)
     page.locator("#operation").select_option("disable")
-    page.locator("#selectEligible").click()
+    expect(page.locator("#selectEligible")).to_be_hidden()
+    page.locator("#selectVisible").click()
     expect(first).to_be_checked()
-    expect(second).not_to_be_checked()
+    expect(second).to_be_checked()
 
     page.locator("#operation").select_option("poe_off")
     cancel_before_off(page, switch, address)
@@ -178,6 +193,64 @@ def exercise_port_off(page, switch, address):
     page.locator("#reviewBody input").fill(page.locator("#reviewBody code").inner_text())
     page.get_by_role("button", name="승인하고 명령 실행").click()
     assert_port_off(page, switch, address, "1", 5, since)
+
+
+def exercise_registered_admin_down(page, switch, second):
+    address = f"127.0.0.1:{switch.port}"
+    other = f"127.0.0.1:{second.port}"
+    start = len(switch.commands)
+    other_start = len(second.commands)
+    # Port 1 has no pre-write admin reading. Port 2 accepts its command but
+    # never returns its new state. Port 3 must still get its own command once.
+    switch.no_neighbor.update(("1", "2"))
+    switch.linked.clear()
+    switch.unreadable_admin.add("1")
+    switch.unreadable_after_disable.add("2")
+    assert not any(switch.power.values())
+    edit_query_targets(page).fill(f"{address} 1-3\n{other} 2")
+    open_target_editor(page)
+    page.locator("#verifyEditor").click()
+    page.locator("#acceptTargets").click()
+    expect(page.locator("#matrixViewer")).to_be_hidden()
+    open_port_controls(page)
+    page.locator("#operation").select_option("disable")
+    page.locator("#selectionScope").select_option("all")
+    expect(page.locator("#selectEligible")).to_be_hidden()
+    page.locator("#selectVisible").click()
+    expect(page.locator("#selectedCount")).to_have_text("선택 4개")
+    page.locator(f'[data-check-group="{other}"]').uncheck()
+    expect(page.locator("#selectedCount")).to_have_text("선택 3개")
+    with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")) as req:
+        page.locator("#preview").click()
+    body = req.value.post_data_json["body"]
+    assert body["scope"] == "batch" and body["operation"] == "disable"
+    assert {(t["ip"], t["sshPort"], t["port"]) for t in body["targets"]} == {
+        ("127.0.0.1", switch.port, "1"),
+        ("127.0.0.1", switch.port, "2"),
+        ("127.0.0.1", switch.port, "3"),
+    }
+    expect(page.locator("#review")).to_be_visible()
+    assert len(switch.commands) == start and len(second.commands) == other_start
+    page.locator("#reviewBody input").fill(page.locator("#reviewBody code").inner_text())
+    page.get_by_role("button", name="승인하고 명령 실행").click()
+    results = page.locator("#controlResult tbody tr")
+    expect(results).to_have_count(3, timeout=120000)
+    assert [row.locator("td").nth(2).inner_text() for row in results.all()] == [
+        "검증 완료",
+        "검증 미완료",
+        "검증 완료",
+    ]
+    commands = switch.commands[start:]
+    assert [c for c in commands if c.startswith(("interface ", "no interface "))] == [
+        "interface 1 disable",
+        "interface 2 disable",
+        "interface 3 disable",
+    ], commands
+    assert "show interfaces brief" in commands[commands.index("interface 3 disable") + 1 :]
+    assert not any(switch.admin_enabled.values())
+    assert len(second.commands) == other_start
+    switch.unreadable_admin.clear()
+    page.locator("#operation").select_option("poe_off")
 
 
 def run_range(page, url, switch, second, shots, output):
@@ -251,6 +324,7 @@ def run_range(page, url, switch, second, shots, output):
             assert switch.commands[after_second_write:].count("show power-over-ethernet 2") >= 2
             assert writes == ["interface 1 power-over-ethernet", "interface 2 power-over-ethernet"]
             exercise_port_off(page, switch, address)
+            exercise_registered_admin_down(page, switch, second)
 
     page.locator("#shutdown").click()
     page.locator("#reviewBody").get_by_role("button", name="서버 종료").click()
@@ -260,6 +334,7 @@ def run_range(page, url, switch, second, shots, output):
 if __name__ == "__main__":
     run_browser_case(run_range, switch_factory=RangeSwitch)
     print(
-        "PASS quick and reviewed PoE OFF without link or LLDP, selected-port power refresh, "
+        "PASS registered bulk port disable without LLDP, link or power, exact SSH endpoint, "
+        "quick and reviewed PoE OFF, selected-port power refresh, "
         "and bulk PoE ON with lost acknowledgement, no replay and changed-key halt"
     )
