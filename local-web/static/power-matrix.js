@@ -50,12 +50,19 @@
     return apModel || apDescription || apName ? name : '';
   }
 
-  function accessPointName(row) {
+  function lldpAccessPointName(row) {
     if (text(row.lldp_error_code) || token(row.lldp_status) !== 'ok') return '';
     const neighbors = row.lldp_neighbors;
     if (!Array.isArray(neighbors) || neighbors.length !== 1) return '';
     const neighbor = neighbors[0];
     return namedAccessPoint(text(neighbor?.system_name), text(neighbor?.model), text(neighbor?.system_description));
+  }
+
+  function accessPointName(row) {
+    if (row?.complete !== true || row.controlUsed || row.refreshInvalidated) return '';
+    if (!['ok', 'unsupported', 'failed'].includes(token(row.status))) return '';
+    // LLDP can succeed even when the independent PoE command fails.
+    return lldpAccessPointName(row);
   }
 
   function supplyProblem(row) {
@@ -94,7 +101,7 @@
     if (row.complete !== true || token(row.lldp_status) === 'pending') {
       return result('unclassified', '이 포트의 조회가 완료되지 않았습니다.');
     }
-    apName = accessPointName(row);
+    apName = lldpAccessPointName(row);
     watts = measurement(row.watts);
     if (watts === null) return result('unclassified', '유효한 실측 전력값이 없습니다.');
     if (watts === 0) return result('unpowered', '스위치에서 실측 전력 0 W를 보고했습니다.');
@@ -104,5 +111,5 @@
     return result('normal', '스위치에서 전력 공급과 LLDP 이웃 AP 이름을 확인했습니다.');
   }
 
-  globalThis.PowerMatrix = Object.freeze({labels, classify, linkLabel, readFailure});
+  globalThis.PowerMatrix = Object.freeze({labels, classify, linkLabel, readFailure, accessPointName});
 })();

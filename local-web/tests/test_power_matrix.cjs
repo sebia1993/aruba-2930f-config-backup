@@ -86,3 +86,23 @@ test('a measured positive draw with conflicting, insufficient or unconfirmed sup
     {assessment_status: 'unknown', assessment_reason: 'PoE와 LLDP 전원 협상 근거가 서로 다릅니다.'},
   ]) assert.equal(classify({...row, ...fields}).state, 'limited');
 });
+
+test('matrix labels follow the current port LLDP name independently of its PoE reading', () => {
+  const {accessPointName} = globalThis.PowerMatrix;
+  for (const fields of [
+    {watts: 0}, {watts: null}, {poe_status: 'Fault'},
+    {status: 'unsupported'}, {status: 'failed', error_code: 'COMMAND_REJECTED'},
+  ]) assert.equal(accessPointName({...row, ...fields}), ap.system_name);
+
+  for (const fields of [
+    {complete: false}, {status: 'cancelled'}, {status: 'refresh_pending'},
+    {controlUsed: true}, {refreshInvalidated: true}, {lldp_status: 'pending'},
+    {lldp_status: 'failed'}, {lldp_error_code: 'COMMAND_TIMEOUT'},
+    {lldp_neighbors: [{system_name: 'office-phone'}]},
+    {lldp_neighbors: [ap, {system_name: 'office-phone'}]},
+    {lldp_neighbors: [{...ap, system_name: '', chassis_id: 'switch-id'}]},
+    {lldp_neighbors: [], ap_names: 'stale', lastSuccessfulObservation: row},
+    {lldp_neighbors: null, previousObservation: row},
+  ]) assert.equal(accessPointName({...row, ...fields}), '');
+  assert.equal(accessPointName(null), '');
+});

@@ -286,7 +286,8 @@
     else if (!row) phase = 'pending';
     const power = phase==='observed' ? PowerMatrix.classify(row) : noPowerData;
     const failure = phase==='observed' ? PowerMatrix.readFailure(row) : '';
-    return {row, phase, power, failure, label:phaseLabels[phase] || power.label, reason:phaseReasons[phase] || power.reason};
+    const apName = phase==='observed' ? PowerMatrix.accessPointName(row) : '';
+    return {row, phase, power, failure, apName, label:phaseLabels[phase] || power.label, reason:phaseReasons[phase] || power.reason};
   }
   function entries() {
     const complete = new Map(ui.rows.map(r=>[portKey(r),r]));
@@ -336,7 +337,7 @@
     if (draw!=null && draw!=='') facts.push(draw+' W');
     if (row) facts.push('링크 ' + PowerMatrix.linkLabel(row.link_status));
     if (row?.link_observed_at) facts.push('링크 관측 시각 ' + dateText(row.link_observed_at));
-    if (view.power.apName) facts.push(view.power.apName);
+    if (view.apName) facts.push(view.apName);
     if (row?.observed_at) facts.push('포트 관측 시각 ' + dateText(row.observed_at));
     const checkLabel = elem('label','', 'inline-check'), check = elem('input'); check.type='checkbox';
     check.dataset.matrixCheck = key; check.checked = ui.selected.has(key); check.disabled = ui.busy;
@@ -454,9 +455,10 @@
         mark.setAttribute('aria-hidden','true');
         tile.append(mark);
       }
+      if (item.view.apName) tile.append(elem('span',item.view.apName,'tile-ap-name'));
       tile.setAttribute('aria-pressed',String(ui.selected.has(item.key)));
       tile.classList.toggle('focused-port',focused===item.key);
-      tile.title=[addr+' / '+item.port,item.view.failure?'조회 실패':'',item.view.label,item.view.power.watts!=null ? item.view.power.watts+' W' : '',item.view.power.apName].filter(Boolean).join(' · ');
+      tile.title=[addr+' / '+item.port,item.view.failure?'조회 실패':'',item.view.label,item.view.power.watts!=null ? item.view.power.watts+' W' : '',item.view.apName].filter(Boolean).join(' · ');
       tile.setAttribute('aria-label',tile.title); grids.get(addr).append(tile);
     }
     $('matrixGroups').replaceChildren(...nodes);
