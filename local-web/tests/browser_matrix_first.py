@@ -258,7 +258,7 @@ def exercise(page, url, switch, other, shots, _backup):
         f"{address}/1",
         f"{address}/2",
     }
-    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+    expect(page.locator("#selectedCount")).to_have_text("선택 2개")
     if mobile:
         hit_point(first_failure)
     if shots:
@@ -276,7 +276,7 @@ def exercise(page, url, switch, other, shots, _backup):
         expect(filters).to_have_attribute("aria-expanded", "true")
         expect(search).to_be_visible()
     expect(page.locator("#matrixView")).to_have_attribute("aria-pressed", "true")
-    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+    expect(page.locator("#selectedCount")).to_have_text("선택 2개")
     page.remove_listener("request", record_job)
     assert requests == []
     assert (len(switch.commands), len(other.commands)) == (first_log, second_log)
@@ -360,7 +360,8 @@ def exercise(page, url, switch, other, shots, _backup):
     expect(tiles).to_have_count(0)
     toggle_failures(failure_count, mobile)
     expect(tiles).to_have_count(6)
-    expect(original).to_have_attribute("aria-pressed", "true")
+    expect(original).to_have_class(re.compile(r"\bselected\b"))
+    expect(original).to_have_attribute("aria-pressed", "false")
     expect(failure_count).to_be_hidden()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     page.locator("#listView").click()

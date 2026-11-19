@@ -71,7 +71,7 @@ def verify_viewport_controls(page, view, endpoint, other_endpoint):
             button = card.locator(selector)
             expect(button).to_be_enabled()
             hit_point(button)
-        expect(view.locator("#tbody input:checked")).to_have_count(0)
+        expect(view.locator("#tbody input:checked")).to_have_count(1)
         expect(options).not_to_have_attribute("open", "")
 
         filter_toggle = view.locator("#shortFilterToggle")
@@ -89,18 +89,19 @@ def verify_viewport_controls(page, view, endpoint, other_endpoint):
         page.mouse.click(*hit_point(search))
         search.fill(other_endpoint)
         expect(tiles).to_have_count(1)
-        expect(card.locator("#quickActions")).to_be_hidden()
-        expect(card.locator("#selectedCount")).to_have_text("선택 0개")
+        expect(card.locator("#controlTarget")).to_contain_text(endpoint)
+        expect(card.locator("#selectedCount")).to_have_text("선택 1개")
         search.fill(endpoint)
         expect(tiles).to_have_count(1)
+        selected_tile.click()
         expect(card.locator("#quickActions")).to_be_hidden()
         checkbox = view.locator("#tbody input[data-control-key]")
         page.mouse.click(*hit_point(heading))
         expect(options).to_have_attribute("open", "")
-        card.locator("#selectVisible").click()
+        card.get_by_role("button", name="전체 선택", exact=True).click()
         expect(card.locator("#selectedCount")).to_have_text("선택 1개")
         expect(checkbox).to_be_checked()
-        card.locator("#clearSelection").click()
+        card.get_by_role("button", name="전체 선택 해제", exact=True).click()
         expect(card.locator("#selectedCount")).to_have_text("선택 0개")
         page.keyboard.press("Escape")
         expect(heading).to_be_focused()
@@ -152,9 +153,16 @@ def select_measured_port(page, matrix_view, changed, available, untouched_switch
     expect(changed_row).to_be_enabled(timeout=60000)
     matrix_view.locator(f'#matrix [data-port-key="{changed}/1"]').click()
     expect(page.locator("#matrixWorkspace #controlTarget")).to_contain_text(changed)
-    expect(changed_row).not_to_be_checked()
+    expect(changed_row).to_be_checked()
     expect(other_row).not_to_be_checked()
     untouched_commands = len(untouched_switch.commands)
+    other_tile = matrix_view.locator(f'#matrix [data-port-key="{available}/1"]')
+    other_tile.click()
+    expect(page.locator("#selectedCount")).to_have_text("선택 2개")
+    other_tile.click()
+    expect(other_row).not_to_be_checked()
+    expect(page.locator("#controlTarget")).to_contain_text(changed)
+    expect(page.locator("#controlTarget")).not_to_contain_text(available)
     with click_quick_poe(page, "poe_on", [(changed, "1")]):
         result = page.locator("#controlResult tbody tr")
         expect(result).to_have_count(1, timeout=90000)
@@ -177,10 +185,9 @@ def select_measured_port(page, matrix_view, changed, available, untouched_switch
     expect(changed_row).to_be_enabled()
     expect(other_row).to_be_enabled()
 
-    matrix_view.locator(f'#matrix [data-port-key="{changed}/1"]').click()
     mode = page.locator("#controlMode")
     expect(mode).to_have_value("batch")
-    expect(changed_row).not_to_be_checked()
+    expect(changed_row).to_be_checked()
     expect(other_row).not_to_be_checked()
     expect(page.locator("#controlTarget")).to_contain_text(changed)
 
@@ -355,11 +362,10 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(review).to_have_attribute("aria-pressed", "false")
     expect(matrix_view.locator("#extraView")).to_be_hidden()
 
-    # Phone-sized users can explicitly pick and unpick a batch without opening the table.
+    # Every tile adds or removes its own endpoint directly.
     resize_workspace(page, 390, 844)
     multi = matrix_view.get_by_role("button", name="여러 포트 선택", exact=True)
-    multi.click()
-    expect(multi).to_have_attribute("aria-pressed", "true")
+    expect(multi).to_have_count(0)
     first_tile = matrix_view.locator(f'#matrix [data-port-key="{addresses[0]}/1"]')
     other_tile = matrix_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]')
     first_tile.click()
@@ -367,17 +373,12 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(card.locator("#selectedCount")).to_have_text("선택 2개")
     expect(matrix_view.locator("#tbody input:checked")).to_have_count(2)
     first_tile.click()
-    multi.click()
-    expect(multi).to_have_attribute("aria-pressed", "false")
-    expect(card.locator("#controlTarget")).to_contain_text(addresses[1])
-    first_tile.click()
     expect(card.locator("#controlTarget")).to_contain_text(addresses[1])
     expect(card.locator("#selectedCount")).to_have_text("선택 1개")
-    open_port_controls(page)
-    card.locator("#clearSelection").click()
+    other_tile.click()
     expect(card.locator("#selectedCount")).to_have_text("선택 0개")
     expect(card.locator("#quickActions")).to_be_hidden()
-    page.keyboard.press("Escape")
+    expect(matrix_view.locator("#tbody input:checked")).to_have_count(0)
     resize_workspace(page, 1440, 960)
     assert all("configure terminal" not in fixture.commands for fixture in (switch, second))
 
@@ -400,7 +401,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#controlTarget")).to_contain_text(addresses[1])
     assert [len(fixture.commands) for fixture in (switch, second)] == baseline
     draft.fill(saved_targets)
-    page.locator("#clearSelection").click()
+    page.get_by_role("button", name="전체 선택 해제", exact=True).click()
     matrix_view.locator("#device").select_option("")
     expect(checkboxes).to_have_count(2)
 
@@ -412,7 +413,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#controlTarget")).to_contain_text(addresses[1])
     expect(
         matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')
-    ).not_to_be_checked()
+    ).to_be_checked()
     expect(
         matrix_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"] input')
     ).not_to_be_checked()
@@ -424,12 +425,13 @@ def exercise(page, url, switch, second, shots, _backup):
     page.locator("#review").get_by_role("button", name="닫기").click()
     assert all("configure terminal" not in fixture.commands for fixture in (switch, second))
 
-    page.locator("#clearSelection").click()
+    matrix_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]').click()
+    expect(page.locator("#selectedCount")).to_have_text("선택 0개")
     expect(page.locator("#quickResult")).to_be_hidden()
     matrix_view.locator("#search").fill(addresses[0])
     expect(checkboxes).to_have_count(1)
     page.locator("#selectionScope").select_option("filtered")
-    page.locator("#selectVisible").click()
+    page.get_by_role("button", name="전체 선택", exact=True).click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     expect(
         matrix_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"] input')
@@ -438,10 +440,10 @@ def exercise(page, url, switch, second, shots, _backup):
     matrix_view.locator("#search").fill("")
     second_checkbox = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')
     expect(second_checkbox).not_to_be_checked()
-    # Looking at the other tile must not replace or enlarge an explicit selection.
+    # Add the second identically numbered interface to the checked first one.
     matrix_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]').click()
     expect(page.locator("#controlTarget")).to_contain_text(addresses[0])
-    expect(second_checkbox).not_to_be_checked()
+    expect(second_checkbox).to_be_checked()
     page.locator("#listView").click()
     second_checkbox.check()
     expect(page.locator("#selectedCount")).to_have_text("선택 2개")
@@ -580,7 +582,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#controlTarget")).to_contain_text(addresses[1])
     expect(
         matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')
-    ).not_to_be_checked()
+    ).to_be_checked()
     with page.expect_request(
         lambda req: req.method == "POST" and req.url.endswith("/api/jobs")
     ) as query:

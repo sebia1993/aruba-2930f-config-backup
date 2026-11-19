@@ -106,7 +106,7 @@ def cancel_before_off(page, switch, address):
             assert resume.wait(30), "Test did not resume the SSH status read"
         return respond(channel, command)
 
-    page.locator("#clearSelection").click()
+    page.get_by_role("button", name="전체 선택 해제", exact=True).click()
     page.frame_locator("#matrixViewer").locator(
         f'#tbody tr[data-port-key="{address}/1"] input'
     ).check()
@@ -161,7 +161,7 @@ def exercise_port_off(page, switch, address):
     open_port_controls(page)
     page.locator("#operation").select_option("disable")
     expect(page.locator("#selectEligible")).to_be_hidden()
-    page.locator("#selectVisible").click()
+    page.get_by_role("button", name="전체 선택", exact=True).click()
     expect(first).to_be_checked()
     expect(second).to_be_checked()
 
@@ -183,7 +183,7 @@ def exercise_port_off(page, switch, address):
     expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
     page.locator("#listView").click()
     open_port_controls(page)
-    page.locator("#clearSelection").click()
+    second.uncheck()
     first.check()
     expect(second).not_to_be_checked()
     since = len(switch.commands)
@@ -216,7 +216,7 @@ def exercise_registered_admin_down(page, switch, second):
     page.locator("#operation").select_option("disable")
     page.locator("#selectionScope").select_option("all")
     expect(page.locator("#selectEligible")).to_be_hidden()
-    page.locator("#selectVisible").click()
+    page.get_by_role("button", name="전체 선택", exact=True).click()
     expect(page.locator("#selectedCount")).to_have_text("선택 4개")
     page.locator(f'[data-check-group="{other}"]').uncheck()
     expect(page.locator("#selectedCount")).to_have_text("선택 3개")
@@ -263,7 +263,7 @@ def run_range(page, url, switch, second, shots, output):
     page.locator("#verifyEditor").click()
     page.locator("#acceptTargets").click()
     open_port_controls(page)
-    page.get_by_role("button", name="범위 전체 선택", exact=True).click()
+    page.get_by_role("button", name="전체 선택", exact=True).click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
     page.get_by_role("button", name="PoE OFF 즉시 실행").click()
     expect(page.locator("#queryCredentials")).to_be_visible()
@@ -296,7 +296,7 @@ def run_range(page, url, switch, second, shots, output):
         expect(page.locator("#matrixViewer")).to_be_visible()
         open_port_controls(page)
         page.locator("#selectionScope").select_option("all")
-        page.get_by_role("button", name="범위 전체 선택", exact=True).click()
+        page.get_by_role("button", name="전체 선택", exact=True).click()
         expect(page.locator("#selectedCount")).to_have_text("선택 2개")
         address = f"127.0.0.1:{switch.port}"
         targets = [(address, "1"), (address, "2")]
@@ -304,7 +304,11 @@ def run_range(page, url, switch, second, shots, output):
             with click_quick_poe(page, "poe_off", targets):
                 expect(page.locator("#quickResult")).to_contain_text("이미 OFF 2개", timeout=90000)
             assert "configure terminal" not in switch.commands[start:]
-            page.get_by_role("button", name="범위 전체 선택", exact=True).click()
+            toggle = page.locator("#matrixSelectAll")
+            expect(toggle).to_be_enabled()
+            if toggle.inner_text() == "전체 선택":
+                toggle.click()
+            expect(toggle).to_have_text("전체 선택 해제")
         with click_quick_poe(page, "poe_on", targets):
             rows = page.locator("#controlResult tbody tr")
             # The fixture drops an ACK and returns a stale setting. Allow the

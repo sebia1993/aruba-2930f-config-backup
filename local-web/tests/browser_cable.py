@@ -126,7 +126,7 @@ def exercise(page, url, switch, other, shots, _backup):
     matrix = page.frame_locator("#matrixViewer")
     tiles = matrix.locator("#matrix [data-port-key]")
     expect(tiles).to_have_count(2, timeout=90000)
-    # A tile narrows the scope, then an explicit checkbox overrides that tile.
+    # Tile and list selection share the same cable-diagnostics targets.
     tiles.last.click()
     cable.click()
     before = len(switch.commands)
@@ -138,7 +138,11 @@ def exercise(page, url, switch, other, shots, _backup):
     ]
     ports.click()
     page.locator("#listView").click()
+    port_two = matrix.locator(f'#tbody tr[data-port-key="{endpoint}/2"] input')
+    expect(port_two).to_be_checked()
     matrix.locator(f'#tbody tr[data-port-key="{endpoint}/1"] input').check()
+    expect(page.locator("#selectedCount")).to_have_text("선택 2개")
+    port_two.uncheck()
     cable.click()
 
     review = page.locator("#review")
