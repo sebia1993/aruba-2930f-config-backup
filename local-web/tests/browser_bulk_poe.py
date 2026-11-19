@@ -76,7 +76,7 @@ def run_range(page, url, switch, second, shots, output):
         page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1-2")
         page.locator("#queryForm .primary").click()
         expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
-        page.locator("#portControlTab").click()
+        expect(page.locator("#csvViewer")).to_be_visible()
         page.locator("#selectionScope").select_option("all")
         page.get_by_role("button", name="범위 전체 선택", exact=True).click()
         expect(page.locator("#selectedCount")).to_have_text("선택 2개")

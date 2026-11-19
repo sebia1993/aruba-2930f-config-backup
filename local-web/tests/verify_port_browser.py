@@ -153,7 +153,7 @@ def exercise(page, switch):
     expect(tile).to_have_attribute("data-state", "normal")
     tile.click()
     expect(page.locator("#matrixDetails")).to_contain_text("8.1 W")
-    page.locator("#portControlTab").click()
+    page.locator("#portMonitorTab").click()
     expect(page.locator("#rowDetails")).to_be_visible()
     expect(page.locator("#rowDetails")).to_contain_text("System Name (장비 직접 조회)")
     expect(page.locator("#rowDetails")).to_contain_text("JL255A")

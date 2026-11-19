@@ -134,6 +134,7 @@
     await run('targets.apply',accepted.groups.length ? {targets:accepted.targets} : {rows:[]},r=>{
       groups = stableGroups(r.groups); registeredText = raw.value = r.targets;
       focused = ''; page = 0; live.clear(); loading.clear(); attention = false; clearPorts();
+      $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
       $('targetCount').textContent = groups.length + '대 · ' + targetCount(groups) + '포트 등록';
       editor.close(); renderMatrix();
     });
@@ -353,6 +354,7 @@
   function restoreInventory(items,targetsText) {
     if(!Array.isArray(items) || !items.length) return;
     groups=stableGroups(items); registeredText=raw.value=targetsText;
+    $('controlMode').value='batch'; $('controlMode').onchange();
     $('targetCount').textContent=groups.length+'대 · '+targetCount(groups)+'포트 등록';
     renderMatrix();
   }

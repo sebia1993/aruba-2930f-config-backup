@@ -45,7 +45,7 @@ class InterfaceStatusSwitch(PowerMatrixSwitch):
 def assert_display_and_export(page, switch, expected, *, poe_failed=None):
     csv_view = page.frame_locator("#csvViewer")
     endpoint = f"127.0.0.1:{switch.port}"
-    page.locator("#portControlTab").click()
+    page.locator("#portMonitorTab").click()
     page.locator("#operation").select_option("poe_off")
     page.locator("#selectEligible").click()
     for port, link in expected.items():
