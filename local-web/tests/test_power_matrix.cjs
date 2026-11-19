@@ -2,10 +2,26 @@ const {strict: assert} = require('node:assert');
 const {test} = require('node:test');
 require('../static/power-matrix.js');
 
-const {classify} = globalThis.PowerMatrix;
+const {classify, readFailure} = globalThis.PowerMatrix;
 const ap = {system_name: '서쪽 회의실', model: 'AP-535', system_description: 'Aruba AP-535'};
 const row = {status: 'ok', complete: true, watts: 1.2, poe_enabled: true,
   poe_status: 'Delivering', lldp_status: 'ok', lldp_neighbors: [ap]};
+
+test('retry reasons use the failing read and exclude valid empty or unfinished observations', () => {
+  const failedPort = readFailure({status:'failed', message:'SSH 연결 시간 초과', error_code:'CONNECT_TIMEOUT'});
+  assert.match(failedPort, /SSH 연결 시간 초과/);
+  assert.match(failedPort, /CONNECT_TIMEOUT/);
+  const failedLldp = readFailure({...row, message:'전력 조회 완료', lldp_status:'failed',
+    lldp_message:'스위치가 명령을 거부했습니다.', lldp_error_code:'COMMAND_REJECTED'});
+  assert.match(failedLldp, /LLDP.*스위치가 명령을 거부했습니다/);
+  assert.match(failedLldp, /COMMAND_REJECTED/);
+  assert.doesNotMatch(failedLldp, /전력 조회 완료/);
+  assert.match(readFailure({status:'unsupported', lldp_status:'failed', lldp_error_code:'COMMAND_REJECTED'}),
+    /LLDP.*COMMAND_REJECTED/);
+  assert.ok(readFailure({status:'failed'}));
+  for (const reading of [null, {...row, watts:0, lldp_neighbors:[]}, {status:'unsupported'},
+    {status:'cancelled'}, {status:'ok', lldp_status:'pending'}]) assert.equal(readFailure(reading), '');
+});
 
 test('actual measured zero overrides link, LLDP, assessment and configured or allocated power', () => {
   for (const watts of [0, '0.000']) {

@@ -255,6 +255,14 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .embedded[data-theme=light] .port-tile.unpowered{color:#000}
 .embedded[data-theme=light] .port-tile.normal{color:#fff}
 .embedded .port-tile.unclassified{color:var(--ink)}
+.port-failure-mark{display:inline-grid;place-items:center;width:1.05rem;height:1.05rem;flex:none;border-radius:50%;background:#172331;color:#fff;border:1px solid #fff;font:bold 12px/1 sans-serif}
+.port-tile[data-read-failed=true]{display:inline-flex;align-items:center;justify-content:center;gap:3px}
+#mReadFailed{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--ink)}
+#portReadFailure{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;margin:5px 0;padding:6px 8px;background:var(--surface2);border-inline-start:3px solid var(--ink);border-radius:3px}
+#portReadFailure .read-failure-copy{flex:1 1 14rem;min-width:0;font-size:12px;overflow-wrap:anywhere}
+#portReadFailure .read-failure-copy strong{display:block}
+#portReadFailure .btn{min-height:32px;white-space:nowrap}
+@media(max-width:560px),(pointer:coarse){#portReadFailure .btn{min-height:44px}}
 @media(max-width:600px){
   .embedded .content{padding:3px 1px}
   .embedded .matrix-area{padding:1px 2px 4px}
@@ -398,6 +406,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     <div class="metric red"><label data-power-label="unpowered"></label><div class="value" id="mUnpowered">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-alert"/></svg></div>
     <div class="metric amber"><label data-power-label="limited"></label><div class="value" id="mLimited">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-info"/></svg></div>
     <div class="metric green"><label data-power-label="normal"></label><div class="value" id="mNormal">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-check"/></svg></div>
+    <span id="mReadFailed" hidden><span class="port-failure-mark" aria-hidden="true">!</span><span id="readFailedCount"></span></span>
    </div>
    <div class="filterbar">
     <label class="search"><svg fill="none" stroke="currentColor"><use href="#i-search"/></svg><input type="search" id="search" placeholder="스위치 Hostname / IP / 포트 / LLDP AP 검색" aria-label="스위치 및 포트 검색" autocomplete="off"></label>
@@ -682,12 +691,13 @@ window.PortViews = (() => {
   function needsRefresh(row) { return liveSelectionId() && row.queryStatus==='ok' && excludedPorts.has(row.key); }
   function labelTile(tile,row) {
     const parts=[row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status],row.apName];
+    if (row.readFailure) parts.push('조회 실패');
     if (row.comparison?.changed) parts.push('직전 조회에서 변화');
     if (row.lastGood) parts.push('갱신 지연 · 마지막 측정 '+timeText(row.lastGood.observed));
     if (row.unobserved || needsRefresh(row)) parts.push(refreshNotice);
     const label=parts.filter(Boolean).join(' · ');
     tile.setAttribute('aria-label',label);
-    tile.title=label+'\n'+row.reason;
+    tile.title=label+'\n'+(row.readFailure || row.reason);
   }
   function timeText(value) {
     if (!value) return '기록 없음';
@@ -735,7 +745,7 @@ window.PortViews = (() => {
       el('shortFilterToggle').textContent=(site || device || status!=='all' || query) ? '검색·필터 · 적용' : '검색·필터';
     }
     function matchesStatus(row) {
-      if (status==='failed') return row.queryStatus==='failed' || row.lldp==='failed';
+      if (status==='failed') return !!row.readFailure;
       if (status==='off') return row.poe==='OFF';
       if (status==='disabled') return row.admin==='Disable';
       return status==='all' || row.status===status;
@@ -754,10 +764,11 @@ window.PortViews = (() => {
   function renderMetrics() {
     const counts = {unpowered:0,limited:0,normal:0,unclassified:0};
     const equipment = new Set();
-    let unobserved=0;
+    let unobserved=0, failed=0;
     for (const row of state.found) {
       equipment.add(endpoint(row));
       if (row.unobserved) unobserved++; else counts[row.status]++;
+      if (row.readFailure) failed++;
     }
     function count(id,n,unit='') { el(id).replaceChildren(document.createTextNode(n.toLocaleString('ko-KR')),node('span',unit,'suffix')); }
     count('mSwitch',equipment.size,'대');
@@ -766,6 +777,8 @@ window.PortViews = (() => {
     count('mLimited',counts.limited);
     count('mNormal',counts.normal);
     el('mUnclassified').textContent = '전력 미측정 ' + counts.unclassified.toLocaleString('ko-KR') + '개'+(unobserved?' · 재조회 필요 '+unobserved+'개':'');
+    el('mReadFailed').hidden=!failed;
+    el('readFailedCount').textContent='조회 실패 '+failed.toLocaleString('ko-KR')+'개';
   }
   function emptyResultsText() {
     if (state.view==='review') return '현재 조건에서 우선 확인할 포트가 없습니다.';
@@ -814,6 +827,12 @@ window.PortViews = (() => {
       const tile = button(embedded ? row.port : null,'port-tile '+row.status);
       tile.dataset.portKey = row.key;
       tile.dataset.state = row.status;
+      if (row.readFailure) {
+        tile.dataset.readFailed='true';
+        const mark=node('span','!','port-failure-mark');
+        mark.setAttribute('aria-hidden','true');
+        tile.append(mark);
+      }
       if (row.lastGood) tile.dataset.stale='true';
       if (row.comparison?.changed) tile.dataset.changed='true';
       labelTile(tile,row);
@@ -924,6 +943,25 @@ window.PortViews = (() => {
       facts.open=!!factsOpen;
       facts.append(node('summary','포트 상세 정보'),fields,reason);
       box.replaceChildren(selection);
+      if (row.readFailure) {
+        const failure=node('div');
+        failure.id='portReadFailure';
+        const copy=node('div',null,'read-failure-copy');
+        const message=node('span',row.readFailure);
+        message.id='portReadFailureReason';
+        copy.append(node('strong','실패 이유'),message);
+        const retry=button('이 포트만 재조회','btn');
+        retry.setAttribute('aria-describedby',message.id);
+        retry.disabled=controlsBusy;
+        const liveId=liveSelectionId();
+        retry.onclick=()=>{
+          if (!controlsBusy && liveId===liveSelectionId() && row===selectedActionRow()) {
+            parent.postMessage({type:'aruba-retry-failed-port',liveId,key:row.key},location.origin);
+          }
+        };
+        failure.append(copy,retry);
+        box.append(failure);
+      }
       if (row.comparison?.comparable) (row.comparison.changed ? box : facts).append(comparisonDetail(row));
       box.append(facts);
     } else {
@@ -955,7 +993,7 @@ window.PortViews = (() => {
     return row && !row.unobserved && (row.queryStatus!=='ok' || excludedPorts.has(row.key));
   }
   function addRefreshNotice(box,row) {
-    if (!liveSelectionId() || !needsInspection(row)) return;
+    if (!liveSelectionId() || !needsInspection(row) || row.readFailure) return;
     const notes=node('div',null,'detail-actions');
     if (needsRefresh(row)) {
       const notice=node('strong',refreshNotice+' · 위 수치는 마지막 조회 시점의 값입니다.','detail-foot');
@@ -979,6 +1017,8 @@ window.PortViews = (() => {
     const multi=el('matrixMultiSelect');
     multi.hidden=!live || state.presentation==='list';
     multi.disabled=controlsBusy;
+    const retry=el('portReadFailure')?.querySelector('button');
+    if (retry) retry.disabled=controlsBusy;
     multi.setAttribute('aria-pressed',String(multiSelect));
     if (!live) return;
     for (const [key,tile] of state.tileByKey) {
@@ -1112,6 +1152,12 @@ window.PortViews = (() => {
     }
     parent.postMessage({type:'aruba-port-view'},location.origin);
   }
+  function revealReadFailure(previousHeight) {
+    const rect=el('portReadFailure')?.getBoundingClientRect();
+    if (!rect || (previousHeight && (rect.top>=previousHeight || rect.bottom<=0))) return;
+    if (rect.top<0 || rect.height>=innerHeight) window.scrollBy({top:rect.top,behavior:'instant'});
+    else if (rect.bottom>innerHeight) window.scrollBy({top:rect.bottom-innerHeight,behavior:'instant'});
+  }
   function selectPort(key, scroll) {
     if (!state.lookup.has(key)) return;
     const oldTile=state.tileByKey.get(state.selected);
@@ -1131,6 +1177,7 @@ window.PortViews = (() => {
     renderDetail();
     if (embedded) {
       if (!matrixMultiActive()) parent.postMessage({type:'aruba-observed-port',liveId:liveSelectionId(),key},location.origin);
+      revealReadFailure();
     }
     else if (scroll) el('detailTitle').scrollIntoView({block:'center'});
   }
@@ -1196,7 +1243,7 @@ window.PortViews = (() => {
     const link=window.PowerMatrix.linkLabel(raw.link_status);
     const neighbors=(raw.lldp_neighbors || []).map(n=>n.system_name || '이름 없음');
     return {
-      ip,sshPort,port,key:targetKey({ip,sshPort,port}),raw,
+      ip,sshPort,port,key:targetKey({ip,sshPort,port}),raw,readFailure:window.PowerMatrix.readFailure(raw),
       hostname:raw.hostname || previous?.hostname || ip,site:raw.site || previous?.site || '사업장 미지정',label:raw.label,lastGood,
       link,reportedLink:link==='미확인'?raw.link_status:link,linkObserved:raw.link_observed_at,
       status:power.state,reason:power.reason,watts:power.watts,apName:power.apName,
@@ -1295,6 +1342,12 @@ window.PortViews = (() => {
     return {liveId:liveSelectionId(),current:current?target(current):null,device:el('device').value,rows:scope.map(target)};
   }
   if (embedded) {
+    // Selecting a port can expand the host toolbar and shrink this viewport.
+    let previousHeight=innerHeight;
+    window.addEventListener('resize',()=>{
+      if (innerHeight<previousHeight) revealReadFailure(previousHeight);
+      previousHeight=innerHeight;
+    });
     window.PortMonitor={
       loadLive,
       navigate,
@@ -1409,6 +1462,9 @@ window.PortViews = (() => {
     const item=event.target.closest('[data-port-key]');
     if(!item) return;
     selectPort(item.dataset.portKey,id==='tbody'||window.matchMedia('(max-width:780px)').matches);
+    if (embedded && event.detail===0 && !matrixMultiActive()) {
+      el('portReadFailure')?.querySelector('button')?.focus({preventScroll:true});
+    }
     if (embedded && matrixMultiActive() && id==='matrix') {
       const row=state.lookup.get(item.dataset.portKey);
       checkRow(row,!checkedPorts.has(row.key));

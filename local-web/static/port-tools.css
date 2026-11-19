@@ -148,6 +148,7 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 .power-badge[data-state=normal],.matrix-tiles .matrix-tile[data-state=normal]{color:var(--power-green)}
 .matrix-tiles .matrix-tile:not([data-state=unclassified]) {background:color-mix(in srgb,currentColor 14%,var(--surface))}
 .matrix-tiles .matrix-tile[data-phase=loading]{border-style:dashed}
+.matrix-tile .port-failure-mark{display:inline-grid;place-items:center;vertical-align:middle;min-width:1.05rem;height:1.05rem;margin-inline-start:.2rem;border:1px solid #fff;border-radius:50%;background:#172331;color:#fff;font-size:.72rem;font-weight:800;line-height:1}
 .matrix-tile[aria-pressed=true]{outline:2px solid var(--focus);outline-offset:1px}
 #matrixDetails {display:flex;align-items:center;flex-wrap:wrap;gap:6px 18px;margin-top:.75rem;padding:.65rem .85rem;background:var(--surface2);border-radius:6px}
 #matrixDetails small {flex-basis:100%}

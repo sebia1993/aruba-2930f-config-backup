@@ -444,7 +444,9 @@ def launch_test_browser(browser_type):
     return browser_type.launch(executable_path=chrome, headless=True)
 
 
-def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chromium"):
+def run_browser_case(
+    case, *, switch_factory=MonitorFixture, browser_engine="chromium", touch=False
+):
     root = Path(os.environ.get("ARUBA_WEB_ROOT", Path(__file__).resolve().parents[1]))
     python = os.environ.get("ARUBA_WEB_PYTHON", sys.executable)
     shots = (
@@ -489,7 +491,9 @@ def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chr
             info = json.loads((folder / "server-info.json").read_text(encoding="utf-8"))
             browser = launch_test_browser(getattr(playwright, browser_engine))
             try:
-                page = browser.new_page(viewport={"width": 1440, "height": 960}, locale="ko-KR")
+                page = browser.new_page(
+                    viewport={"width": 1440, "height": 960}, locale="ko-KR", has_touch=touch
+                )
                 page.set_default_timeout(15000)
                 backup_directory = folder / "별도 백업 경로"
                 backup_directory.mkdir()
