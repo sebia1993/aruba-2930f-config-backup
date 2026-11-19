@@ -54,6 +54,7 @@ _FIELDS = (
     "reference_url",
     "port_poe_state",
     "port_poe_explanation",
+    "link_observed_at",
 )
 
 
@@ -163,6 +164,7 @@ def write_query_csv(path: Path, results: Sequence[PoEQueryResult]) -> None:
                     *_detail_cells(result),
                     diagnose_port_power(snapshot).label,
                     diagnose_port_power(snapshot).reason,
+                    _utc_timestamp(result.link_observed_at),
                 )
                 writer.writerow(
                     _safe_string(cell) if isinstance(cell, str) else cell for cell in row

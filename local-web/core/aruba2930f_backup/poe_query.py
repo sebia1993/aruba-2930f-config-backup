@@ -346,18 +346,21 @@ class PoEQueryService:
                 except Exception:
                     fatal = _unexpected_failure()
                     lldp = _lldp_failure(fatal)
-                rows[index] = _finish(row, lldp)
+                rows[index] = replace(row, lldp=lldp)
 
             # Obtain the independent link table once per switch. A failed status
             # command cannot erase PoE measurements or already collected LLDP.
             if fatal is None:
-                links = parse_interface_links(_bounded(cancel, session.read_interface_status))
+                output = _bounded(cancel, session.read_interface_status)
+                received_at = datetime.now(UTC).isoformat()
+                links = parse_interface_links(output)
                 for index, row in enumerate(rows):
                     if row.interface in links:
                         link = links[row.interface]
                         rows[index] = replace(
                             row,
                             link_status=link,
+                            link_observed_at=received_at,
                             snapshot=replace(row.snapshot, link_status=link)
                             if row.snapshot
                             else None,
@@ -373,12 +376,13 @@ class PoEQueryService:
         failure = fatal or _unexpected_failure()
         if cancel.is_set():
             failure = CollectionFailure(ErrorCode.CANCELLED, "포트 전력 조회를 중지했습니다.")
-        for index, row in enumerate(rows):
-            if not row.complete:
-                rows[index] = _finish(row, _lldp_failure(failure))
-            _deliver(rows[index], on_result)
         for interface in group.interfaces[len(rows) :]:
-            row = _finish(_terminal(group, interface, failure, identity), _lldp_failure(failure))
-            rows.append(row)
+            rows.append(_terminal(group, interface, failure, identity))
+        for index, row in enumerate(rows):
+            lldp = row.lldp
+            if lldp is None or lldp.status is LLDPStatus.PENDING:
+                lldp = _lldp_failure(failure)
+            rows[index] = _finish(row, lldp)
+        for row in rows:
             _deliver(row, on_result)
         return tuple(rows)

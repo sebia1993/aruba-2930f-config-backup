@@ -142,6 +142,7 @@ def matrix_observation(result):
         if lldp
         else [],
         "link_status": item.link,
+        "link_observed_at": result.link_observed_at,
         "ap_names": item.ap,
         "observed_at": item.observed_at,
     }

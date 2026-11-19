@@ -2,6 +2,7 @@
 
 import csv
 import io
+from datetime import datetime
 
 from browser_power_matrix import PowerMatrixSwitch
 from browser_qa import run_browser_case
@@ -61,6 +62,9 @@ def assert_display_and_export(page, switch, expected, *, poe_failed=None):
             expect(table_row.locator("input[type=checkbox]")).not_to_be_checked()
         elif port != "10":
             expect(table_row.locator("input[type=checkbox]")).to_be_checked()
+        table_row.get_by_role("button", name="상세 보기").click()
+        live_time = page.locator("#detailFields dt").filter(has_text="링크 관측 시각")
+        expect(live_time).to_have_count(int(link in ("Up", "Down")))
     page.locator("#clearSelection").click()
     with page.expect_download() as handle:
         page.locator('#queryFiles a[download$=".csv"]').click()
@@ -68,6 +72,11 @@ def assert_display_and_export(page, switch, expected, *, poe_failed=None):
     assert {r["interface"]: r["link_status"] for r in rows} == expected
     for row in rows:
         port = row["interface"]
+        if expected[port] in ("Up", "Down"):
+            observed = datetime.fromisoformat(row["link_observed_at"])
+            assert observed <= datetime.fromisoformat(row["finished_at"]), row
+        else:
+            assert row["link_observed_at"] == "", row
         if port == poe_failed:
             assert row["status"] == "failed" and row["watts"] == "" and row["poe_enabled"] == ""
         else:
@@ -87,6 +96,8 @@ def assert_display_and_export(page, switch, expected, *, poe_failed=None):
             has=csv_view.get_by_text("관측 당시 링크", exact=True)
         )
         expect(link_field.locator(".data")).to_have_text("미확인" if link == "확인 불가" else link)
+        csv_time = csv_view.locator("#detail label").filter(has_text="링크 관측 시각")
+        expect(csv_time).to_have_count(int(link in ("Up", "Down")))
 
 
 def exercise(page, url, switch, _other, _shots, _backup):

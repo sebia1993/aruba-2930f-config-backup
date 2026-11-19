@@ -430,6 +430,7 @@ class PortControlService:
         credentials: Credentials,
         *,
         approve_host_key: Callable[[HostKeyCheck], bool],
+        display_only: bool = False,
     ) -> PortSnapshot:
         with self._exclusive():
             self._snapshot = None
@@ -439,9 +440,12 @@ class PortControlService:
                 observation = self._trusted_key(target, approve_host_key)
                 session = self._factory(target, credentials, self._options, self.host_key_store)
                 self._prepare(session)
-                snapshot = self._read_snapshot(session, target, interface, observation.fingerprint)
-                self._snapshot = snapshot
-                self._snapshot_time = self._clock()
+                snapshot = self._read_snapshot(
+                    session, target, interface, observation.fingerprint, display_only=display_only
+                )
+                if not display_only:
+                    self._snapshot = snapshot
+                    self._snapshot_time = self._clock()
                 return snapshot
             except CollectionFailure:
                 raise
@@ -596,13 +600,22 @@ class PortControlService:
         target: DeviceTarget,
         interface: str,
         fingerprint: str,
+        *,
+        display_only: bool = False,
     ) -> PortSnapshot:
         version = session.send_show("show version")
         modules = session.send_show("show modules")
         resolved = resolve_switch_hostname(session)
         identity = validate_device_identity(version, modules, hostname=resolved.hostname)
         port = parse_interface_status(session.read_interfaces(), interface)
-        poe = PortControlService._read_poe(session, interface, identity, port)
+        try:
+            poe = PortControlService._read_poe(session, interface, identity, port)
+        except CollectionFailure as exc:
+            if not display_only or exc.code is not ErrorCode.COMMAND_REJECTED:
+                raise
+            # A completed, malformed PoE response cannot authorize a change.
+            # The independently observed physical link can still be displayed.
+            poe = PoEState(None, "PoE 조회 불가", None)
         try:
             links = parse_interface_links(session.read_interface_status())
         except CollectionFailure as exc:

@@ -12,7 +12,7 @@ const jobNames = {
 const states = {queued: '대기', running: '진행 중', done: '완료', failed: '실패', cancelled: '취소', interrupted:'서버 종료로 중단'};
 const labels = {
   ip: 'IP 주소', ssh_port: 'SSH 포트', label: '장비 구분', hostname: '호스트 이름', model: '스위치 모델',
-  interface: '포트', status: '조회 결과', enabled: '관리 상태', link_status: '관측 링크', poe_enabled: 'PoE 설정',
+  interface: '포트', status: '조회 결과', enabled: '관리 상태', link_status: '관측 링크', link_observed_at: '링크 관측 시각', poe_enabled: 'PoE 설정',
   poe_status: 'PoE 상태', watts: '공급 전력 (W)', observed_at: '관측 시각', finished_at: '조회 종료',
   error_code: '오류 코드', message: '메시지', poe_finished_at: 'PoE 조회 종료', complete: '조회 완결',
   lldp_status: 'LLDP 조회', lldp_observed_at: 'LLDP 관측 시각', lldp_error_code: 'LLDP 오류 코드',

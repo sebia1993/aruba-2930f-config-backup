@@ -192,6 +192,7 @@ class Controls:
                     *target[0],
                     self.operations.credentials,
                     approve_host_key=first_use_host_key_policy(cancel),
+                    display_only=True,
                 )
                 return {"snapshot": _snapshot_info(state)}
             if action == "control.quick":

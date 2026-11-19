@@ -227,8 +227,9 @@
     const facts = [];
     if (view.power.watts != null) facts.push(view.power.watts+' W');
     if (row) facts.push('링크 ' + PowerMatrix.linkLabel(row.link_status));
+    if (row?.link_observed_at) facts.push('링크 관측 시각 ' + dateText(row.link_observed_at));
     if (view.power.apName) facts.push(view.power.apName);
-    if (row?.observed_at) facts.push(row.observed_at);
+    if (row?.observed_at) facts.push('포트 관측 시각 ' + dateText(row.observed_at));
     const checkLabel = elem('label','', 'inline-check'), check = elem('input'); check.type='checkbox';
     check.dataset.matrixCheck = key; check.checked = ui.selected.has(key); check.disabled = ui.busy;
     check.onchange = ()=>{if(check.checked)ui.selected.add(key);else ui.selected.delete(key);renderPorts();};
