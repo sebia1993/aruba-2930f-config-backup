@@ -6,6 +6,79 @@ from unittest.mock import patch
 from browser_qa import click_quick_poe, enter_ssh_credentials, expect_power_result, run_browser_case
 from playwright.sync_api import expect
 
+WORKSPACE_SIZES = ((1366, 768), (1280, 720), (390, 844))
+
+
+def resize_workspace(page, width, height):
+    page.set_viewport_size({"width": width, "height": height})
+    page.evaluate(
+        "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
+    )
+
+
+def hit_point(locator):
+    """Check the actual pointer path, including the embedding frame and overlaid controls."""
+    point = locator.evaluate("""element => {
+        const box = element.getBoundingClientRect();
+        let x = box.left + box.width / 2, y = box.top + box.height / 2;
+        for (let target = element; target;) {
+            const doc = target.ownerDocument;
+            const hit = doc.elementFromPoint(x, y);
+            if (!hit || !target.contains(hit)) return null;
+            target = doc.defaultView.frameElement;
+            if (!target) break;
+            const frame = target.getBoundingClientRect();
+            x += frame.left + target.clientLeft;
+            y += frame.top + target.clientTop;
+        }
+        return [x, y];
+    }""")
+    assert point is not None, f"{locator} is hidden, covered or outside the viewport"
+    return point
+
+
+def verify_viewport_controls(page, view, endpoint):
+    # Locator.click() and .check() can silently scroll both frame and outer page.
+    # Use viewport hit tests and physical clicks to exercise the no-scroll workflow.
+    panel = page.locator("#controlPanel")
+    heading = page.locator("#controlHeading")
+    search = view.locator("#search")
+    tiles = view.locator("#matrix [data-port-key]")
+    for width, height in WORKSPACE_SIZES:
+        resize_workspace(page, width, height)
+        hit_point(page.locator("#queryPorts"))
+        hit_point(tiles.first)
+        page.mouse.click(*hit_point(search))
+        page.keyboard.insert_text(endpoint)
+        expect(tiles).to_have_count(1)
+        checkbox = view.locator("#tbody input[data-control-key]")
+        if width > 390:
+            page.mouse.click(*hit_point(checkbox))
+            expect(checkbox).to_be_checked()
+            page.mouse.click(*hit_point(checkbox))
+            expect(checkbox).not_to_be_checked()
+        if width == 390:
+            expect(panel).not_to_have_attribute("open", "")
+            page.mouse.click(*hit_point(heading))
+        expect(panel).to_have_attribute("open", "")
+        page.mouse.click(*hit_point(page.locator("#selectVisible")))
+        expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+        expect(checkbox).to_be_checked()
+        for selector in ("#selectionScope", "#refreshPorts", "#quickOn", "#quickOff"):
+            hit_point(page.locator(selector))
+        page.mouse.click(*hit_point(page.locator("#clearSelection")))
+        expect(page.locator("#selectedCount")).to_have_text("선택 0개")
+        if width == 390:
+            page.keyboard.press("Escape")
+            expect(heading).to_be_focused()
+            expect(panel).not_to_have_attribute("open", "")
+        page.mouse.click(*hit_point(search))
+        page.keyboard.press("ControlOrMeta+a")
+        page.keyboard.press("Backspace")
+        expect(tiles).to_have_count(2)
+        assert page.evaluate("scrollY === 0 && document.documentElement.scrollWidth <= innerWidth")
+    page.set_viewport_size({"width": 1440, "height": 960})
+
 
 def change_target_while_previewing(page, switch, address):
     reading, resume = Event(), Event()
@@ -147,6 +220,11 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(panel).to_be_visible()
     expect(page.locator("#singleIP")).to_be_hidden()
     expect(page.locator("#queryPorts")).to_be_enabled()
+    for width, height in WORKSPACE_SIZES:
+        resize_workspace(page, width, height)
+        for selector in ("#queryTargets", "#queryPorts", "#openPortCsv", "#controlHeading"):
+            hit_point(page.locator(selector))
+    resize_workspace(page, 1440, 960)
     panel.locator(":scope > summary").click()
     expect(page.locator("#singleIP")).to_be_editable()
     expect(page.locator("#singlePort")).to_be_editable()
@@ -160,6 +238,7 @@ def exercise(page, url, switch, second, shots, _backup):
     enter_ssh_credentials(page, switch)
     tiles = csv_view.locator("#matrix [data-port-key]")
     expect(tiles).to_have_count(2, timeout=90000)
+    verify_viewport_controls(page, csv_view, addresses[0])
     expect(combined).to_have_attribute("aria-pressed", "true")
     expect(page.locator("#batchControls")).to_be_visible()
     checkboxes = csv_view.locator("#tbody input[data-control-key]")

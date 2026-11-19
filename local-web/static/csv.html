@@ -175,6 +175,93 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 @media(max-width:600px){.nav .navtxt{display:inline}.nav button{padding:0 7px;gap:6px}.table-head-tools{flex-wrap:wrap}.table-head-tools .count{white-space:nowrap}.notice-l{flex-wrap:wrap}.topbar{gap:5px}.heading-actions{width:100%}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.port-tile{transition:none}}
 
+
+/* The local workspace supplies its own navigation and control pane. */
+.embedded .content{padding:7px;max-width:none}
+.embedded #sourceBar{margin:0 0 6px;padding:6px 10px;min-height:30px;gap:3px 12px;flex-flow:row wrap;align-items:center}
+.embedded #sourceBar .notice-l{flex:1 1 auto}
+.embedded #sourceBar .noteright{margin-left:auto}
+.embedded .filterbar{padding:6px;gap:6px;margin:0 0 6px}
+.embedded #overviewRoot>.filterbar{display:grid;grid-template-columns:minmax(100px,1fr) minmax(80px,auto) minmax(86px,auto) auto}
+.embedded #overviewRoot .filterbar .search{min-width:0;height:33px}
+.embedded #overviewRoot .filterbar select,.embedded #overviewRoot .filterbar .btn{min-width:0;height:33px;min-height:33px;padding:3px 7px}
+.embedded #overviewRoot .filterbar select{width:100%;max-width:180px}
+.embedded .filter-options{grid-column:1/-1;display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.embedded #shortFilterToggle{display:none}
+.embedded .filter-options .filter-help{display:flex}
+.embedded .layout{display:block}
+.embedded .leftcol{width:100%;gap:6px}
+.embedded .panel{box-shadow:none}
+.embedded .panel-head{padding:7px 10px;min-height:34px;gap:6px;flex-wrap:wrap}
+.embedded .panel-head h2{font-size:13px;margin:0}
+.embedded #overviewRoot .panel-sub,.embedded .matrix-top,.embedded .matrix-footer,.embedded .metrics .metric-icon{display:none}
+.embedded .metrics{display:flex;flex-wrap:wrap;align-items:center;gap:3px 12px;padding:5px 10px;margin:0}
+.embedded .metric{display:inline-flex;align-items:baseline;gap:4px;min-height:0;padding:0;border:0;background:none;border-radius:0;overflow:visible}
+.embedded .metric label,.embedded #mUnclassified{margin:0;padding:0;color:var(--sub);font-size:11px}
+.embedded .metric .value{font-size:13px;margin:0;line-height:1.45;font-variant-numeric:tabular-nums}
+.embedded .metric .suffix{font-size:11px;margin-left:1px}
+.embedded .metric.red:before,.embedded .metric.amber:before,.embedded .metric.green:before,.embedded #mUnclassified:before{content:'';width:9px;height:9px;align-self:center;border-radius:2px}
+.embedded .metric.red:before{background:var(--matrix-unpowered)}
+.embedded .metric.amber:before{background:var(--matrix-limited)}
+.embedded .metric.green:before{background:var(--matrix-normal)}
+.embedded #mUnclassified{display:inline-flex;align-items:center;gap:4px}
+.embedded #mUnclassified:before{border:1px dashed var(--muted)}
+.embedded .matrix-area{padding:1px 8px 6px}
+.embedded #matrix{max-height:clamp(80px,23vh,170px);gap:6px}
+.embedded .siteheading{margin:0 0 4px}
+.embedded .siteheading span{white-space:nowrap}
+.embedded .port-grid{display:flex;align-items:start;flex-wrap:wrap;gap:3px}
+.embedded{--cell-size:27px}
+.embedded .port-tile{width:auto;min-width:var(--cell-size);height:var(--cell-size);padding:0 4px;font-size:12px;font-weight:700;line-height:1;color:#0c1c22}
+.embedded[data-theme=light] .port-tile.unpowered{color:#000}
+.embedded[data-theme=light] .port-tile.normal{color:#fff}
+.embedded .port-tile.unclassified{color:var(--ink)}
+@media(min-width:620px){
+  .embedded #matrix>section{display:grid;grid-template-columns: minmax(140px,26%) minmax(0,1fr);gap:9px;align-items:start}
+  .embedded .siteheading{display:grid;gap:0;margin:0;font-size:11px;line-height:1.25}
+}
+.embedded section[aria-labelledby=detailTitle]>.panel-head{position:absolute;width:1px;height:1px;min-height:0;overflow:hidden;clip-path:inset(50%);padding:0;border:0}
+.embedded #detail{padding:6px 10px}
+.embedded .port-reading{display:flex;align-items:center;flex-wrap:wrap;gap:3px 10px}
+.embedded .port-reading .detail-name{font-size:13px}
+.embedded .port-reading .detail-address{margin:0}
+.embedded .port-reading .badges{align-items:center;gap:4px}
+.embedded .port-reading .detail-actions{margin:0 0 0 auto;gap:3px}
+.embedded .port-reading .detail-actions .btn{justify-self:end}
+.embedded .port-facts>summary{display:list-item;width:fit-content;cursor:pointer;color:var(--sub);font-size:12px;padding:3px 0}
+.embedded .port-facts .dgrid{margin-top:8px}
+.embedded .port-facts .reason{margin:8px 0}
+.embedded .table-head-tools{flex-wrap:wrap;align-items:center;gap:6px}
+.embedded .control-picks{border:0;padding:0;gap:6px}
+.embedded .table-foot{padding:5px 9px}
+.embedded .control-picks .btn,.embedded .detail-actions .btn{padding:4px 9px;min-height:32px}
+.embedded .resulttable th,.embedded .resulttable td{padding:6px 8px}
+.embedded .tablewrap{max-height:clamp(150px,42vh,420px)}
+.embedded .csv-drill .dr-sources,.embedded .csv-drill .dr-back{margin-bottom:6px}
+.embedded .csv-drill .dr-src{padding:7px 10px}
+.embedded .csv-drill .dr-detail>.detail-actions{margin:6px 0}
+.embedded .csv-drill .dr-list{max-height:clamp(110px,38vh,380px);overflow:auto}
+@media(min-width:640px){
+  .embedded .csv-drill .dr-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+}
+@media(max-width:560px){
+  .embedded #overviewRoot>.filterbar{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto}
+  .embedded #overviewRoot>.filterbar>.search{grid-column:1/-1}
+  .embedded #overviewRoot .filterbar select{max-width:none}
+  .embedded .filter-options select{flex:1 1 100px}
+  .embedded .metrics{gap:3px 8px}
+  .embedded .port-reading .detail-actions{margin-left:0}
+  .embedded .csv-drill .dr-sources{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .embedded .csv-drill .dr-list{max-height:clamp(104px,27vh,190px)}
+}
+@media(max-width:560px) and (max-height:320px){
+  .embedded #shortFilterToggle{display:inline-flex;min-height:30px;margin:0 0 5px;padding:3px 9px}
+  .embedded #overviewRoot>#shortFilterToggle[aria-expanded=false]+.filterbar{display:none}
+  .embedded section[aria-labelledby=matrixTitle]{display:flex;flex-direction:column}
+  .embedded section[aria-labelledby=matrixTitle]>.panel-head{order:-2}
+  .embedded .matrix-area{order:-1;padding-top:5px}
+}
+
 </style>
 <link rel=stylesheet href=/static/embed.css><script src=/static/embed.js defer></script></head>
 <body>
@@ -894,6 +981,10 @@ window.PortViews = (() => {
     const device = el('device').value;
     const status = el('status').value;
     const query = el('search').value.trim().toLowerCase();
+    if (embedded) {
+      el('filterOptionsToggle').textContent=site ? '상세 필터 · 적용' : '상세 필터';
+      el('shortFilterToggle').textContent=(site || device || status!=='all' || query) ? '검색·필터 · 적용' : '검색·필터';
+    }
     function matchesStatus(row) {
       if (status==='failed') return row.queryStatus==='failed' || row.lldp==='failed';
       if (status==='off') return row.poe==='OFF';
@@ -930,23 +1021,25 @@ window.PortViews = (() => {
     const fragment = document.createDocumentFragment();
     el('matrixCount').textContent = state.found.length.toLocaleString('ko-KR')+' / '+state.rows.length.toLocaleString('ko-KR')+'포트';
     for (const row of state.found) {
-      let group = groups.get(row.site);
+      const groupKey=embedded ? JSON.stringify([row.site,endpoint(row)]) : row.site;
+      let group = groups.get(groupKey);
       if (!group) {
         const section = node('section');
         const heading = node('div',null,'siteheading');
         const count = node('span');
         const grid = node('div',null,'port-grid');
-        heading.append(node('b',row.site),count);
+        const caption=embedded ? [...new Set([row.site,row.hostname,endpoint(row)].filter(Boolean))].join(' · ') : row.site;
+        heading.append(node('b',caption),count);
         grid.setAttribute('role','group');
-        grid.setAttribute('aria-label',row.site+' 지정 포트');
+        grid.setAttribute('aria-label',caption+' 지정 포트');
         section.append(heading, grid);
         fragment.append(section);
         group = {grid, count, endpoints:new Set(), ports:0};
-        groups.set(row.site,group);
+        groups.set(groupKey,group);
       }
       group.ports++;
       group.endpoints.add(endpoint(row));
-      const tile = button(null,'port-tile '+row.status);
+      const tile = button(embedded ? row.port : null,'port-tile '+row.status);
       tile.dataset.portKey = row.key;
       tile.dataset.state = row.status;
       labelTile(tile,row);
@@ -956,7 +1049,7 @@ window.PortViews = (() => {
       group.grid.append(tile);
       tiles.set(row.key,tile);
     }
-    for (const group of groups.values()) group.count.textContent = group.endpoints.size+'대 · '+group.ports+'개 포트';
+    for (const group of groups.values()) group.count.textContent = (embedded?'':group.endpoints.size+'대 · ')+group.ports+'개 포트';
     if (!state.found.length) fragment.append(node('div','조건에 일치하는 포트가 없습니다.','empty'));
     el('matrix').replaceChildren(fragment);
     state.tileByKey = tiles;
@@ -980,6 +1073,7 @@ window.PortViews = (() => {
   function renderDetail() {
     const row = state.lookup.get(state.selected);
     const box = el('detail');
+    const factsOpen=box.querySelector('.port-facts')?.open;
     if (!row) { box.replaceChildren(node('div','표시할 포트가 없습니다.','empty')); return; }
     if (row.unobserved) {
       box.replaceChildren(node('div',row.hostname,'detail-name'),node('div',endpoint(row)+' · 포트 '+row.port,'detail-address'),
@@ -1008,8 +1102,23 @@ window.PortViews = (() => {
     }
     const reason=node('div',null,'reason');
     reason.append(node('strong','전력 판정 근거'),document.createTextNode(row.reason || '기록 없음'));
-    box.replaceChildren(node('div',row.hostname,'detail-name'),
-      node('div',endpoint(row)+' · '+row.site,'detail-address'),badges,node('div',null,'detail-divider'),fields,reason);
+    const name=node('div',row.hostname,'detail-name');
+    const address=node('div',endpoint(row)+' · '+row.site,'detail-address');
+    let facts=box;
+    if (embedded) {
+      const identity=node('div',null,'port-identity');
+      identity.append(name,address);
+      const selection=node('div',null,'port-reading');
+      badges.append(node('strong',watts(row),'observed-watts'));
+      selection.append(identity,badges);
+      addPortAction(selection,row,'inspectObservedPort');
+      facts=node('details',null,'port-facts');
+      facts.open=!!factsOpen;
+      facts.append(node('summary','포트 상세 정보'),fields,reason);
+      box.replaceChildren(selection,facts);
+    } else {
+      box.replaceChildren(name,address,badges,node('div',null,'detail-divider'),fields,reason);
+    }
     const extra=node('div',null,'dgrid');
     for (const [key,name] of Object.entries({finished_at:'조회 종료',error_code:'오류 코드',message:'메시지',
       poe_finished_at:'PoE 조회 종료',complete:'조회 완결',lldp_observed_at:'LLDP 관측 시각',lldp_error_code:'LLDP 오류 코드',
@@ -1026,9 +1135,8 @@ window.PortViews = (() => {
     if (extra.childElementCount) {
       const more=node('details',null,'more-facts');
       more.append(node('summary','수집 세부 정보'),extra);
-      box.append(more);
+      facts.append(more);
     }
-    addPortAction(box,row,'inspectObservedPort');
   }
   let observedAction=null;
   const contextObserver=new MutationObserver(()=>{
@@ -1065,7 +1173,9 @@ window.PortViews = (() => {
       notice.dataset.freshnessKey=row.key;
       actions.append(notice,action,node('span','현재 스위치 상태를 조회한 뒤 이 포트를 제어할 수 있습니다.','detail-foot'));
       labelPortAction(action,row);
-      box.append(actions);
+      const address=box.querySelector('.dr-key');
+      if (address) address.after(actions);
+      else box.append(actions);
     }
   }
   function canCheck(row) { return row.queryStatus==='ok' && !excludedPorts.has(row.key); }
@@ -1165,7 +1275,10 @@ window.PortViews = (() => {
     for (const item of el('issues').children) item.classList.toggle('current',item.dataset.portKey===key);
     for (const item of el('tbody').children) item.classList.toggle('selected',item.dataset.portKey===key);
     renderDetail();
-    if (scroll) el('detailTitle').scrollIntoView({block:'center'});
+    if (scroll) {
+      if (embedded) el('detail').querySelector('.port-reading, .detail-name')?.scrollIntoView({block:'nearest'});
+      else el('detailTitle').scrollIntoView({block:'center'});
+    }
   }
   function renderOverview() {
     filterRows(); renderMetrics(); renderMatrix();
@@ -1217,6 +1330,7 @@ window.PortViews = (() => {
       if (!state.before.latestObserved || !file.latestObserved || state.before.latestObserved===file.latestObserved) hint+=' 관측 시각만으로 전후를 구분할 수 없습니다. 비교 순서를 확인하세요.';
     }
     el('sourceHint').textContent=hint;
+    el('sourceHint').hidden=embedded && !file.expiredLive && !state.before;
     el('sourceTime').textContent=file.latestObserved?'최근 기록 · '+timeText(file.latestObserved):'';
     el('dataMode').textContent=state.before?'변화 비교':file.liveId?'실시간 조회':'CSV 조회';
     el('dataMode').classList.remove('pending');
@@ -1347,7 +1461,36 @@ window.PortViews = (() => {
     };
     document.querySelector('.sidebar').hidden=true;
     document.querySelector('.heading').hidden=true;
-    el('issuesTitle').closest('section').hidden=true;
+    const matrixPanel=el('matrixTitle').closest('section');
+    matrixPanel.querySelector('.matrix-area').before(document.querySelector('.metrics'));
+    document.querySelector('.metrics').append(el('mUnclassified'));
+    matrixPanel.after(el('detailTitle').closest('section'));
+    el('sort').before(el('controlPicks'));
+    document.querySelector('.rightcol').hidden=true;
+
+    const filterTools=node('div',null,'filter-options');
+    filterTools.id='moreFilters';
+    filterTools.hidden=true;
+    const toggle=button('상세 필터','btn ghost');
+    toggle.id='filterOptionsToggle';
+    toggle.setAttribute('aria-controls',filterTools.id);
+    toggle.setAttribute('aria-expanded','false');
+    toggle.onclick=()=>{
+      filterTools.hidden=!filterTools.hidden;
+      toggle.setAttribute('aria-expanded',String(!filterTools.hidden));
+    };
+    filterTools.append(el('site'),el('zoom').closest('.filter-help'),el('clearFilters'));
+    el('status').after(toggle,filterTools);
+    Object.assign(el('zoom'),{min:24,max:40,value:27});
+    el('zoomValue').textContent=el('zoom').value+'px';
+    const bar=el('search').closest('.filterbar');
+    bar.id='overviewFilters';
+    const shortToggle=button('검색·필터','btn ghost');
+    shortToggle.id='shortFilterToggle';
+    shortToggle.setAttribute('aria-controls',bar.id);
+    shortToggle.setAttribute('aria-expanded','false');
+    shortToggle.onclick=()=>shortToggle.setAttribute('aria-expanded',String(shortToggle.getAttribute('aria-expanded')!=='true'));
+    bar.before(shortToggle);
     el('device').hidden=false;
     for (const column of document.querySelectorAll('[data-embedded-column]')) column.hidden=false;
     el('tbody').addEventListener('change',event=>{

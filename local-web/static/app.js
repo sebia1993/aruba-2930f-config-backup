@@ -122,7 +122,7 @@ async function run(action, body, receive) {
       const readings=result.powerRefresh.readings, measured=readings.filter(isMeasuredReading).length;
       const missing=readings.length-measured;
       notify(jobNames[action] + (cancelled ? ' 취소됨' : ' 완료') + ' · 전력 자동 재조회 ' + measured + '개 측정' +
-        (missing ? ' · ' + missing + '개 미측정' : ''),missing>0);
+        (missing ? ' · ' + missing + '개 미측정' : '') + singlePowerChange(result),missing>0);
     } else {
       notify(jobNames[action] + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'));
     }
@@ -257,10 +257,25 @@ for (const [view,id] of Object.entries(monitorTabs)) {
     updatePortActions();
   };
 }
+const compactControls=matchMedia('(max-width: 1039px)');
+function revealControlsOnDesktop(available=true) {
+  if (!available) $('controlPanel').open=false;
+  else if (!compactControls.matches) $('controlPanel').open=true;
+}
+compactControls.addEventListener('change',()=>{
+  $('controlPanel').open=!compactControls.matches && !!(ui.rows.length || window.portTools?.hasInventory() || currentInspection());
+});
+$('controlPanel').addEventListener('keydown',event=>{
+  if (event.key==='Escape' && compactControls.matches && $('controlPanel').open) {
+    event.preventDefault();
+    $('controlPanel').open=false;
+    $('controlHeading').focus({preventScroll:true});
+  }
+});
 function focusControls() {
   $('controlPanel').open=true;
   $('controlHeading').focus({preventScroll:true});
-  $('controlHeading').scrollIntoView({block:'start'});
+  $('controlHeading').scrollIntoView({block:'nearest'});
 }
 $('openPortCsv').onclick=()=>{
   portNavigationRevision++;
@@ -304,7 +319,7 @@ function selectObservedBatch(openControls) {
   if (keys.some(key=>!available.has(key))) { syncMonitorChecks(); return; }
   clearInspection();
   ui.selected=new Set(keys);
-  if (keys.length) $('controlPanel').open=true;
+  if (keys.length) revealControlsOnDesktop();
   $('controlMode').value='batch'; $('controlMode').onchange();
   renderPorts();
   if (openControls && keys.length) focusControls();
@@ -804,11 +819,23 @@ function isMeasuredReading(reading) {
 function hasUncertainControl(result) {
   return result.results?.some(row=>row.status==='unverified' || row.status==='result_unknown');
 }
+function wattsText(watts) {
+  return Number.isFinite(watts) && watts>=0 ? watts+' W' : '미측정';
+}
+function singlePowerChange(result) {
+  const readings=result.powerRefresh.readings;
+  if (readings.length!==1) return '';
+  const reading=readings[0];
+  const target=result.results?.find(row=>controlPortKey(row)===controlPortKey(reading));
+  if (!target) return '';
+  const address=target.sshPort && target.sshPort!==22 ? target.ip+':'+target.sshPort : target.ip;
+  return ' · '+address+' / '+target.port+' · '+wattsText(target.before?.watts)+' → '+wattsText(isMeasuredReading(reading) ? reading.watts : null);
+}
 const powerDeltaNumber=new Intl.NumberFormat('ko-KR',{useGrouping:false,maximumSignificantDigits:10});
 function powerCell(watts, observed, note, beforeWatts) {
   const cell=elem('div',undefined,'control-power');
   const measured=Number.isFinite(watts) && watts>=0;
-  cell.append(elem('strong',measured ? watts+' W' : '미측정'));
+  cell.append(elem('strong',wattsText(watts)));
   if (measured && Number.isFinite(beforeWatts) && beforeWatts>=0) {
     const delta=watts-beforeWatts, sign=delta>0 ? '+' : delta<0 ? '−' : '';
     cell.append(elem('small','변화 '+sign+powerDeltaNumber.format(Math.abs(delta))+' W','power-delta'));
