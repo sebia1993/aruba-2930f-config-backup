@@ -86,6 +86,7 @@
       }
       if (!next.active || !next.lastJobId || next.lastJobId===appliedJob || next.jobId) return;
       const workspace=await api('/api/workspace');
+      if (workspace.busy) return;
       // A manual query, stop or target replacement can finish while retrieving the workspace.
       const latest=await api('/api/monitor');
       if (ticket!==generation || ui.busy || !ui.token) return;
