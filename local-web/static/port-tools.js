@@ -400,10 +400,14 @@
     $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
     updateTargetCount();
   }
+  function showStartingMatrix(items,text) {
+    replaceQueryInventory(items,text,true);
+    setQueryWorkspace(true);
+  }
   function acceptQuery(items) {
     if (!fullQuery || fullQuery.accepted || !items?.length) return;
     fullQuery.accepted=true;
-    replaceQueryInventory(items,fullQuery.text,true);
+    showStartingMatrix(items,fullQuery.text);
   }
   async function recoverQuery() {
     if (!fullQuery) return;
@@ -425,13 +429,13 @@
     replaceQueryInventory(items,text);
     if (query) receivePorts(query);
   }
-  function onJob(action,state,body) {
+  function onJob(action,state,body,keepMatrix=false) {
     if (action==='ports.query' || action==='ports.refresh') {
       matrixJob=state==='running' ? action : '';
       if (state==='running') {
         progressGroups=null;live.clear();
         if (action==='ports.query') {
-          fullQuery={text:raw.value.trim()===body.targets ? raw.value : body.targets,accepted:false};
+          fullQuery={text:body.targets,accepted:false};
         } else if (body?.targets) {
           // Refresh requests are built by refreshTargets from canonical endpoints and port lists.
           loading=new Set(body.targets.split('\n').flatMap(line=>{
@@ -440,10 +444,11 @@
           }));
           ui.rows=ui.rows.map(row=>{
             if (!loading.has(portKey(row))) return row;
+            if (keepMatrix) return {...row,controlUsed:true,refreshInvalidated:true};
             const {ip,ssh_port,interface:port,label}=row;
             return {ip,ssh_port,interface:port,label,status:'refresh_pending',controlUsed:true,refreshInvalidated:true};
           });
-          expireLiveMatrix(true);
+          if (!keepMatrix) expireLiveMatrix(true);
         }
       } else {
         fullQuery=null;
@@ -452,6 +457,7 @@
           for (const key of invalidatedKeys()) ui.selected.delete(key);
         }
       }
+      updateQuerySummary();
       renderPorts();
     } else if (state==='idle') syncChecks();
   }
@@ -465,6 +471,15 @@
     }
     for(const row of progress.observations || []) live.set(portKey(row),row);
     renderPorts();
+  }
+  function resumeQuery(progress) {
+    if (fullQuery) return;
+    const text=progress.targetText ?? inventoryText(progress.targets);
+    if (!raw.value) raw.value=text;
+    onJob('ports.query','running',{targets:text});
+  }
+  function endResumedQuery() {
+    if (fullQuery) onJob('ports.query','idle');
   }
   function restoreInventory(items,targetsText=inventoryText(items),preserveDraft=false) {
     if(!Array.isArray(items) || !items.length) return;
@@ -491,7 +506,7 @@
     });
     return reconciled.concat([...invalid.values()]);
   }
-  window.portTools={targetDraftVersion,openTargetEditor,reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,availableControlTargets,scopeKeys,unobservedTargets,cableScope,
+  window.portTools={showStartingMatrix,resumeQuery,endResumedQuery,targetDraftVersion,openTargetEditor,reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,availableControlTargets,scopeKeys,unobservedTargets,cableScope,
     hasInventory:()=>groups.length>0 || ui.rows.length>0,refreshTargets,restoreInventory,matchesInventory};
   updatePortActions();sync();
 })();

@@ -153,14 +153,14 @@ class Jobs:
         with self.lock:
             if self.monitor:
                 if self.monitor.groups == groups and self.monitor.minutes == minutes:
-                    return self.monitor_status()
+                    return {**self.monitor_status(), "groups": group_targets(groups)}
                 raise Busy("실행 중인 모니터링을 중지한 후 대상이나 간격을 바꾸세요.")
             if not self.operations.credentials:
                 raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
             # Publish the plan before the new worker can acquire the lock and finish.
             key = self.submit("ports.query", {"targets": body["targets"]}, monitored=True)
             self.monitor = PortMonitoring(key, groups, body["targets"], minutes, job=key)
-            return self.monitor_status()
+            return {**self.monitor_status(), "groups": group_targets(groups)}
 
     def stop_monitor(self, monitor_id=None):
         with self.lock:
@@ -262,6 +262,8 @@ class Jobs:
             progress = self.operations.progress_snapshot() if self.active == key else {}
             if self.active == key and item["action"] in {"ports.query", "ports.refresh"}:
                 progress.update(self.operations.query_progress(after))
+                if item["action"] == "ports.query" and "targets" in progress:
+                    progress["targetText"] = self.operations.query_target_text
             return dict(item, progress=progress)
 
     def history(self):
@@ -286,10 +288,12 @@ class Jobs:
         with self.lock:
             if self.active:
                 return {"busy": True}
-            groups = self.operations.inventory_view()
+            workspace = {"groups": self.operations.inventory_view()}
+            if self.operations.query_target_text is not None and self.operations.credentials:
+                workspace["targetText"] = self.operations.query_target_text
             view = self.port_view
             if not view or not self.operations.credentials:
-                return {"groups": groups}
+                return workspace
             available = {
                 (r.group.target.ip, r.group.target.port, r.interface)
                 for r in self.operations.last_results
@@ -302,7 +306,8 @@ class Jobs:
                 )
                 for row in view["rows"]
             ]
-            return {"groups": groups, "query": {"rows": rows}}
+            workspace["query"] = {"rows": rows}
+            return workspace
 
     def _store_port_view(self, result, *, monitored=False):
         sampled = set(result.pop("_sampledPorts", ()))

@@ -428,6 +428,29 @@ class JobTests(unittest.TestCase):
         changed_endpoint = query("ports.query", "192.0.2.5:2223 1", 1)[0]
         self.assertNotIn("previousObservation", changed_endpoint)
 
+    def test_editable_target_text_tracks_accepted_full_query_only(self):
+        self.initial_query()
+        original = "  192.0.2.5:2222  1-3\n"
+        with patch.object(self.jobs.operations.query_service, "collect", self.collect_ports):
+            full = self.finished(self.jobs.submit("ports.query", {"targets": original}))
+            self.assertEqual(full["state"], "done")
+            self.assertEqual(self.jobs.workspace()["targetText"], original)
+            refresh = self.finished(
+                self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2222 2"})
+            )
+            self.assertEqual(refresh["state"], "done")
+            self.assertEqual(self.jobs.workspace()["targetText"], original)
+
+        invalid = self.finished(self.jobs.submit("ports.query", {"targets": "invalid"}))
+        self.assertEqual(invalid["state"], "failed")
+        self.assertEqual(self.jobs.workspace()["targetText"], original)
+        with patch.object(self.jobs.operations.query_service, "collect", side_effect=OSError()):
+            failed = self.finished(self.jobs.submit("ports.query", {"targets": original + "\n"}))
+        self.assertEqual(failed["state"], "failed")
+        self.assertEqual(self.jobs.workspace()["targetText"], original + "\n")
+        self.finished(self.jobs.submit("session.close", {}))
+        self.assertNotIn("targetText", self.jobs.workspace())
+
     def test_rejected_query_draft_preserves_live_workspace_until_new_targets_are_accepted(self):
         self.initial_query()
         saved = self.jobs.workspace()
