@@ -23,7 +23,7 @@
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:13px/1.52 'Segoe UI','Malgun Gothic','Apple SD Gothic Neo',system-ui,sans-serif;letter-spacing:-.13px}
 button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.43;cursor:not-allowed}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--focus);outline-offset:3px}svg{display:block;width:18px;height:18px;flex-shrink:0}
 .app{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:100vh}.sidebar{background:var(--sidebar);border-right:1px solid var(--stroke);height:100vh;position:sticky;top:0;display:flex;flex-direction:column;z-index:8}.brand{display:flex;gap:11px;align-items:center;padding:25px 16px 24px;border-bottom:1px solid var(--stroke)}.brandmark{height:41px;width:41px;border-radius:11px;display:grid;place-items:center;background:linear-gradient(135deg,#2dbbac,#1d6e83);box-shadow:0 10px 24px #089b9d22}.brandmark svg{width:26px;height:26px;color:#eafffb}.brand-title{font-size:16px;font-weight:780;line-height:1.15}.brand-sub{font-size:9px;font-weight:700;letter-spacing:1.05px;color:var(--muted);margin-top:6px}.navhead{padding:23px 20px 8px;font-size:10px;letter-spacing:1.5px;font-weight:750;color:#7293aa}.nav{padding:0 10px;display:grid;gap:5px}.nav button{display:flex;align-items:center;text-align:left;gap:11px;background:none;border:1px solid transparent;border-radius:9px;color:#a0b5c6;min-height:43px;padding:0 12px;font-size:12px;font-weight:600}.nav button.active{background:linear-gradient(90deg,#244757,#203748);border-color:#386077;color:#e8fff8;box-shadow:inset 3px 0 var(--teal)}.nav button:not(.active):hover{background:#172e40;color:var(--ink)}.nav svg{width:17px;height:17px}.sidebar-bottom{margin-top:auto;padding:15px 17px 23px;border-top:1px solid var(--stroke);display:grid;gap:9px;color:var(--muted);font-size:11px}.status-line{display:flex;align-items:center;gap:7px;font-weight:760;color:#f3bd8e}.status-line i{height:7px;width:7px;background:var(--brand);border-radius:50%}.side-footnote{line-height:1.55;font-size:10px}
-.page{min-width:0}.topbar{height:65px;border-bottom:1px solid var(--stroke);background:#0d1d2de6;display:flex;align-items:center;justify-content:space-between;padding:0 26px;gap:10px}.crumb{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.crumb b{color:var(--ink);font-weight:690}.crumb svg{width:14px;height:14px}.top-actions{display:flex;align-items:center;gap:8px}.top-chip{border:1px solid var(--stroke-light);border-radius:99px;padding:6px 10px;font-size:10px;color:#b6cdde;font-weight:720;letter-spacing:.3px;white-space:nowrap}.top-chip.demo{border-color:#8d624a;color:#ffbd86;background:#432b251f}.top-chip.demo:before{content:'●';font-size:8px;margin-right:6px}.content{padding:26px clamp(16px,2vw,30px) 26px;max-width:1940px;margin:auto}.heading{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:20px}.eyebrow{color:#5edac0;font-size:10px;font-weight:820;letter-spacing:1.9px;margin-bottom:5px}.heading h1{font-size:26px;letter-spacing:-.7px;line-height:1.2;margin:0 0 7px;font-weight:780}.heading p{font-size:12px;color:var(--muted);margin:0}.heading-actions{display:flex;gap:8px;flex-wrap:wrap}.btn{background:var(--surface2);color:var(--ink);border:1px solid var(--stroke-light);border-radius:8px;padding:9px 13px;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;font-size:12px;font-weight:680;min-height:36px}.btn svg{width:15px;height:15px}.btn:hover{background:var(--hover)}.btn.primary{border-color:#319e8d;background:#1e806f;color:#effff9}.btn.primary:hover{background:#239b88}.btn.danger{background:#4b2834;border-color:#a04c5a;color:#ffb5bd}.btn.danger:hover{background:#703744}.btn.ghost{background:transparent}.notice{border:1px solid #2e594e;background:#123128;border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 15px;margin-bottom:16px;font-size:11px;color:#a8d7cc}.notice strong{color:#d1fff1;font-weight:720}.notice .noteright{white-space:nowrap;color:#91b5aa}.notice svg{color:#49c9a7;width:15px;height:15px}.notice-l{display:flex;align-items:center;gap:9px}
+.page{min-width:0}.topbar{height:65px;border-bottom:1px solid var(--stroke);background:#0d1d2de6;display:flex;align-items:center;justify-content:space-between;padding:0 26px;gap:10px}.crumb{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.crumb b{color:var(--ink);font-weight:690}.crumb svg{width:14px;height:14px}.top-actions{display:flex;align-items:center;gap:8px}.top-chip{border:1px solid var(--stroke-light);border-radius:99px;padding:6px 10px;font-size:10px;color:#b6cdde;font-weight:720;letter-spacing:.3px;white-space:nowrap}.top-chip.pending{border-color:#8d624a;color:#ffbd86;background:#432b251f}.top-chip.pending:before{content:'●';font-size:8px;margin-right:6px}.content{padding:26px clamp(16px,2vw,30px) 26px;max-width:1940px;margin:auto}.heading{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:20px}.eyebrow{color:#5edac0;font-size:10px;font-weight:820;letter-spacing:1.9px;margin-bottom:5px}.heading h1{font-size:26px;letter-spacing:-.7px;line-height:1.2;margin:0 0 7px;font-weight:780}.heading p{font-size:12px;color:var(--muted);margin:0}.heading-actions{display:flex;gap:8px;flex-wrap:wrap}.btn{background:var(--surface2);color:var(--ink);border:1px solid var(--stroke-light);border-radius:8px;padding:9px 13px;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;font-size:12px;font-weight:680;min-height:36px}.btn svg{width:15px;height:15px}.btn:hover{background:var(--hover)}.btn.primary{border-color:#319e8d;background:#1e806f;color:#effff9}.btn.primary:hover{background:#239b88}.btn.danger{background:#4b2834;border-color:#a04c5a;color:#ffb5bd}.btn.danger:hover{background:#703744}.btn.ghost{background:transparent}.notice{border:1px solid #2e594e;background:#123128;border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 15px;margin-bottom:16px;font-size:11px;color:#a8d7cc}.notice strong{color:#d1fff1;font-weight:720}.notice .noteright{white-space:nowrap;color:#91b5aa}.notice svg{color:#49c9a7;width:15px;height:15px}.notice-l{display:flex;align-items:center;gap:9px}
 .metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:11px;margin-bottom:15px}.metric{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--stroke);border-radius:12px;padding:15px 17px;min-height:94px}.metric label{display:block;font-size:11px;color:var(--muted);font-weight:600}.metric .value{font-size:27px;font-weight:780;letter-spacing:-.7px;line-height:1.24;margin-top:7px}.metric .suffix{font-size:12px;color:var(--muted);margin-left:4px;font-weight:530}.metric .metric-icon{position:absolute;right:14px;top:15px;width:23px;height:23px;color:#68889c}.metric.green .value{color:#59d6ba}.metric.red .value{color:#f38790}.metric.amber .value{color:#f0c784}.metric.gray .value{color:#acbfcc}
 .filterbar{background:var(--surface);border:1px solid var(--stroke);border-radius:11px;padding:12px;display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin-bottom:15px}.filterbar .search{min-width:240px;flex:1;display:flex;align-items:center;gap:7px;padding:0 10px;height:37px;border:1px solid var(--stroke-light);border-radius:8px;background:#0d1e2c}.filterbar .search svg{width:15px;height:15px;color:#8099aa}.filterbar input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--ink);font-size:12px}.filterbar input::placeholder{color:#7892a3}.filterbar select{background:#142a3d;color:#d5e5ed;border:1px solid var(--stroke-light);height:37px;padding:0 27px 0 10px;border-radius:8px;font-size:12px;min-width:124px}.filterbar .filter-help{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;white-space:nowrap}.filterbar input[type=range]{accent-color:var(--teal);width:72px}.filterbar .filter-help label{white-space:nowrap}.filterbar .btn{height:37px}
 .layout{display:grid;grid-template-columns:minmax(0,1fr) 338px;align-items:start;gap:15px}.leftcol,.rightcol{min-width:0;display:grid;gap:15px}.panel{border:1px solid var(--stroke);border-radius:12px;background:var(--surface);box-shadow:var(--shadow);min-width:0;overflow:hidden}.panel-head{min-height:64px;padding:15px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--stroke)}.panel-head h2{font-size:14px;margin:0 0 3px;font-weight:760}.panel-sub{font-size:10.5px;color:var(--muted)}.panel-right{font-size:11px;color:#bad0de;white-space:nowrap}.count{background:#1c3646;border:1px solid #35546a;padding:5px 8px;border-radius:6px;font-weight:670;font-size:11px}.matrix-area{padding:16px 18px 13px}.matrix-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px;gap:10px;flex-wrap:wrap}.matrix-top strong{font-size:11px;font-weight:730}.matrix-top .hint{font-size:11px;color:var(--muted)}.matrix-sections{display:grid;gap:13px}.siteheading{display:flex;justify-content:space-between;align-items:center;margin:2px 0 7px;font-size:10.5px;color:#a9c2d0}.siteheading b{color:#cce8ec;font-weight:690}.port-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--cell-size),1fr));gap:3px}.port-tile{width:100%;height:var(--cell-size);min-height:15px;border:0;border-radius:3px;position:relative;transition:transform .08s,outline .08s,filter .08s;box-shadow:inset 0 -1px rgba(0,0,0,.13)}.port-tile:hover{transform:scale(1.28);z-index:2;box-shadow:0 0 0 2px #c1ecf0,0 3px 9px rgba(0,0,0,.36)}.port-tile.selected{outline:2px solid #f6faff;outline-offset:1px;z-index:1}.port-tile.for-action:after{content:'';position:absolute;right:1px;bottom:1px;width:4px;height:4px;border-radius:50%;background:#f5f9ff;box-shadow:0 0 0 1px #143241}.port-tile.normal{background:#279e86}.port-tile.down{background:#d95d69}.port-tile.warn{background:#c7a054}.port-tile.unknown{background:#72879a}.port-tile.off{background:#598cba}.port-tile:active{transform:scale(.94)}.empty{border:1px dashed #3c5b6e;border-radius:8px;text-align:center;padding:34px 10px;color:var(--muted)}.matrix-footer{padding:11px 18px 14px;border-top:1px solid var(--stroke);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.legend{display:flex;align-items:center;flex-wrap:wrap;gap:13px;font-size:10px;color:#b6c8d4}.legend span{display:flex;align-items:center;gap:5px}.swatch{display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--teal)}.swatch.down{background:var(--red)}.swatch.warn{background:var(--amber)}.swatch.unknown{background:var(--gray)}.swatch.off{background:var(--blue)}.matrix-note{color:#82a0b1;font-size:10px}
@@ -34,7 +34,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 @media(max-width:1330px){.layout{grid-template-columns:minmax(0,1fr) 305px}.metrics{gap:8px}.metric{padding:14px 13px}.filterbar .filter-help{display:none}}
 @media(max-width:1050px){.app{grid-template-columns:70px minmax(0,1fr)}.brand{justify-content:center;padding:18px 7px}.brand .brand-copy,.navhead,.nav .navtxt,.sidebar-bottom .side-footnote{display:none}.nav{padding:17px 8px;gap:8px}.nav button{justify-content:center;padding:0;min-height:48px}.nav svg{width:20px;height:20px}.sidebar-bottom{padding:16px 11px;align-items:center}.status-line span{display:none}.topbar{padding:0 16px}.content{padding:19px 15px}.layout{grid-template-columns:minmax(0,1fr) 288px}.heading h1{font-size:23px}}
 @media(max-width:780px){.layout{grid-template-columns:1fr}.rightcol{grid-row:1;grid-template-columns:1fr 1fr;align-items:start}.issues{max-height:255px}.metrics{grid-template-columns:repeat(3,1fr)}.heading{align-items:start;flex-direction:column}.notice .noteright{white-space:normal}.filterbar .search{min-width:100%}}
-@media(max-width:600px){.app{grid-template-columns:1fr}.sidebar{height:auto;position:static;padding:0 10px}.brand{display:none}.nav{display:flex;gap:4px;overflow:auto;padding:8px 0}.nav button{min-width:45px;min-height:38px}.sidebar-bottom,.navhead{display:none}.topbar{height:55px}.top-chip:not(.demo){display:none}.content{padding:16px 11px}.metrics{grid-template-columns:repeat(2,1fr)}.metric{min-height:85px}.metric .value{font-size:23px}.rightcol{grid-template-columns:1fr;grid-row:2}.notice{align-items:start;flex-direction:column}.filterbar{gap:7px}.filterbar select{flex:1;min-width:120px}.panel-head{padding:14px}.matrix-area{padding:14px}.port-grid{gap:2px}.actionbar{padding:10px;flex-direction:column;align-items:stretch}.action-info{justify-content:space-between}.action-btns{justify-content:stretch}.action-btns .btn{flex:1}.toast{bottom:135px}.dgrid{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.app{grid-template-columns:1fr}.sidebar{height:auto;position:static;padding:0 10px}.brand{display:none}.nav{display:flex;gap:4px;overflow:auto;padding:8px 0}.nav button{min-width:45px;min-height:38px}.sidebar-bottom,.navhead{display:none}.topbar{height:55px}.top-chip:not(.pending){display:none}.content{padding:16px 11px}.metrics{grid-template-columns:repeat(2,1fr)}.metric{min-height:85px}.metric .value{font-size:23px}.rightcol{grid-template-columns:1fr;grid-row:2}.notice{align-items:start;flex-direction:column}.filterbar{gap:7px}.filterbar select{flex:1;min-width:120px}.panel-head{padding:14px}.matrix-area{padding:14px}.port-grid{gap:2px}.actionbar{padding:10px;flex-direction:column;align-items:stretch}.action-info{justify-content:space-between}.action-btns{justify-content:stretch}.action-btns .btn{flex:1}.toast{bottom:135px}.dgrid{grid-template-columns:1fr 1fr}}
 
 /* One-click two-state theme switch. Both options remain visible; no dropdown or OS setting. */
 .theme-switch{display:inline-flex;align-items:center;gap:2px;height:36px;padding:3px;border:1px solid var(--stroke-light);border-radius:9px;background:var(--surface2);flex-shrink:0;white-space:nowrap}
@@ -47,7 +47,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 [data-theme="light"] .theme-option[aria-pressed="true"]{background:#fff;color:#0c786b;box-shadow:0 1px 6px #123d4a26}
 @media(max-width:760px){.theme-option{padding:0 8px}}
 @media(max-width:440px){.theme-option svg{display:none}.theme-option{font-size:10px;padding:0 7px}}
-@media(max-width:445px){.top-actions .top-chip.demo{display:none}.topbar{padding-left:12px;padding-right:12px}.crumb{font-size:11px}}
+@media(max-width:445px){.top-actions .top-chip.pending{display:none}.topbar{padding-left:12px;padding-right:12px}.crumb{font-size:11px}}
 
 /* Light edition: independent component colors, including badges, table, dialog
    and sticky PoE control bar (no loss of status differentiation). */
@@ -67,7 +67,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 [data-theme="light"] .status-line{color:#a85d20}
 [data-theme="light"] .topbar{background:#fffffff2;box-shadow:0 1px 5px #2b5b7610}
 [data-theme="light"] .top-chip{color:#456679;border-color:#cbdde6;background:#f5f9fb}
-[data-theme="light"] .top-chip.demo{background:#fff1e7;border-color:#e7bd94;color:#9d5419}
+[data-theme="light"] .top-chip.pending{background:#fff1e7;border-color:#e7bd94;color:#9d5419}
 [data-theme="light"] .eyebrow{color:#087e6b}
 [data-theme="light"] .heading p strong{color:#0c765f!important}
 [data-theme="light"] .heading p b{color:#087e6b!important}
@@ -204,18 +204,20 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 </svg>
 
 <div class="app"><aside class="sidebar"><div class="brand"><span class="brandmark"><svg fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-switch"/></svg></span><div class="brand-copy"><div class="brand-title">2930F Network</div><div class="brand-sub">SWITCH OPERATIONS CONSOLE</div></div></div>
-<div class="navhead">워크스페이스</div><nav class="nav" aria-label="화면 선택"><button id="navAll" class="active" aria-label="전체 포트"><svg fill="none" stroke="currentColor"><use href="#i-grid"/></svg><span class="navtxt">전체 포트</span></button><button id="navAttention" aria-label="우선 점검"><svg fill="none" stroke="currentColor"><use href="#i-alert"/></svg><span class="navtxt">우선 점검</span></button></nav><div class="sidebar-bottom"><div class="status-line"><i></i><span>스위치 이벤트 로그</span></div><div class="side-footnote">브라우저 로컬 분석</div></div></aside>
-<div class="page"><header class="topbar"><div class="crumb">네트워크 운영 <span>›</span><b>AP 포트 관제</b></div><div class="top-actions"><div class="theme-switch" role="group" aria-label="화면 테마"><button id="themeLight" class="theme-option" aria-pressed="false">라이트</button><button id="themeDark" class="theme-option" aria-pressed="true">다크</button></div><span id="mode" class="top-chip demo">예시 데이터</span></div></header>
+<div class="navhead">워크스페이스</div><nav class="nav" aria-label="화면 선택"><button id="navAll" class="active" disabled aria-label="전체 포트"><svg fill="none" stroke="currentColor"><use href="#i-grid"/></svg><span class="navtxt">전체 포트</span></button><button id="navAttention" disabled aria-label="우선 점검"><svg fill="none" stroke="currentColor"><use href="#i-alert"/></svg><span class="navtxt">우선 점검</span></button></nav><div class="sidebar-bottom"><div class="status-line"><i></i><span>스위치 이벤트 로그</span></div><div class="side-footnote">브라우저 로컬 분석</div></div></aside>
+<div class="page"><header class="topbar"><div class="crumb">네트워크 운영 <span>›</span><b>AP 포트 관제</b></div><div class="top-actions"><div class="theme-switch" role="group" aria-label="화면 테마"><button id="themeLight" class="theme-option" aria-pressed="false">라이트</button><button id="themeDark" class="theme-option" aria-pressed="true">다크</button></div><span id="mode" class="top-chip pending">로그 대기</span></div></header>
 <main class="content"><div class="heading log-head"><div><div class="eyebrow">PORT EVENT MONITORING</div><h1>AP 포트 이벤트 상태</h1><p>등록된 AP 전용 포트의 최근 PoE 공급과 유선 링크 이벤트를 확인합니다.</p></div>
-<div class="heading-actions"><button id="resetDemo" class="btn" hidden>예시로 돌아가기</button><button id="pasteOpen" class="btn" aria-expanded="false" aria-controls="pastePanel">로그 붙여넣기</button><button id="openFiles" class="btn primary">로그 파일 열기</button><input id="logFiles" type="file" accept=".log,.txt,text/plain" multiple hidden></div></div>
-<section id="pastePanel" class="panel input-panel" hidden><h2>스위치 로그 붙여넣기</h2><label>스위치 또는 원본 이름 (선택)<input id="pasteSource" placeholder="예: 교육동 스위치"></label><label>show logging 출력<textarea id="pasteText" placeholder="한 스위치의 날짜와 시각이 포함된 로그를 붙여넣으세요." spellcheck="false"></textarea></label><div class="heading-actions"><button id="pasteApply" class="btn primary">로그 분석</button><button id="pasteCancel" class="btn">닫기</button></div></section><div id="fileError" class="file-error" role="alert" hidden></div>
-<div class="notice log-notice"><div class="notice-l"><strong id="sourceSummary" role="status"></strong></div><span id="sourceNote" class="noteright"></span></div>
+<div class="heading-actions"><button id="pasteOpen" class="btn" aria-expanded="false" aria-controls="pastePanel">로그 붙여넣기</button><button id="openFiles" class="btn primary">로그 파일 열기</button><input id="logFiles" type="file" accept=".log,.txt,text/plain" multiple hidden></div></div>
+<section id="pastePanel" class="panel input-panel" hidden><h2>스위치 로그 붙여넣기</h2><label>스위치 또는 원본 이름 (선택)<input id="pasteSource" placeholder="스위치 이름 또는 로그 원본 이름"></label><label>show logging 출력<textarea id="pasteText" placeholder="한 스위치의 날짜와 시각이 포함된 로그를 붙여넣으세요." spellcheck="false"></textarea></label><div class="heading-actions"><button id="pasteApply" class="btn primary">로그 분석</button><button id="pasteCancel" class="btn">닫기</button></div></section><div id="fileError" class="file-error" role="alert" hidden></div>
+<div class="notice log-notice"><div class="notice-l"><strong id="sourceSummary" role="status">로그 미선택</strong></div><span id="sourceNote" class="noteright">스위치 로그 파일을 열거나 show logging 출력을 붙여넣으세요.</span></div>
+<div id="logReport" hidden>
 <div class="metrics log-metrics" id="cards"></div>
 <section class="filterbar log-filters" aria-label="원본과 포트 필터"><label class="search"><svg fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-search"/></svg><input id="search" type="search" placeholder="스위치 또는 포트 검색" aria-label="스위치 또는 포트 검색"></label><label class="field">AP 전용 포트 (선택)<input id="portFilter" placeholder="예: 1, 2, 1/24" aria-label="AP 전용 포트"></label><label class="field">로그 원본<select id="sourceFilter" aria-label="로그 원본"></select></label></section>
 <div class="layout log-layout"><div class="leftcol"><section class="panel"><div class="panel-head"><div><h2 id="tableCaption">포트별 상태</h2><div class="panel-sub">점검 우선순 · 포트를 선택하면 마지막 전력·링크 기록이 열립니다.</div></div><span class="count" id="shown"></span></div>
 <table class="log-table"><thead><tr><th>상태</th><th>스위치 / 포트</th><th>마지막 이벤트</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty-msg" hidden></div><div class="table-foot" id="pager"><span id="range"></span><div class="paginate"><button id="prev">이전</button><span id="pageNumber"></span><button id="next">다음</button></div></div></section></div>
 <aside class="rightcol"><section class="panel"><div class="panel-head"><div><h2>선택 포트 상세</h2><div class="panel-sub">원본에 기록된 최근 이벤트</div></div></div><div id="detail" class="evidence-box"></div></section></aside></div>
 <p class="read-note">연결 관측은 AP 전용 포트의 유선 링크가 올라온 기록입니다. 일반 장비가 섞인 로그는 AP 전용 포트 번호를 입력해 범위를 좁히세요.</p>
+</div>
 </main></div></div>
 <script>
 /* Offline ArubaOS-S Event Log reader. Rows describe the latest evidenced power/link
@@ -398,17 +400,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   const states = {off:['전력 미공급','×'],down:['전력 공급 · 연결 끊김','!'],up:['전력 공급 · 연결 관측','●']};
   const ranks = {off:0,down:1,up:2};
   const collator = new Intl.Collator('ko', {numeric:true});
-  const demoSource = '교육동 2930F · 스위치 로그 예시';
-  const demoText = [
-    'SW-A# show logging',
-    'I 11/18/26 09:10:01 00561 ports: port 1 Applying Power to PD.',
-    'I 11/18/26 09:10:03 00561 ports: port 2 Applying Power to PD.',
-    'I 11/18/26 09:10:04 00561 ports: port 3 Applying Power to PD.',
-    'I 11/18/26 09:10:35 00076 ports: port 3 is now on-line',
-    'I 11/18/26 09:39:41 00077 ports: port 2 is now off-line',
-    'I 11/18/26 09:42:03 00565 ports: port 1 PD Removed.'
-  ].join('\n');
-  let sources = [], active = 0, demo = false, selection = '', scope = 'all', page = 0, serial = 0;
+  let sources = [], active = 0, selection = '', scope = 'all', page = 0, serial = 0;
   const limit = 40;
   function node(tag,value,cls) {
     const x = document.createElement(tag);
@@ -435,7 +427,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       const heading=node('span',null,'m-title');
       const mark=node('span',symbol,'state-mark s-'+key); mark.setAttribute('aria-hidden','true');
       heading.append(mark,node('span',title));
-      const value=node('div',null,'value');const num=node('span','0');num.id='count-'+key;value.append(num,node('span','포트','suffix'));
+      const value=node('div',null,'value');const num=node('span');num.id='count-'+key;value.append(num,node('span','포트','suffix'));
       card.append(heading,value);id('cards').append(card);
     }
   }
@@ -506,11 +498,8 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     const note=[];
     if (sources.length>1) note.push(sources.length+'개 원본을 파일별로 표시');
     if (parsed.unclassified>0) note.push('판정 근거가 부족한 '+parsed.unclassified+'개 포트는 집계에서 제외');
-    if (demo) note.push('AP 전용 포트 1·2·3 예시');
     if (!note.length) note.push('원본에 남은 마지막 전력·링크 이벤트 기준');
     id('sourceNote').textContent=note.join(' · ');
-    id('mode').textContent=demo?'예시 데이터':'로그 분석';id('mode').classList.toggle('demo',demo);
-    id('resetDemo').hidden=demo;
     const needle=id('search').value.trim().toLowerCase();
     const filtered=target.filter(r=>(scope==='all'||(scope==='attention'?r.status!=='up':r.status===scope))&&(!needle||(r.device+' '+r.port+' '+states[r.status][0]).toLowerCase().includes(needle)))
       .sort((a,b)=>ranks[a.status]-ranks[b.status]||collator.compare(a.device,b.device)||collator.compare(a.port,b.port));
@@ -528,8 +517,12 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     if(selected)setSelected(selected);else {selection='';renderDetails(null);}
   }
   function closePaste() {id('pastePanel').hidden=true;id('pasteOpen').setAttribute('aria-expanded','false');}
-  function loadCaptures(items,isDemo) {
-    sources=items;active=0;demo=isDemo;scope='all';selection='';page=0;
+  function loadCaptures(items) {
+    if (!sources.length) setupCards();
+    sources=items;active=0;scope='all';selection='';page=0;
+    id('logReport').hidden=false;
+    id('navAll').disabled=false;id('navAttention').disabled=false;
+    id('mode').textContent='로그 분석';id('mode').classList.remove('pending');
     id('portFilter').value='';id('search').value='';id('fileError').hidden=true;id('fileError').textContent='';
     closePaste(); sourceOptions();render();
   }
@@ -540,9 +533,6 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     if (!text.trim()) throw new Error('내용이 비어 있습니다.');
     if(text.includes('\0')) throw new Error('로그를 일반 텍스트로 저장한 뒤 열어 주세요.');
     return {name:source,data:window.SwitchLogs.parse(text,source)};
-  }
-  function readDemo() {
-    ++serial;loadCaptures([analyze(demoSource,demoText)],true);
   }
   async function readText(file) {
     const bytes=new Uint8Array(await file.arrayBuffer());
@@ -563,7 +553,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
           captures.push(analyze(file.name,contents));
         }catch(err){throw new Error(file.name+' · '+err.message);}
       }
-      if(token===serial)loadCaptures(captures,false);
+      if(token===serial)loadCaptures(captures);
     }catch(err){if(token===serial)error('로그 파일을 열 수 없습니다. '+err.message);}
   });
   id('pasteOpen').addEventListener('click',()=>{
@@ -573,7 +563,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     ++serial;
     try {
       const input=analyze(id('pasteSource').value.trim()||'붙여넣은 스위치 로그',id('pasteText').value);
-      loadCaptures([input],false);id('pasteText').value='';id('pasteSource').value='';
+      loadCaptures([input]);id('pasteText').value='';id('pasteSource').value='';
     }catch(err){error('붙여넣은 로그를 읽을 수 없습니다. '+err.message);}
   });
   id('pasteCancel').addEventListener('click',()=>{closePaste();id('pasteOpen').focus();});
@@ -584,8 +574,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   id('prev').addEventListener('click',()=>{page--;selection='';render();});id('next').addEventListener('click',()=>{page++;selection='';render();});
   id('navAll').addEventListener('click',()=>navigate('all'));id('navAttention').addEventListener('click',()=>navigate('attention'));
   id('themeLight').addEventListener('click',()=>setTheme('light',true));id('themeDark').addEventListener('click',()=>setTheme('dark',true));
-  id('resetDemo').addEventListener('click',readDemo);
-  setTheme(document.documentElement.dataset.theme==='light'?'light':'dark',false);setupCards();readDemo();
+  setTheme(document.documentElement.dataset.theme==='light'?'light':'dark',false);
 })();
 
 </script></body></html>
