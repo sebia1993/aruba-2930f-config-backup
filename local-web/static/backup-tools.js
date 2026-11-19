@@ -142,7 +142,20 @@
   const modal = elem('dialog'); modal.id = 'uiInspectorDialog';
   const title = elem('h2','화면 요소 식별'); modal.setAttribute('aria-label','화면 요소 식별');
   const select = elem('select'); select.setAttribute('aria-label','등록된 화면 요소 목록');
-  for (const [index,item] of catalog.entries()) select.add(new Option(item.screen+' · '+item.title,String(index)));
+  function updateCatalog() {
+    const previous=select.value;
+    select.replaceChildren();
+    for (const [index,item] of catalog.entries()) {
+      if (item.screen==='SSH 접속 설정' && location.hash!=='#connect') continue;
+      select.add(new Option(item.screen+' · '+item.title,String(index)));
+    }
+    if ([...select.options].some(option=>option.value===previous)) select.value=previous;
+  }
+  updateCatalog();
+  window.addEventListener('hashchange',()=>{
+    updateCatalog();
+    if (modal.open) showItem(Number(select.value));
+  });
   const preview = elem('pre'); preview.id = 'uiRequestPreview';
   let selecting = false, highlighted = null;
   function clearHighlight() {

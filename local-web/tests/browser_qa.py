@@ -15,6 +15,16 @@ from playwright.sync_api import expect, sync_playwright
 from verify_http_ssh import MonitorFixture
 
 
+def enter_ssh_credentials(page, switch):
+    dialog = page.get_by_role("dialog", name="SSH 접속 계정", exact=True)
+    expect(dialog).to_be_visible()
+    dialog.locator("#queryUsername").fill(switch.username)
+    dialog.locator("#queryPassword").fill(switch.password)
+    dialog.get_by_role("button", name="계정 적용 후 계속").click()
+    expect(dialog).to_be_hidden()
+    expect(page.locator("#queryPassword")).to_have_value("")
+
+
 @contextmanager
 def click_quick_poe(page, operation, targets):
     """Verify one user click submits exactly one job for the selected SSH endpoints."""
@@ -81,12 +91,12 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
         page.locator(f'nav a[href="#{key}"]').click()
         expect(page.locator(f'[data-page="{key}"]')).to_be_visible()
 
-    nav("connect")
-    page.locator("#username").fill(switch.username)
-    page.locator("#password").fill(switch.password)
-    page.locator("#loginForm button[type=submit], #loginForm button.primary").click()
-    expect(page.locator("#connectionState")).to_contain_text(switch.username)
-    assert not page.locator("#password").input_value()
+    expect(page.locator('a[href="#connect"]')).to_have_count(0)
+    expect(page.locator("#sessionChip")).to_have_count(0)
+    expect(page.locator('[data-page="connect"]')).to_be_hidden()
+    # Advanced key maintenance remains available via an explicitly entered address.
+    page.evaluate("location.hash = 'connect'")
+    expect(page.locator('[data-page="connect"]')).to_be_visible()
     address = f"127.0.0.1:{switch.port}"
     second_address = f"127.0.0.1:{second_switch.port}"
     page.locator("#trustTargets").fill(address + "\n" + second_address)
@@ -104,6 +114,8 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     page.locator("#backupDirectory").fill(str(backup_directory))
     page.locator("#backupTargets").fill(address)
     page.locator("#backupForm .primary").click()
+    enter_ssh_credentials(page, switch)
+    expect(page.locator('[data-page="backup"]')).to_be_visible()
     expect(page.locator("#backupResult")).to_contain_text("성공", timeout=90000)
     expect(page.locator("#backupResult")).to_contain_text(str(backup_directory))
     expect(page.locator("#backupResult")).to_contain_text("실제 저장 결과 폴더")
@@ -247,7 +259,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#controlHistoryTable")).to_contain_text("old-fixture")
     page.locator("#backupHistory").click()
     expect(page.locator("#backupHistoryTable")).to_contain_text("result.xlsx")
-    nav("connect")
+    page.evaluate("location.hash = 'connect'")
     page.locator("#listKeys").click()
     expect(page.locator("#knownKeys")).to_contain_text("SHA256:")
     for endpoint in (address, second_address):
@@ -258,6 +270,28 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#knownKeys")).to_contain_text("등록된 호스트 키가 없습니다.")
     page.locator("#logout").click()
     expect(page.locator("#connectionState")).to_have_text("계정 미설정")
+    nav("logs")
+    page.locator("#logTargets").fill(address)
+    log_button = page.get_by_role("button", name="로그 수집")
+    calls = []
+
+    def record_job(request):
+        if request.method == "POST" and request.url.endswith("/api/jobs"):
+            calls.append(request.post_data_json["action"])
+
+    page.on("request", record_job)
+    log_button.click()
+    dialog = page.get_by_role("dialog", name="SSH 접속 계정")
+    expect(dialog).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(dialog).to_be_hidden()
+    expect(log_button).to_be_focused()
+    assert not calls
+    log_button.click()
+    enter_ssh_credentials(page, switch)
+    expect(page.locator("#statusText")).to_contain_text("로그 수집 완료", timeout=90000)
+    assert calls == ["session.open", "logs.query"]
+    page.remove_listener("request", record_job)
     assert len(opened) == 2 and len(opened[0]) == 32 and opened[0] == opened[1]
     assert not errors, errors
     page.locator("#shutdown").click()

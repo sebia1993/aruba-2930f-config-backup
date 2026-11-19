@@ -4,7 +4,7 @@ import re
 from threading import Event
 from unittest.mock import patch
 
-from browser_qa import click_quick_poe, run_browser_case
+from browser_qa import click_quick_poe, enter_ssh_credentials, run_browser_case
 from playwright.sync_api import expect
 
 
@@ -104,10 +104,7 @@ def exercise(page, url, switch, second, shots, _backup):
     addresses = [f"127.0.0.1:{fixture.port}" for fixture in (switch, second)]
     page.locator("#queryTargets").fill("\n".join(f"{address} 1" for address in addresses))
     page.get_by_role("button", name="포트 조회", exact=True).click()
-    dialog = page.get_by_role("dialog", name="포트 조회용 SSH 계정")
-    dialog.locator("#queryUsername").fill(switch.username)
-    dialog.locator("#queryPassword").fill(switch.password)
-    dialog.get_by_role("button", name="계정 적용 후 조회").click()
+    enter_ssh_credentials(page, switch)
     tiles = csv_view.locator("#matrix [data-port-key]")
     expect(tiles).to_have_count(2, timeout=90000)
     expect(combined).to_have_attribute("aria-pressed", "true")

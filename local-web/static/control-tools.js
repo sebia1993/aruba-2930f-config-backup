@@ -8,7 +8,7 @@
   function liveButton(id,title,onClick) {
     const node = button(title,onClick);
     node.id = id;
-    node.dataset.live = '';
+    node.dataset.job = '';
     return node;
   }
   function hideInspection() { inspection.hidden = true; inspection.replaceChildren(); }
@@ -17,8 +17,7 @@
     hideInspection();
     const ip = $('singleIP').value.trim(), port = $('singlePort').value.trim();
     if (!ip || !port) return notify('스위치 주소와 한 개의 포트를 입력하세요.',true);
-    if (!ui.session.active) { requestQueryAccount(inspectSingle); return; }
-    run('control.inspect',{targets:[{ip,port}]},(result,cancelled) => {
+    runSsh('control.inspect',{targets:[{ip,port}]},(result,cancelled) => {
       if (cancelled || !result.snapshot || $('singleIP').value.trim()!==ip || $('singlePort').value.trim()!==port) return;
       showInspection(result.snapshot);
     });
@@ -68,7 +67,7 @@
     $('controlResult').replaceChildren(); $('controlResult').hidden = true;
     const requestId = crypto.randomUUID().replaceAll('-','');
     const canDisplay=capturePortIntent();
-    run('control.quick-execute',{operation,targets,requestId},(result,cancelled)=>showQuickResult(result,cancelled,false,canDisplay));
+    runSsh('control.quick-execute',{operation,targets,requestId},(result,cancelled)=>showQuickResult(result,cancelled,false,canDisplay));
   }
   batch.append(liveButton('quickOff','PoE OFF 즉시 실행',()=>requestQuick('poe_off')),
                liveButton('quickOn','PoE ON 즉시 실행',()=>requestQuick('poe_on')));

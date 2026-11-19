@@ -5,7 +5,7 @@ import io
 from datetime import datetime
 
 from browser_power_matrix import PowerMatrixSwitch
-from browser_qa import run_browser_case
+from browser_qa import enter_ssh_credentials, run_browser_case
 from playwright.sync_api import expect
 from verify_http_ssh import interface_status_table
 
@@ -99,15 +99,11 @@ def assert_display_and_export(page, switch, expected, *, poe_failed=None):
 
 def exercise(page, url, switch, _other, _shots, _backup):
     page.goto(url)
-    page.locator('nav a[href="#connect"]').click()
-    page.locator("#username").fill(switch.username)
-    page.locator("#password").fill(switch.password)
-    page.locator("#loginForm button.primary").click()
-    expect(page.locator("#connectionState")).to_contain_text(switch.username)
     page.locator('nav a[href="#ports"]').click()
     page.locator("#portLiveTab").click()
     page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1,10,2/1")
     page.locator("#queryForm .primary").click()
+    enter_ssh_credentials(page, switch)
     expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
     assert switch.commands.count("show interfaces brief") == 1
     assert switch.commands.count("show interfaces status") == 1

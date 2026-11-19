@@ -8,15 +8,11 @@ def first_use_keys(page, url, first, second, shots, output):
     page.goto(url)
     addr = f"127.0.0.1:{first.port}"
     other = f"127.0.0.1:{second.port}"
-    page.locator('nav a[href="#connect"]').click()
-    page.locator("#username").fill(first.username)
-    page.locator("#password").fill(first.password)
-    page.locator("#loginForm button.primary").click()
-    expect(page.locator("#connectionState")).to_contain_text(first.username)
 
     page.locator('nav a[href="#backup"]').click()
     page.locator("#backupTargets").fill(addr + "\n" + other)
     page.locator("#backupForm .primary").click()
+    browser_qa.enter_ssh_credentials(page, first)
     expect(page.locator("#backupResult")).to_contain_text("성공", timeout=90000)
     assert first.auth_attempts and second.auth_attempts
     page.locator('nav a[href="#home"]').click()
@@ -41,7 +37,7 @@ def first_use_keys(page, url, first, second, shots, output):
     page.locator("#backupForm .primary").click()
     expect(page.locator("#backupResult")).to_contain_text("HOST_KEY_CHANGED", timeout=90000)
     assert len(second.auth_attempts) == auth_count and len(second.commands) == command_count
-    page.locator('nav a[href="#connect"]').click()
+    page.evaluate("location.hash = 'connect'")
     page.locator("#listKeys").click()
     for endpoint, fingerprint in ((addr, first.host_key.fingerprint), (other, saved_fingerprint)):
         entry = page.locator("#knownKeys tbody tr").filter(has_text=endpoint)
