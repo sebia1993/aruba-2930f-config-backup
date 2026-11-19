@@ -174,13 +174,50 @@ class WebControlTests(unittest.TestCase):
                     self.apply(plan)
         self.service.apply.assert_not_called()
 
-    def test_batch_uses_only_server_observations_and_native_ap535_eligibility(self):
+    def test_poe_off_and_admin_down_have_separate_batch_eligibility(self):
+        self.query(1)
+        original = self.state.last_results[0]
+        unconfirmed = (
+            None,
+            LLDPObservation(LLDPStatus.FAILED),
+            LLDPObservation(LLDPStatus.OK, ()),
+            LLDPObservation(LLDPStatus.OK, (LLDPNeighbor(model="AP-515"),)),
+            LLDPObservation(LLDPStatus.OK, (LLDPNeighbor(model="AP-535"),)),
+        )
+        for link in ("Up", "Down", "확인 불가"):
+            for lldp in (*unconfirmed, original.lldp):
+                with self.subTest(link=link, lldp=lldp):
+                    row = replace(
+                        original, lldp=lldp, snapshot=replace(original.snapshot, link_status=link)
+                    )
+                    self.state.last_results = (row,)
+                    allowed = self.state._matrix_rows()[0]["eligible_operations"]
+                    self.assertIn("poe_off", allowed)
+                    self.assertEqual(
+                        self.preview()["targets"][0]["command"],
+                        "no interface 1 power-over-ethernet",
+                    )
+                    if link == "Up" and lldp == original.lldp:
+                        self.assertIn("disable", allowed)
+                        self.preview(operation="disable")
+                    else:
+                        self.assertNotIn("disable", allowed)
+                        with self.assertRaises(ValueError):
+                            self.preview(operation="disable")
+
+    def test_batch_requires_completed_query_for_the_selected_endpoint_and_port(self):
         self.query(1)
         original = self.state.last_results[0]
         for row in (
-            replace(original, lldp=None),
             replace(original, complete=False),
-            replace(original, snapshot=replace(original.snapshot, link_status="Down")),
+            replace(original, status=QueryStatus.FAILED),
+            replace(original, snapshot=None),
+            replace(original, snapshot=replace(original.snapshot, poe_enabled=None)),
+            replace(
+                original,
+                snapshot=replace(original.snapshot, target=DeviceTarget(self.target.ip, 22)),
+            ),
+            replace(original, snapshot=replace(original.snapshot, interface="2")),
         ):
             self.state.last_results = (row,)
             with self.assertRaises(ValueError):
@@ -193,7 +230,7 @@ class WebControlTests(unittest.TestCase):
         self.service.inspect.assert_not_called()
         self.service.apply.assert_not_called()
 
-    def test_probe_preserves_ap535_pinning_and_journals_with_separate_chunk_approvals(self):
+    def test_poe_off_journals_with_separate_chunk_approvals(self):
         self.query(11)
         plan = self.preview(tuple(str(i) for i in range(1, 12)))
         self.assertEqual(
@@ -204,9 +241,7 @@ class WebControlTests(unittest.TestCase):
         first = self.apply(plan)
         self.assertEqual([r["status"] for r in first["results"]], ["verified"] * 10)
         self.assertEqual(self.service.apply.call_count, 10)
-        self.assertEqual(
-            self.service.apply.call_args.kwargs["expected_lldp_identity"], ("fixture", "eth0")
-        )
+        self.assertNotIn("expected_lldp_identity", self.service.apply.call_args.kwargs)
         self.assertEqual([r.snapshot.watts for r in self.state.last_results], [0.0] * 10 + [8.0])
         self.assertEqual(first["powerRefresh"]["readings"][0]["watts"], 0.0)
         self.assertEqual(first["results"][0]["before"]["watts"], 8.0)
@@ -225,6 +260,29 @@ class WebControlTests(unittest.TestCase):
         self.assertEqual(len({row["source"] for row in history}), 1)
         self.assertTrue(all(item["status"] == "verified" for item in history))
         self.assertNotIn("test-secret", json.dumps(history))
+
+    def test_admin_down_rechecks_confirmed_lldp_identity_at_the_write(self):
+        self.query(1)
+        self.apply(self.preview(operation="disable"))
+        self.assertEqual(
+            self.service.apply.call_args.kwargs["expected_lldp_identity"], ("fixture", "eth0")
+        )
+
+    def test_quick_off_reaches_selected_ports_with_no_link_or_lldp(self):
+        self.query(2)
+        self.state.last_results = tuple(
+            replace(row, snapshot=replace(row.snapshot, link_status="Down"), lldp=None)
+            for row in self.state.last_results
+        )
+        self.state._query = Mock(side_effect=AssertionError("Unnecessary LLDP preflight query"))
+        result = self.quick(["2"], direct=True)
+        self.assertEqual(result["blocked"], [])
+        self.assertEqual(result["rechecked"], 0)
+        self.assertEqual([r["port"] for r in result["results"]], ["2"])
+        self.assertEqual(result["powerRefresh"]["readings"][0]["watts"], 0)
+        self.service.apply.assert_called_once()
+        self.assertEqual(self.service.apply.call_args.args[1], PortAction.POE_OFF)
+        self.assertNotIn("expected_lldp_identity", self.service.apply.call_args.kwargs)
 
     def test_uncertain_write_halts_all_subsequent_changes(self):
         self.query(12)
@@ -287,7 +345,10 @@ class WebControlTests(unittest.TestCase):
     def test_quick_preflight_requires_all_checked_ports_and_no_mutation(self):
         self.query(2)
         row1, row2 = self.state.last_results
-        self.state.last_results = (row1, replace(row2, lldp=LLDPObservation(LLDPStatus.OK, ())))
+        self.state.last_results = (
+            row1,
+            replace(row2, snapshot=replace(row2.snapshot, poe_enabled=None)),
+        )
         result = self.quick(["1", "2"])
         self.assertEqual([r["port"] for r in result["blocked"]], ["2"])
         self.assertNotIn("planId", result)
@@ -357,7 +418,10 @@ class WebControlTests(unittest.TestCase):
     def test_direct_quick_no_write_when_any_requested_change_is_blocked(self):
         self.query(2)
         first, second = self.state.last_results
-        self.state.last_results = first, replace(second, lldp=LLDPObservation(LLDPStatus.OK, ()))
+        self.state.last_results = (
+            first,
+            replace(second, snapshot=replace(second.snapshot, poe_enabled=None)),
+        )
         result = self.quick(["1", "2"], direct=True)
         self.assertEqual([row["port"] for row in result["blocked"]], ["2"])
         self.assertEqual(result["results"], [])
