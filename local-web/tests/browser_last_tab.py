@@ -58,7 +58,7 @@ def tabs_and_windows(page, url, _first, _second, _shots, backup_folder):
     expect(root.locator("#version")).to_contain_text("v")
 
     # Exercise more than Chromium's six HTTP/1 connections to one origin.
-    routes = ("/matrix", "/logs", "/", "/matrix", "/logs", "/", "/matrix")
+    routes = ("/matrix", "/#ports", "/#cable", "/matrix", "/#backup", "/", "/matrix")
     tabs = []
     for path in routes:
         tab = context.new_page()
@@ -80,9 +80,9 @@ def tabs_and_windows(page, url, _first, _second, _shots, backup_folder):
     matrix_tab.close()
 
     # Reopen inside the grace period. No dashboard or iframe is needed for a direct viewer.
-    logs = context.new_page()
-    logs.goto(http.base + "/logs")
-    expect(logs.locator("#sourceSummary")).to_have_text("로그 미선택")
+    viewer = context.new_page()
+    viewer.goto(http.base + "/matrix")
+    expect(viewer.locator("#sourceName")).to_have_text("조회 결과 대기")
     time.sleep(AFTER_GRACE)
     assert http.get("/health")["instance"] == instance
 

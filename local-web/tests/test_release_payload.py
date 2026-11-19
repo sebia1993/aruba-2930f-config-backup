@@ -8,7 +8,6 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from tools.build_release import DEMO_MARKERS, check_payload, write_runtime
-from tools.export_log_viewer import render
 
 
 class ReleasePayloadTests(unittest.TestCase):
@@ -23,7 +22,7 @@ class ReleasePayloadTests(unittest.TestCase):
             ("static/matrix.html", b"<script>" + DEMO_MARKERS[0] + b"</script>"),
             ("static/csv.html", b""),
             ("core/aruba2930f_backup/poe_query_report.py", b""),
-            ("static/logs.html", b"const " + DEMO_MARKERS[-2] + b" = 0;"),
+            ("static/logs.html", b""),
             ("static/demo-data.js", b"const rows = [];"),
             ("core/mock_devices.py", b"rows = []"),
             ("localweb/inventory.csv", b""),
@@ -46,11 +45,6 @@ class ReleasePayloadTests(unittest.TestCase):
                     z.writestr(name, content)
                 with self.assertRaisesRegex(ValueError, name):
                     check_payload(self.zip)
-
-    def test_standalone_log_view_still_starts_empty(self):
-        page = render()
-        self.assertIn(b'<tbody id="rows"></tbody>', page)
-        self.assertNotIn(b"/static/embed.js", page)
 
     def test_vendor_test_data_removed_licenses_rules_and_wheel_hashes_preserved(self):
         runtime = self.root / "runtime"

@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -68,15 +69,6 @@ class MonitorFixture(LoopbackArubaSSHServer):
             lines = ["Status and Counters - Module Information", "Chassis: Aruba 2930F JL255A"]
         elif command == "show system information":
             lines = ["Status and Counters - General System Information", "System Name : edge-lab"]
-        elif command == "show logging":
-            lines = [
-                "Event Log",
-                "I 11/18/26 09:00:00 00561 ports: port 1 Applying Power to PD.",
-                "I 11/18/26 09:00:01 00076 ports: port 1 is now on-line",
-                "I 11/18/26 09:01:00 00561 ports: port 2 Applying Power to PD.",
-                "I 11/18/26 09:01:01 00077 ports: port 2 is now off-line",
-                "I 11/18/26 09:02:00 00565 ports: port 3 PD Removed.",
-            ]
         elif command == "show interfaces brief":
             lines = [
                 "Port Type | Alert Enabled Status Mode",
@@ -189,8 +181,15 @@ def exercise(http, switch):
     for text in files[".jsonl"].decode("utf-8").splitlines():
         assert isinstance(json.loads(text), dict)
         assert switch.password not in text
-    log = http.job("logs.query", targets=address)["logs"][0]
-    assert log["status"] == "success" and "port 1 is now on-line" in log["text"], log["message"]
+    # Old clients must not initiate an SSH collection against this endpoint.
+    before = switch.commands.copy()
+    try:
+        http.post("/api/jobs", {"action": "logs.query", "body": {"targets": address}})
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 400, exc.code
+    else:
+        raise AssertionError("Retired AP log collection job accepted")
+    assert switch.commands == before
 
     ports = http.job("ports.query", targets=address + " 1")
     row = ports["rows"][0]
@@ -244,7 +243,6 @@ def exercise(http, switch):
     switch.host_key = paramiko.RSAKey.generate(2048)
     blocked = http.job("backup.run", targets=address, max_attempts=1, concurrency=1)
     assert blocked["rows"][0]["status"] == "failed"
-    assert http.job("logs.query", targets=address)["logs"][0]["status"] == "failed"
     changed = http.job("ports.refresh", targets=address + " 1")["rows"][0]
     assert changed["error_code"] == "HOST_KEY_CHANGED"
     http.job("control.inspect", targets=[target], expect_failure=True)
@@ -325,7 +323,7 @@ def main():
                 assert switch.password not in log.read_text(encoding="utf-8")
             print(
                 f"PASS {info['version']} HTTP + real loopback SSH: trust boundary, backup, downloads, "
-                "live logging, AP-535 live query, profiles, confirmed OFF/ON, replay rejection, "
+                "retired log action, AP-535 live query, profiles, confirmed OFF/ON, replay rejection, "
                 "audit history, session close and server shutdown."
             )
         finally:

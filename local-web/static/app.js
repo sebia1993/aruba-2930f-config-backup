@@ -6,11 +6,11 @@ const operationNames = {poe_on: 'PoE 전원 ON', poe_off: 'PoE 전원 OFF', enab
 const jobNames = {
   'session.open': '접속 계정 적용', 'session.close': '세션 해제', 'hostkey.inspect': '호스트 키 조회',
   'hostkey.approve': '호스트 키 승인', 'hostkey.list':'등록된 키 조회', 'hostkey.forget':'등록된 키 삭제', 'ports.query': '포트 조회', 'ports.refresh':'선택 범위 재조회',
-  'profiles.export': '대상 프로필 저장', 'profiles.import': '대상 프로필 열기', 'logs.query': '스위치 로그 수집',
+  'profiles.export': '대상 프로필 저장', 'profiles.import': '대상 프로필 열기',
   'backup.run': '스위치 컨피그 백업', 'control.preview': '포트 제어 검토', 'control.apply': '포트 명령 실행'
 };
 const stateNames = {ok:'성공',success:'성공',failed:'실패',cancelled:'취소',unsupported:'미지원',unknown:'미등록',changed:'키 변경',trusted:'등록됨',rejected:'거부',retry_exhausted:'접속 재시도 소진',verified:'검증 완료',unchanged:'이미 요청 상태',preflight_failed:'사전 검증 실패',unverified:'검증 미완료',paused:'일시 중지',skipped:'건너뜀',blocked:'실행 차단',result_unknown:'결과 미기록'};
-const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), tileRow:null, logs:[], chosenLog:null, logLoaded:false, liveId:null, inspectedRow:null };
+const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), tileRow:null, liveId:null, inspectedRow:null };
 const dialog = $('review');
 const queryCredentials = $('queryCredentials');
 Object.assign(jobNames, {'targets.preview':'대상 목록 검토','targets.apply':'대상 목록 적용','control.inspect':'단일 포트 상태 조회','control.quick':'빠른 제어 검토','control.quick-execute':'빠른 PoE 제어','backup.pick-directory':'백업 폴더 선택'});
@@ -209,9 +209,6 @@ themeToggle.onclick = () => {
 let savedTheme;
 try { savedTheme = localStorage.getItem('aruba2930f.portMatrix.theme'); } catch {}
 theme(savedTheme === 'light' ? 'light' : 'dark');
-function postLog(log) {
-  if (log && ui.logLoaded) $('logViewer').contentWindow.postMessage({type:'aruba-switch-log', source:log.hostname ? log.hostname + ' (' + log.endpoint + ')' : log.endpoint, text:log.text}, location.origin);
-}
 function monitor() {
   return $('matrixViewer').contentWindow?.PortMonitor;
 }
@@ -352,8 +349,6 @@ function postMatrix(keepView=false,periodic=false) {
 }
 window.addEventListener('message',e=>{
   if (e.origin !== location.origin || !e.data) return;
-  if (e.source === $('logViewer').contentWindow && e.data.type === 'aruba-log-loaded' && e.data.ok === false)
-    notify('로그 수집 후 분석 결과: ' + e.data.message,true);
   if (e.source === $('matrixViewer').contentWindow) {
     if (e.data.type==='aruba-observed-port') selectObservedPort(e.data,false);
     if (e.data.type==='aruba-inspect-port') selectObservedPort(e.data,true);
@@ -381,13 +376,14 @@ function fitEmptyViewer(frame) {
   });
   noticeObserver.observe(sourceBar);
 }
-for (const frame of all('iframe')) frame.addEventListener('load', () => {
-  frame.contentWindow.postMessage({type:'aruba-theme',theme:document.documentElement.dataset.theme}, location.origin);
-  if (frame.id === 'logViewer') { ui.logLoaded = true; postLog(ui.chosenLog); }
-  if (frame.id === 'matrixViewer' && frame.contentWindow.location.pathname === '/matrix') { fitEmptyViewer(frame); postMatrix(); updatePortActions(); }
+const matrixFrame=$('matrixViewer');
+matrixFrame.addEventListener('load', () => {
+  if (matrixFrame.contentWindow.location.pathname !== '/matrix') return;
+  matrixFrame.contentWindow.postMessage({type:'aruba-theme',theme:document.documentElement.dataset.theme},location.origin);
+  fitEmptyViewer(matrixFrame);
+  postMatrix();
+  updatePortActions();
 });
-// A cached viewer may finish loading before the deferred script attaches its handler.
-if ($('logViewer').contentDocument?.readyState === 'complete' && $('logViewer').contentWindow.location.pathname === '/logs') ui.logLoaded = true;
 const phoneLayout = matchMedia('(max-width:650px), (max-width:950px) and (max-height:500px)');
 const mobileServerInfo = $('mobileServerInfo');
 function placeServerInfo() {
@@ -410,11 +406,10 @@ mobileServerInfo.addEventListener('keydown', event => {
   }
 });
 function route() {
-  if (['#home','#history'].includes(location.hash)) history.replaceState(history.state,'','#ports');
-  const key = location.hash.slice(1);
-  const admin = key === 'connect';
   const links = all('nav a');
-  const link = admin ? null : links.find(a => a.hash === '#' + key) || links[0];
+  const admin = location.hash === '#connect';
+  const link = admin ? null : links.find(a => a.hash === location.hash) || links[0];
+  if (link && location.hash !== link.hash) history.replaceState(history.state,'',link.hash);
   const name = admin ? 'connect' : link.hash.slice(1);
   for (const node of links) {
     if (node === link) node.setAttribute('aria-current','page'); else node.removeAttribute('aria-current');
@@ -599,19 +594,6 @@ function showStoredKeys(keys) {
   }
 }
 $('listKeys').onclick = () => run('hostkey.list',{},r=>showStoredKeys(r.keys || []));
-form('logForm', () => {
-  runSsh('logs.query',{targets:$('logTargets').value.trim()},r => {
-    ui.logs = r.logs || [];
-    const first = ui.logs.find(log => log.status === 'success' && log.text);
-    const output = $('logResults');
-    output.hidden = false;
-    output.replaceChildren(simpleTable([
-      ['스위치','endpoint'],['호스트 이름','hostname'],['수집 결과',x=>stateNames[x.status] || x.status],['상세','message',true],
-      ['관제',x=>x.status === 'success' && x.text ? button('이 로그 보기',()=>{ui.chosenLog=x;postLog(x);$('logViewer').scrollIntoView({block:'start'});}) : '—']
-    ],ui.logs));
-    if (first) { ui.chosenLog = first; postLog(first); }
-  });
-});
 function backup(body) {
   runSsh('backup.run',body,r => showBackupResult(r,body));
 }

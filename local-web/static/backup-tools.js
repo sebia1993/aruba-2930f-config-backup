@@ -116,11 +116,6 @@
     ['operation','제어 동작','PoE 또는 인터페이스 상태 변경을 선택합니다.'],['selectionScope','선택 범위','대상 선택 범위를 정합니다.'],
     ['preview','명령 검토','명령 실행 전 대상과 현재 상태를 검토합니다.'],['controlResult','명령 실행 결과','검증된 포트 변경 결과를 표시합니다.']
   ]);
-  register('AP 로그 관제','static/logs.html',[
-    ['navAttention','우선 점검','점검할 포트만 표시합니다.'],['openFiles','로그 파일 열기','스위치 로그 파일을 읽습니다.'],
-    ['pasteText','로그 붙여넣기','스위치 출력 텍스트를 입력합니다.'],['cards','세 가지 상태','전력 및 링크 상태별 수량을 표시합니다.'],
-    ['rows','포트별 상태','포트별 마지막 전력 및 링크 상태를 표시합니다.'],['detail','포트 이벤트 상세','선택한 포트의 마지막 근거 이벤트를 확인합니다.']
-  ],'logViewer');
   register('포트·PoE 관리','static/matrix.html',[
     ['search','결과 검색','장비나 포트 또는 AP 이름으로 관측값을 찾습니다.'],
     ['device','스위치 필터','한 스위치의 포트로 결과를 좁힙니다.'],['status','포트 결과 필터','전력 상태와 조회·설정 조건으로 포트를 좁힙니다.'],
@@ -207,12 +202,12 @@
     },true);
   }
   bind(document,'');
-  const embedded = new WeakSet();
-  for (const frame of [$('logViewer'),$('matrixViewer')]) {
-    function attach() {
-      const doc = frame.contentDocument;
-      if (doc && !embedded.has(doc)) { embedded.add(doc); bind(doc,frame.id); }
-    }
-    attach(); frame.addEventListener('load',attach);
+  const frame = $('matrixViewer');
+  let boundDocument;
+  function attach() {
+    const doc = frame.contentDocument;
+    if (doc && doc !== boundDocument) { bind(doc,frame.id); boundDocument=doc; }
   }
+  attach();
+  frame.addEventListener('load',attach);
 })();

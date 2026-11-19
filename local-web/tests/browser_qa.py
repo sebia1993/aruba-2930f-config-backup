@@ -122,16 +122,15 @@ def assert_theme_action(page, mode):
 def verify_standalone_themes(page):
     viewer = page.context.browser.new_page(storage_state=page.context.storage_state())
     try:
-        for path in ("/logs", "/matrix"):
-            viewer.goto(urljoin(page.url, path))
-            assert_theme_action(viewer, "dark")
-            toggle = viewer.locator("#themeToggle")
-            toggle.press("Space")
-            assert_theme_action(viewer, "light")
-            viewer.reload()
-            assert_theme_action(viewer, "light")
-            toggle.press("Enter")
-            assert_theme_action(viewer, "dark")
+        viewer.goto(urljoin(page.url, "/matrix"))
+        assert_theme_action(viewer, "dark")
+        toggle = viewer.locator("#themeToggle")
+        toggle.press("Space")
+        assert_theme_action(viewer, "light")
+        viewer.reload()
+        assert_theme_action(viewer, "light")
+        toggle.press("Enter")
+        assert_theme_action(viewer, "dark")
     finally:
         viewer.close()
 
@@ -174,15 +173,19 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     page.goto(url)
     verify_retired_port_files(page, backup_directory.parent)
     expect(page.locator("#version")).to_contain_text("v1.")
-    logs = page.frame_locator("#logViewer")
-    expect(logs.locator("#sourceSummary")).to_have_text("로그 미선택")
-    expect(logs.locator("#logReport")).to_be_hidden()
-    expect(logs.locator("#rows tr")).to_have_count(0)
-    expect(logs.locator("#cards > *")).to_have_count(0)
-    expect(logs.locator("#navAttention")).to_be_disabled()
-    expect(logs.locator("#resetDemo")).to_have_count(0)
+    expect(page.locator('nav a[aria-current="page"]')).to_have_attribute("href", "#ports")
+    expect(page.locator('[data-page="ports"]')).to_be_visible()
+    links = page.get_by_role("navigation", name="주 메뉴").get_by_role("link")
+    assert links.evaluate_all("links => links.map(link => link.hash)") == [
+        "#ports",
+        "#cable",
+        "#backup",
+    ]
+    expect(page.locator('#logViewer, [data-page="logs"], #logForm')).to_have_count(0)
+    for path in ("/logs", "/static/logs.html"):
+        assert page.request.get(urljoin(page.url, path)).status == 404
     if shots:
-        page.screenshot(path=shots / "01-local-log-dashboard.png")
+        page.screenshot(path=shots / "01-local-port-dashboard.png")
 
     def nav(key):
         page.locator(f'nav a[href="#{key}"]').click()
@@ -192,15 +195,13 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     toggle = page.locator("#themeToggle")
     toggle.press("Space")
     assert_theme_action(page, "light")
-    expect(logs.locator("html")).to_have_attribute("data-theme", "light")
-    expect(logs.locator("#themeToggle")).to_be_hidden()
     page.set_viewport_size({"width": 390, "height": 844})
     assert_theme_action(page, "light")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     if shots:
-        page.screenshot(path=shots / "02-mobile-log-dashboard.png")
+        page.screenshot(path=shots / "02-mobile-port-dashboard.png")
 
-    # Opening the live matrix after a switch and reloading should keep both viewers in sync.
+    # The embedded matrix follows the host theme across a reload.
     nav("ports")
     matrix = page.frame_locator("#matrixViewer")
     expect(matrix.locator("html")).to_have_attribute("data-theme", "light")
@@ -210,8 +211,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(matrix.locator("html")).to_have_attribute("data-theme", "light")
     toggle.press("Enter")
     assert_theme_action(page, "dark")
-    for frame in (logs, matrix):
-        expect(frame.locator("html")).to_have_attribute("data-theme", "dark")
+    expect(matrix.locator("html")).to_have_attribute("data-theme", "dark")
     page.set_viewport_size({"width": 1440, "height": 960})
     verify_standalone_themes(page)
 
@@ -376,37 +376,13 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
     assert switch.poe_enabled
     expect_power_result(page, address, "미측정", "8.1 W")
-    nav("logs")
-    page.locator("#sshLogs summary").click()
-    page.locator("#logTargets").fill(address + "\n" + second_address)
-    page.locator("#logForm button").click()
-    expect(page.locator("#logResults")).to_contain_text("성공", timeout=90000)
-    expect(logs.locator("#sourceSummary")).to_contain_text("edge-lab")
-    for endpoint in (second_address, address):
-        page.locator("#logResults tbody tr").filter(has_text=endpoint).get_by_role(
-            "button", name="이 로그 보기"
-        ).click()
-        expect(logs.locator("#sourceSummary")).to_contain_text(endpoint)
-        expect(logs.locator("#logReport")).to_be_visible()
-        for state in ("off", "down", "up"):
-            expect(logs.locator(f'#rows tr[data-status="{state}"]')).to_have_count(1)
-            expect(logs.locator("#count-" + state)).to_have_text("1")
-    logs.locator("#navAttention").click()
-    expect(logs.locator("#rows tr")).to_have_count(2)
-    logs.locator("#navAll").click()
-    page.set_viewport_size({"width": 390, "height": 844})
-    picked_port = logs.locator('#rows tr[data-status="down"] .row-name')
-    picked_port.click()
-    expect(logs.locator("#logDetailTitle")).to_be_focused()
-    expect(logs.locator("#detail h3")).to_contain_text("포트 2")
-    logs.locator("#backToLogPort").click()
-    expect(picked_port).to_be_focused()
-    page.set_viewport_size({"width": 1440, "height": 960})
     expect(page.locator('a[href="#history"], [data-page="history"]')).to_have_count(0)
-    page.evaluate("location.hash = 'history'")
-    page.wait_for_url("**/#ports")
-    expect(page.locator('nav a[href="#ports"]')).to_have_attribute("aria-current", "page")
-    expect(page.locator("#controlResult")).to_contain_text("검증 완료")
+    for retired in ("logs", "history"):
+        nav("cable")
+        page.evaluate("key => { location.hash = key; }", retired)
+        page.wait_for_url("**/#ports")
+        expect(page.locator('nav a[href="#ports"]')).to_have_attribute("aria-current", "page")
+        expect(page.locator("#controlResult")).to_contain_text("검증 완료")
     nav("backup")
     expect(report).to_be_visible()
     page.locator("#backupResult").get_by_role("button", name="결과 폴더 열기").click()
@@ -421,9 +397,9 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#knownKeys")).to_contain_text("등록된 호스트 키가 없습니다.")
     page.locator("#logout").click()
     expect(page.locator("#connectionState")).to_have_text("계정 미설정")
-    nav("logs")
-    page.locator("#logTargets").fill(address)
-    log_button = page.get_by_role("button", name="로그 수집")
+    nav("ports")
+    edit_query_targets(page).fill(address + " 1")
+    query_button = page.locator("#queryPorts")
     calls = []
 
     def record_job(request):
@@ -431,17 +407,17 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
             calls.append(request.post_data_json["action"])
 
     page.on("request", record_job)
-    log_button.click()
+    query_button.click()
     dialog = page.get_by_role("dialog", name="SSH 접속 계정")
     expect(dialog).to_be_visible()
     page.keyboard.press("Escape")
     expect(dialog).to_be_hidden()
-    expect(log_button).to_be_focused()
+    expect(query_button).to_be_focused()
     assert not calls
-    log_button.click()
+    query_button.click()
     enter_ssh_credentials(page, switch)
-    expect(page.locator("#statusText")).to_contain_text("로그 수집 완료", timeout=90000)
-    assert calls == ["session.open", "logs.query"]
+    expect(matrix.locator("#matrix [data-port-key]")).to_have_count(1, timeout=90000)
+    assert calls == ["session.open", "ports.query"]
     page.remove_listener("request", record_job)
     assert len(opened) == 2 and len(opened[0]) == 32 and opened[0] == opened[1]
     assert not errors, errors
@@ -528,7 +504,7 @@ def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chr
 def main():
     run_browser_case(exercise)
     print(
-        "PASS Chrome UI: local launch, three log states, themes, mobile layout, host trust, XLSX downloads, live matrix and review, confirmed batch/single SSH writes on loopback, live logs, retired history route, session close and shutdown."
+        "PASS Chrome UI: default ports page, three menus, themes, mobile layout, host trust, XLSX downloads, live matrix and review, confirmed batch/single SSH writes on loopback, retired routes, session close and shutdown."
     )
 
 

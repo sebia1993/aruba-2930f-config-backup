@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 from localweb.backup_destination import copy_backup_files
 from localweb.controls import Controls
-from localweb.operations import Operations, TargetInputError, _devices
+from localweb.operations import Operations, TargetInputError, _backup_targets
 from openpyxl import Workbook, load_workbook
 from verify_http_ssh import interface_status_table
 
@@ -53,7 +53,6 @@ class OperationsTests(unittest.TestCase):
             "show modules": "Chassis: Aruba 2930F JL255A",
             "show system information": "System Name : lab-edge",
             "show running-config": 'Running configuration:\nhostname "lab-edge"\n',
-            "show logging": "I 11/17/26 10:22:13 ports: port 24 is now on-line",
         }
         self.session.send_show.side_effect = lambda cmd, **_: self.commands[cmd]
         self.ops.collector = ArubaCollector(
@@ -75,6 +74,12 @@ class OperationsTests(unittest.TestCase):
 
     def call(self, name, **body):
         return self.ops.dispatch(name, body, self.cancel)
+
+    def read_cable(self, target):
+        self.session.read_cable.return_value = {"status": "stored", "pairs": []}
+        with patch("localweb.operations.CableSession", self.factory.create):
+            (row,) = self.call("cable.show", targets=f"{target.endpoint} 1")["rows"]
+            return row
 
     def approve(self):
         (check,) = self.call("hostkey.inspect", targets=self.target.endpoint)["checks"]
@@ -101,20 +106,8 @@ class OperationsTests(unittest.TestCase):
             self.call(
                 "hostkey.approve", endpoint=self.target.endpoint, fingerprint=self.fingerprint
             )
-        self.assertEqual(
-            self.call("logs.query", targets=self.target.endpoint)["logs"][0]["status"], "failed"
-        )
+        self.assertEqual(self.read_cable(self.target)["status"], "failed")
         self.factory.create.assert_not_called()
-
-    def test_log_path_closes_after_model_check_and_preserves_switch_output(self):
-        (row,) = self.call("logs.query", targets=self.target.endpoint)["logs"]
-        self.assertEqual(row["text"], self.commands["show logging"])
-        self.assertEqual(row["hostname"], "lab-edge")
-        self.assertEqual(
-            [call.args[0] for call in self.session.send_show.call_args_list],
-            ["show version", "show modules", "show logging"],
-        )
-        self.session.close.assert_called_once()
 
     def test_first_contact_pins_each_ssh_port_and_reuses_persisted_records(self):
         second = DeviceTarget(self.target.ip, 2223)
@@ -122,14 +115,14 @@ class OperationsTests(unittest.TestCase):
         other = HostKeyObservation(second, "ssh-ed25519", sha256_fingerprint(b"other device key"))
         self.probe.probe.side_effect = [original, other, other]
         for device in (self.target, second):
-            (row,) = self.call("logs.query", targets=device.endpoint)["logs"]
-            self.assertEqual(row["status"], "success")
+            row = self.read_cable(device)
+            self.assertEqual(row["status"], "stored")
         store = HostKeyStore(self.ops.host_key_store.path)
         self.assertEqual(store.check(original).state, HostKeyTrustState.TRUSTED)
         self.assertEqual(store.check(other).state, HostKeyTrustState.TRUSTED)
         before = store.path.read_bytes()
-        (row,) = self.call("logs.query", targets=second.endpoint)["logs"]
-        self.assertEqual(row["status"], "success")
+        row = self.read_cable(second)
+        self.assertEqual(row["status"], "stored")
         self.assertEqual(store.path.read_bytes(), before)
 
     def test_cancel_during_first_probe_leaves_no_pin_or_authenticated_session(self):
@@ -138,7 +131,7 @@ class OperationsTests(unittest.TestCase):
             return HostKeyObservation(target, "ssh-ed25519", self.fingerprint)
 
         self.probe.probe.side_effect = cancel_on_probe
-        self.call("logs.query", targets=self.target.endpoint)
+        self.read_cable(self.target)
         self.assertEqual(self.ops.host_key_store.list_approved(), ())
         self.factory.create.assert_not_called()
 
@@ -146,7 +139,7 @@ class OperationsTests(unittest.TestCase):
         with patch.object(
             self.ops.host_key_store, "_write_endpoints", side_effect=OSError
         ) as write:
-            (row,) = self.call("logs.query", targets=self.target.endpoint)["logs"]
+            row = self.read_cable(self.target)
         write.assert_called_once()
         self.assertEqual(row["status"], "failed")
         self.assertEqual(self.ops.host_key_store.list_approved(), ())
@@ -160,31 +153,18 @@ class OperationsTests(unittest.TestCase):
             with self.subTest(observation=observation):
                 self.probe.probe.side_effect = None
                 self.probe.probe.return_value = observation
-                (row,) = self.call("logs.query", targets=self.target.endpoint)["logs"]
+                row = self.read_cable(self.target)
                 self.assertEqual(row["status"], "failed")
                 self.assertEqual(self.ops.host_key_store.list_approved(), ())
                 self.factory.create.assert_not_called()
 
-    def test_log_read_blocked_for_unsupported_switch(self):
+    def test_cable_read_blocked_for_unsupported_switch(self):
         self.approve()
         self.commands.update({"show version": "Unidentified", "show modules": "Unknown"})
-        (row,) = self.call("logs.query", targets=self.target.endpoint)["logs"]
+        row = self.read_cable(self.target)
         self.assertEqual(row["status"], "failed")
-        self.assertNotIn("show logging", [c.args[0] for c in self.session.send_show.call_args_list])
+        self.session.read_cable.assert_not_called()
         self.session.close.assert_called_once()
-
-    def test_full_log_budget_stops_next_endpoint_before_network_access(self):
-        self.approve()
-        with patch(
-            "localweb.operations.MAX_LOG_BATCH_BYTES", len(self.commands["show logging"].encode())
-        ):
-            first, second = self.call("logs.query", targets=self.target.endpoint + "\n192.0.2.49")[
-                "logs"
-            ]
-        self.assertEqual(first["status"], "success")
-        self.assertEqual(second["status"], "failed")
-        self.assertIn("8 MiB", second["message"])
-        self.factory.create.assert_called_once()
 
     def test_legacy_pin_import_is_read_only_and_forget_requires_exact_confirmation(self):
         legacy = self.ops.legacy_key_store
@@ -365,12 +345,10 @@ class OperationsTests(unittest.TestCase):
         for row in ("3행", "4행", "5행"):
             self.assertIn(row, str(caught.exception))
         self.probe.probe.assert_not_called()
-        separate = _devices({"targets": "192.0.2.2\n192.0.2.2:2222"}, backup_targets=True)
+        separate = _backup_targets({"targets": "192.0.2.2\n192.0.2.2:2222"})
         self.assertEqual([t.port for t in separate], [22, 2222])
         many = {"targets": "\n".join(f"192.0.{n // 250}.{n % 250 + 1}" for n in range(301))}
-        self.assertEqual(len(_devices(many, backup_targets=True)), 301)
-        with self.assertRaises(ValueError):
-            _devices(many)
+        self.assertEqual(len(_backup_targets(many)), 301)
 
     def test_folder_picker_returns_chosen_path_or_cancel(self):
         with patch("localweb.backup_tools.subprocess.Popen") as launch:
@@ -556,7 +534,7 @@ class OperationsTests(unittest.TestCase):
     def test_cancel_and_invalid_addresses_never_open_a_connection(self):
         self.cancel.set()
         with self.assertRaises(CollectionFailure):
-            self.call("logs.query", targets=self.target.endpoint)
+            self.call("cable.show", targets=f"{self.target.endpoint} 1")
         self.cancel.clear()
         with self.assertRaises(ValueError):
             self.call("backup.run", targets=f"{self.target.endpoint}\ninvalid", max_attempts=1)

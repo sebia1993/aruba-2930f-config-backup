@@ -20,7 +20,7 @@ from urllib.request import urlopen
 from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.11.0"
+VERSION = "1.12.0"
 PYTHON = "3.14.3"
 EMBED_SHA256 = "ad4961a479dedbeb7c7d113253f8db1b1935586b73c27488712beec4f2c894e6"
 CACHE = Path(os.environ["LOCALAPPDATA"]) / "Aruba2930FBuild" / PYTHON
@@ -315,7 +315,11 @@ def check_payload(path):
                 raise ValueError(f"Development or operational data in release: {name}")
             if name.removeprefix("runtime/packages/") in VENDOR_FIXTURES:
                 raise ValueError(f"Vendor demonstration or test fixture in release: {name}")
-            if name in {"static/csv.html", "core/aruba2930f_backup/poe_query_report.py"}:
+            if name in {
+                "static/csv.html",
+                "static/logs.html",
+                "core/aruba2930f_backup/poe_query_report.py",
+            }:
                 raise ValueError(f"Retired application asset: {name}")
             if base in APP_TYPES:
                 tokens = re.split(r"[._-]", p.stem.lower())

@@ -24,10 +24,9 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.11.0"
+VERSION = "1.12.0"
 STATIC = {
     "/": "index.html",
-    "/logs": "logs.html",
     "/matrix": "matrix.html",
     "/power-matrix.js": "power-matrix.js",
     **{
@@ -178,7 +177,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path in STATIC:
                 if (
-                    path in {"/", "/matrix", "/logs"}
+                    path in {"/", "/matrix"}
                     and self.headers.get("Sec-Fetch-Mode") == "navigate"
                     and self.headers.get("Sec-Fetch-Dest") == "document"
                 ):
