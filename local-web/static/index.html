@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="/static/port-tools.css">
   <link rel="stylesheet" href="/static/backup-tools.css">
+  <script src="/static/power-matrix.js" defer></script>
   <script src="/static/app.js" defer></script>
   <script src="/static/port-tools.js" defer></script>
   <script src="/static/control-tools.js" defer></script>
@@ -58,7 +59,7 @@
       <div class="bar" id="liveResultsBar" hidden><button type="button" id="showMatrix" hidden>최근 실시간 조회 보기</button><div id="queryFiles" class="filelinks"></div></div>
       <div id="portMonitor"><iframe id="csvViewer" class="viewer" title="포트 관제 · 점검 목록 · 변화 비교" data-src="/csv?embedded=1"></iframe></div>
       <section id="liveScope" class="panel" aria-label="실시간 포트 검색과 재조회" hidden><div class="panelbody">
-        <div class="bar filters"><label class="grow">결과 검색<input id="portSearch" type="search" placeholder="주소, 포트 또는 AP 이름"></label><label>스위치<select id="switchFilter"><option value="">전체 스위치</option></select></label><label>조회 필터<select id="portFilter"><option value="">전체 결과</option><option value="failed">조회 실패</option><option value="unknown">전력 판정 자료 부족</option><option value="off">PoE 설정 OFF</option><option value="disabled">포트 Disable</option></select></label></div>
+        <div class="bar filters"><label class="grow">결과 검색<input id="portSearch" type="search" placeholder="주소, 포트 또는 AP 이름"></label><label>스위치<select id="switchFilter"><option value="">전체 스위치</option></select></label><label>조회 필터<select id="portFilter"><option value="">전체 결과</option><optgroup label="전력 판정" id="powerFilterOptions"></optgroup><optgroup label="조회·설정"><option value="failed">조회 실패</option><option value="off">PoE 설정 OFF</option><option value="disabled">포트 Disable</option></optgroup></select></label></div>
         <div class="bar"><button type="button" id="refreshPorts" data-live>선택 포트 재조회</button><button type="button" id="refreshSwitch" data-live>현재 스위치 재조회</button></div>
       </div></section>
       <div id="portTargets" hidden>

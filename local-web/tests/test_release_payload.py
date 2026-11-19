@@ -8,6 +8,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from tools.build_release import DEMO_MARKERS, check_payload, write_runtime
+from tools.export_log_viewer import MATRIX_SOURCE, render
 
 
 class ReleasePayloadTests(unittest.TestCase):
@@ -43,6 +44,13 @@ class ReleasePayloadTests(unittest.TestCase):
                     z.writestr(name, content)
                 with self.assertRaisesRegex(ValueError, name):
                     check_payload(self.zip)
+
+    def test_standalone_matrix_includes_the_same_power_classifier(self):
+        page = render(matrix=True)
+        classifier = MATRIX_SOURCE.with_name("power-matrix.js").read_text(encoding="utf-8")
+        self.assertIn(classifier.encode("utf-8"), page)
+        self.assertNotIn(b'src="power-matrix.js"', page)
+        self.assertNotIn(b"/static/embed.js", page)
 
     def test_vendor_test_data_removed_licenses_rules_and_wheel_hashes_preserved(self):
         runtime = self.root / "runtime"

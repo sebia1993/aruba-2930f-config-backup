@@ -100,6 +100,8 @@ def matrix_fields(result):
 def matrix_observation(result):
     item = make_matrix_port(result.group, result.interface, result)
     snap = result.snapshot
+    assessment = result.assessment
+    lldp = result.lldp
     return {
         "ip": result.group.target.ip,
         "ssh_port": result.group.target.port,
@@ -107,11 +109,38 @@ def matrix_observation(result):
         "label": result.group.label,
         "hostname": item.switch,
         "status": result.status.value,
+        "complete": result.complete,
+        "error_code": result.error_code.value if result.error_code else "",
+        "message": result.message,
         "matrix_state": item.state.value,
         "matrix_label": STATE_LABELS[item.state],
         "matrix_note": item.note,
         "watts": snap.watts if snap else None,
+        "poe_enabled": snap.poe_enabled if snap else None,
         "poe_status": snap.poe_status if snap else "",
+        "assessment_status": assessment.status.value if assessment else "",
+        "assessment_reason": assessment.reason if assessment else "",
+        "requested_watts": str(assessment.requested_watts)
+        if assessment and assessment.requested_watts is not None
+        else None,
+        "allocated_watts": str(assessment.allocated_watts)
+        if assessment and assessment.allocated_watts is not None
+        else None,
+        "power_evidence": {"issues": result.power_evidence.issues}
+        if result.power_evidence
+        else None,
+        "lldp_status": lldp.status.value if lldp else "",
+        "lldp_error_code": lldp.error_code.value if lldp and lldp.error_code else "",
+        "lldp_neighbors": [
+            {
+                "system_name": neighbor.system_name,
+                "system_description": neighbor.system_description,
+                "model": neighbor.model,
+            }
+            for neighbor in lldp.neighbors
+        ]
+        if lldp
+        else [],
         "link_status": item.link,
         "ap_names": item.ap,
         "observed_at": item.observed_at,

@@ -93,6 +93,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     page.locator("#queryForm .primary").click()
     expect(csv_frame.locator("#tbody")).to_be_visible(timeout=90000)
     expect(csv_frame.locator("#tbody")).to_contain_text("fixture-ap")
+    expect(csv_frame.locator("#matrix [data-port-key]")).to_have_attribute("data-state", "normal")
     page.locator("#portControlTab").click()
     expect(page.locator("#portTable")).to_contain_text("8.1 W", timeout=90000)
     page.get_by_role("button", name="상세 보기").click()
@@ -118,7 +119,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
         {"name": "earlier.csv", "mimeType": "text/csv", "buffer": csv_data}
     )
     expect(csv_frame.locator("h1")).to_contain_text("비교")
-    expect(csv_frame.locator("#extraView")).to_contain_text("상태 변화")
+    expect(csv_frame.locator("#extraView")).to_contain_text("변화 목록")
     page.locator("#showMatrix").click()
     page.locator("#portControlTab").click()
     page.locator("#selectEligible").click()

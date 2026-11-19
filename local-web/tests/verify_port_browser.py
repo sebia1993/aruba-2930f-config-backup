@@ -101,7 +101,8 @@ def exercise(page, switch):
     expect(page.locator("#targetPreview")).to_contain_text("교육동")
     page.locator("#acceptTargets").click()
     expect(page.locator(".matrix-tile")).to_have_count(1)
-    expect(page.locator(".matrix-tile")).to_have_attribute("data-state", "pending")
+    expect(page.locator(".matrix-tile")).to_have_attribute("data-state", "unclassified")
+    expect(page.locator(".matrix-tile")).to_have_attribute("data-phase", "pending")
     source = page.locator("#queryTargets").input_value()
     bulk = "\n".join(f"192.0.{n // 250 + 1}.{n % 250 + 1} 1-48" for n in range(300))
     page.locator("#queryTargets").fill(bulk)
@@ -148,8 +149,8 @@ def exercise(page, switch):
     page.locator("#portLiveTab").click()
     tile = page.locator(".matrix-tile")
     expect(tile).to_have_count(1)
-    # The switch returns a power draw but no AP-535 negotiation details.
-    expect(tile).to_have_attribute("data-state", "warning")
+    # The switch is delivering power to an LLDP-identified, named AP.
+    expect(tile).to_have_attribute("data-state", "normal")
     tile.click()
     expect(page.locator("#matrixDetails")).to_contain_text("8.1 W")
     page.locator("#portControlTab").click()
@@ -162,6 +163,7 @@ def exercise(page, switch):
     expect(page.locator("#matrixGroups")).to_have_attribute("data-zoom", "large")
     page.locator("#matrixPriority").click()
     expect(page.locator("#matrixPriority")).to_have_attribute("aria-pressed", "true")
+    expect(tile).to_have_count(0)
     page.locator("#matrixPriority").click()
     tile.click()
     page.locator("#refreshPorts").click()

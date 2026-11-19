@@ -23,11 +23,12 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.3.4"
+VERSION = "1.3.5"
 STATIC = {
     "/": "index.html",
     "/logs": "logs.html",
     "/csv": "csv.html",
+    "/power-matrix.js": "power-matrix.js",
     **{
         "/static/" + name: name
         for name in (
@@ -36,6 +37,7 @@ STATIC = {
             "embed.css",
             "embed.js",
             "port-tools.js",
+            "power-matrix.js",
             "port-tools.css",
             "backup-tools.js",
             "backup-tools.css",

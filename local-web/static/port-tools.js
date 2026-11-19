@@ -1,4 +1,4 @@
-/* Register explicit SSH targets and project the same port states as the desktop matrix. */
+/* Register SSH targets and show the same observed power states as the CSV viewer. */
 (() => {
   const raw = $('queryTargets');
   const jobText = {'targets.preview':'대상 목록 검증', 'targets.apply':'대상 목록 적용'};
@@ -8,14 +8,28 @@
   let groups = [], preview = null, page = 0, focused = '', live = new Map(), loading = new Set();
   let matrixJob = '', attention = false, registeredText = '', progressGroups = null;
   const pageSize = 192;
-  const stateText = {normal:'링크 Up',attention:'링크 Down',warning:'주의',off:'설정 OFF',unknown:'미수집',pending:'조회 대기',loading:'조회 중'};
-  const marked = new Set(['warning','attention']);
+  const marked = new Set(['unpowered','limited']);
+  const noPowerData = PowerMatrix.classify({});
+  const phaseLabels = {pending:'조회 대기',loading:'조회 중',stale:'재조회 필요'};
+  const phaseReasons = {pending:'이 포트의 관측값이 없습니다.',loading:'조회가 완료되면 전력을 판정합니다.',stale:'유효한 최신 관측값이 없습니다. 현재 전력 상태를 다시 조회하세요.'};
   const cmp = new Intl.Collator('en',{numeric:true}).compare;
   const form = $('queryForm');
   const matrix = document.createElement('article');
   matrix.className = 'panel port-matrix-panel';
   matrix.innerHTML = '<header><h2>등록 포트 매트릭스</h2><div class="tools"><button type="button" id="matrixPriority" aria-pressed="false">우선 확인</button><label>크기 <select id="matrixSize"><option value="small">작게</option><option value="medium" selected>보통</option><option value="large">크게</option></select></label></div></header><div class="panelbody"><p id="matrixCounts" class="hint"></p><div id="matrixGroups"></div><div id="matrixPager" class="bar" hidden><button type="button" id="matrixPrev">이전</button><span id="matrixPage"></span><button type="button" id="matrixNext">다음</button></div><div id="matrixDetails" hidden></div></div>';
   form.closest('article').after(matrix);
+
+  // Keep the three measured states visible even when a filter has an empty result.
+  const legend = elem('div',undefined,'matrix-legend');
+  legend.id = 'matrixLegend';
+  legend.setAttribute('aria-label','전력 판정 범례');
+  for (const state of powerStates) {
+    const entry = elem('span',PowerMatrix.labels[state],'power-badge');
+    entry.dataset.state=state;
+    entry.append(elem('b','0'));
+    legend.append(entry);
+  }
+  $('matrixCounts').before(legend);
 
   const tools = document.createElement('div');
   tools.className = 'bar target-tools';
@@ -144,10 +158,14 @@
     }
     return stableGroups([...items.values()]);
   }
+  function invalidatedKeys() {
+    return new Set(ui.rows.filter(row=>row.refreshInvalidated).map(portKey));
+  }
   function checkedTargets() {
-    const checked = [];
+    const checked = [], blocked = invalidatedKeys();
     for (const g of inventory()) for (const port of g.interfaces) {
-      if (ui.selected.has(address(g)+'|'+port)) checked.push({ip:g.ip,sshPort:Number(g.ssh_port || 22),port});
+      const key=address(g)+'|'+port;
+      if (ui.selected.has(key) && !blocked.has(key)) checked.push({ip:g.ip,sshPort:Number(g.ssh_port || 22),port});
     }
     return checked;
   }
@@ -158,9 +176,10 @@
   function scopeKeys() {
     const scope=$('selectionScope').value, device=currentAddress();
     if(scope==='switch'&&!device){notify('스위치 필터 또는 포트 상세에서 현재 장비를 선택하세요.',true);return null;}
-    if(scope==='filtered')return entries().map(item=>item.key);
+    const blocked=invalidatedKeys();
+    if(scope==='filtered')return entries().filter(item=>!blocked.has(item.key)).map(item=>item.key);
     return inventory().filter(g=>scope!=='switch'||address(g)===device)
-      .flatMap(g=>g.interfaces.map(p=>address(g)+'|'+p));
+      .flatMap(g=>g.interfaces.map(p=>address(g)+'|'+p)).filter(key=>!blocked.has(key));
   }
   function refreshTargets(bySwitch) {
     const device=currentAddress(), current=focused || ui.detail;
@@ -174,20 +193,28 @@
     if (!lines.length) notify(bySwitch?'스위치 필터 또는 포트 상세에서 장비를 선택하세요.':'재조회할 포트를 체크하거나 상세 보기를 여세요.',true);
     return lines.join('\n') || null;
   }
+  function observation(key, record) {
+    const fresh = live.get(key);
+    const waiting = loading.has(key) && !fresh;
+    const stale = record?.controlUsed && (record.status==='ok' || record.status==='refresh_pending');
+    const row = waiting ? null : fresh || (stale ? null : record);
+    const incomplete = row && [false,'no','false'].includes(row.complete);
+    let phase = 'observed';
+    if (waiting || (matrixJob && incomplete)) phase = 'loading';
+    else if (!fresh && stale) phase = 'stale';
+    else if (!row) phase = 'pending';
+    const power = phase==='observed' ? PowerMatrix.classify(row) : noPowerData;
+    return {row, phase, power, label:phaseLabels[phase] || power.label, reason:phaseReasons[phase] || power.reason};
+  }
   function entries() {
     const complete = new Map(ui.rows.map(r=>[portKey(r),r]));
-    const filterIndex = new Set(filteredRows().map(portKey));
-    const filtersActive = $('portFilter').value || $('portSearch').value.trim() || $('switchFilter').value;
-    const term=$('portSearch').value.trim().toLowerCase();
+    const filters = portFilters();
     const result = [];
     for (const g of inventory()) for (const port of g.interfaces) {
       const endpointKey=address(g), key=endpointKey+'|'+port;
-      const record=complete.get(key), row=live.get(key) || record;
-      if (filtersActive && record && !filterIndex.has(key)) continue;
-      if (filtersActive && !record && (($('switchFilter').value && $('switchFilter').value!==endpointKey) ||
-          $('portFilter').value || (term && ![endpointKey,g.label,port,row?.hostname,row?.ap_names].join(' ').toLowerCase().includes(term)))) continue;
-      const state = loading.has(key) && !live.has(key) ? 'loading' : row?.controlUsed ? 'unknown' : row ? row.matrix_state || 'unknown' : 'pending';
-      result.push({g,port,key,row,state,record});
+      const record=complete.get(key), view=observation(key,record);
+      if (!matchesPortFilters({ip:g.ip,ssh_port:g.ssh_port,label:g.label,interface:port},view,filters)) continue;
+      result.push({g,port,key,record,view,row:view.row,state:view.power.state});
     }
     return result;
   }
@@ -195,30 +222,30 @@
     const area=$('matrixDetails');
     area.hidden = !item;
     if (!item) return;
-    const {g,port,key,state,row}=item;
+    const {g,port,key,view,row}=item;
     const title = elem('strong',(row?.hostname || g.label || g.ip)+' · '+address(g)+' / '+port);
-    const facts = [row?.controlUsed ? '제어 후 재조회 필요 · 이전 관측' : stateText[state]];
-    if (row?.watts != null && row.watts !== '') facts.push(row.watts+' W');
+    const facts = [];
+    if (view.power.watts != null) facts.push(view.power.watts+' W');
     if (row?.link_status) facts.push(row.link_status);
-    if (row?.ap_names) facts.push(row.ap_names);
+    if (view.power.apName) facts.push(view.power.apName);
     if (row?.observed_at) facts.push(row.observed_at);
     const checkLabel = elem('label','', 'inline-check'), check = elem('input'); check.type='checkbox';
     check.dataset.matrixCheck = key; check.checked = ui.selected.has(key); check.disabled = ui.busy;
     check.onchange = ()=>{if(check.checked)ui.selected.add(key);else ui.selected.delete(key);renderPorts();};
     checkLabel.append(check,document.createTextNode('이 포트 체크'));
-    area.replaceChildren(title,elem('span',facts.join(' · ')),checkLabel);
-    if (row?.matrix_note) area.append(elem('small',row.matrix_note));
+    area.replaceChildren(title,powerBadge(view),elem('span',facts.join(' · ')),checkLabel,elem('small',view.reason));
   }
   function syncChecks() {
-    const known=new Map(inventory().map(g=>[address(g),g]));
+    const known=new Map(inventory().map(g=>[address(g),g])), blocked=invalidatedKeys();
     for (const node of matrix.querySelectorAll('[data-check-group]')) {
       const g=known.get(node.dataset.checkGroup);
       if (!g) continue;
-      const count=g.interfaces.filter(p=>ui.selected.has(address(g)+'|'+p)).length;
-      node.checked=count===g.interfaces.length; node.indeterminate=count>0&&!node.checked; node.disabled=ui.busy;
+      const keys=g.interfaces.map(p=>address(g)+'|'+p).filter(key=>!blocked.has(key));
+      const count=keys.filter(key=>ui.selected.has(key)).length;
+      node.checked=count>0 && count===keys.length; node.indeterminate=count>0&&!node.checked; node.disabled=ui.busy || !keys.length;
     }
     const check=matrix.querySelector('[data-matrix-check]');
-    if (check) { check.checked=ui.selected.has(check.dataset.matrixCheck);check.disabled=ui.busy; }
+    if (check) { check.checked=ui.selected.has(check.dataset.matrixCheck);check.disabled=ui.busy || blocked.has(check.dataset.matrixCheck); }
   }
   function selectItem(item) {
     focused=item.key;
@@ -230,12 +257,15 @@
   }
   function renderMatrix() {
     const items=entries(), counts={};
-    for(const item of items) counts[item.state]=(counts[item.state]||0)+1;
     const visible=attention ? items.filter(x=>marked.has(x.state)) : items;
+    for(const item of visible) counts[item.state]=(counts[item.state]||0)+1;
+    for(const badge of legend.children) badge.lastElementChild.textContent=counts[badge.dataset.state] || 0;
     const pages=Math.max(1,Math.ceil(visible.length/pageSize));
     page=Math.max(0,Math.min(page,pages-1));
     const start=page*pageSize, shown=visible.slice(start,start+pageSize);
-    $('matrixCounts').textContent = items.length ? '표시 '+items.length+'포트 · '+Object.keys(stateText).filter(k=>counts[k]).map(k=>stateText[k]+' '+counts[k]).join(' · ') : '검증한 스위치 목록을 적용하거나 포트를 조회하세요.';
+    const summary = [attention ? '우선 확인 '+visible.length+' / '+items.length+'포트' : '표시 '+visible.length+'포트'];
+    if (counts.unclassified) summary.push('미분류 '+counts.unclassified);
+    $('matrixCounts').textContent = items.length ? summary.join(' · ') : (inventory().length ? '검색 조건에 맞는 포트가 없습니다.' : '검증한 스위치 목록을 적용하거나 포트를 조회하세요.');
     $('matrixPriority').setAttribute('aria-pressed',String(attention));
     $('matrixGroups').dataset.zoom=$('matrixSize').value;
     const nodes=[], grids=new Map();
@@ -247,7 +277,8 @@
         check.type='checkbox'; check.dataset.checkGroup=addr;
         check.setAttribute('aria-label',addr+' 등록 포트 전체 체크');
         check.onchange=()=>{
-          for(const p of item.g.interfaces){const key=addr+'|'+p;if(check.checked)ui.selected.add(key);else ui.selected.delete(key);}
+          const blocked=invalidatedKeys();
+          for(const p of item.g.interfaces){const key=addr+'|'+p;if(check.checked && !blocked.has(key))ui.selected.add(key);else ui.selected.delete(key);}
           renderPorts();
         };
         const name=item.row?.hostname || item.g.label;
@@ -256,16 +287,16 @@
         const grid=elem('div',undefined,'matrix-tiles');group.append(grid);grids.set(addr,grid);nodes.push(group);
       }
       const tile=button(item.port,()=>selectItem(item),'matrix-tile');
-      tile.dataset.key=item.key;tile.dataset.state=item.state;
+      tile.dataset.key=item.key;tile.dataset.state=item.state;tile.dataset.phase=item.view.phase;
       tile.setAttribute('aria-pressed',String(focused===item.key));
-      tile.title=addr+' / '+item.port+' · '+stateText[item.state];
+      tile.title=[addr+' / '+item.port,item.view.label,item.view.power.watts!=null ? item.view.power.watts+' W' : '',item.view.power.apName].filter(Boolean).join(' · ');
       tile.setAttribute('aria-label',tile.title); grids.get(addr).append(tile);
     }
     if (attention && !shown.length) nodes.push(elem('p','현재 표시 범위에 우선 점검할 포트가 없습니다.','hint'));
     $('matrixGroups').replaceChildren(...nodes);
     $('matrixPager').hidden=pages<=1; $('matrixPage').textContent=(page+1)+' / '+pages;
     $('matrixPrev').disabled=page===0; $('matrixNext').disabled=page===pages-1;
-    details(items.find(x=>x.key===focused)); syncChecks();
+    details(visible.find(x=>x.key===focused)); syncChecks();
   }
   $('matrixSize').onchange=()=>{$('matrixGroups').dataset.zoom=$('matrixSize').value;};
   $('matrixPriority').onclick=()=>{attention=!attention;page=0;const first=entries().find(x=>marked.has(x.state));if (attention&&first) selectItem(first);else renderMatrix();};
@@ -280,16 +311,31 @@
     if (pos>=0) page=Math.floor(pos/pageSize);
     renderMatrix();
   }
-  function onJob(action,state) {
+  function onJob(action,state,body) {
     if (action==='ports.query' || action==='ports.refresh') {
       matrixJob=state==='running' ? action : '';
       if (state==='running') {
         progressGroups=null;live.clear();
         if (action==='ports.query') {
           loading=new Set(inventory().flatMap(g=>g.interfaces.map(p=>address(g)+'|'+p)));
+        } else if (body?.targets) {
+          // Refresh requests are built by refreshTargets from canonical endpoints and port lists.
+          loading=new Set(body.targets.split('\n').flatMap(line=>{
+            const [addr,ports]=line.split(' ');
+            return ports.split(',').map(port=>addr+'|'+port);
+          }));
+          ui.rows=ui.rows.map(row=>{
+            if (!loading.has(portKey(row))) return row;
+            const {ip,ssh_port,interface:port,label}=row;
+            return {ip,ssh_port,interface:port,label,status:'refresh_pending',controlUsed:true,refreshInvalidated:true};
+          });
+          expireLiveMatrix();
         }
-      } else {live.clear();loading.clear();progressGroups=null;}
-      renderMatrix();
+      } else {
+        live.clear();loading.clear();progressGroups=null;
+        for (const key of invalidatedKeys()) ui.selected.delete(key);
+      }
+      renderPorts();
     } else if (state==='idle') syncChecks();
   }
   function onProgress(action,progress) {
@@ -301,7 +347,7 @@
       loading=new Set(requested.flatMap(g=>g.interfaces.map(p=>address(g)+'|'+p)));
     }
     for(const row of progress.observations || []) live.set(portKey(row),row);
-    renderMatrix();
+    renderPorts();
   }
   function restoreInventory(items,targetsText) {
     if(!Array.isArray(items) || !items.length) return;
@@ -309,6 +355,17 @@
     $('targetCount').textContent=groups.length+'대 · '+targetCount(groups)+'포트 등록';
     renderMatrix();
   }
-  window.portTools={renderMatrix,selectDetail,syncChecks,onJob,onProgress,checkedTargets,scopeKeys,refreshTargets,restoreInventory};
+  function reconcileRows(rows) {
+    // A partial refresh export also contains earlier observations from other ports.
+    const invalid = new Map(ui.rows.filter(row=>row.refreshInvalidated).map(row=>[portKey(row),row]));
+    if (!invalid.size) return rows;
+    const reconciled=rows.map(row=>{
+      const key=portKey(row), previous=invalid.get(key);
+      invalid.delete(key);
+      return previous && !loading.has(key) && row.status==='ok' ? previous : row;
+    });
+    return reconciled.concat([...invalid.values()]);
+  }
+  window.portTools={observation,reconcileRows,renderMatrix,selectDetail,syncChecks,onJob,onProgress,checkedTargets,scopeKeys,refreshTargets,restoreInventory};
   renderMatrix();sync();
 })();
