@@ -410,9 +410,8 @@ class Operations:
                 refresh=action == "ports.refresh",
                 target_text=body["targets"],
             )
-        if action in {"cable.show", "cable.test"}:
-            testing = action == "cable.test"
-            if testing and body.get("confirmed") is not True:
+        if action == "cable.test":
+            if body.get("confirmed") is not True:
                 raise ValueError("선택 포트의 링크 단절 가능성을 확인한 뒤 테스트를 실행하세요.")
             groups = _groups(body)
             total = sum(len(group.interfaces) for group in groups)
@@ -422,10 +421,7 @@ class Operations:
             )
             return diagnose_ports(
                 groups,
-                lambda target: self._cable_session(
-                    target, self.credentials, options, cancel, privileged=testing
-                ),
-                testing,
+                lambda target: self._cable_session(target, self.credentials, options, cancel),
                 cancel,
                 self._progress,
             )
@@ -925,7 +921,7 @@ class Operations:
         }
 
     @contextmanager
-    def _cable_session(self, target, credentials, options, cancel, *, privileged):
+    def _cable_session(self, target, credentials, options, cancel):
         session = None
         try:
             _abort_if_cancelled(cancel)
@@ -946,7 +942,7 @@ class Operations:
             session = CableSession(target, credentials, options, self.host_key_store)
             session.connect()
             _abort_if_cancelled(cancel)
-            if credentials.enable_secret or (privileged and not session.get_prompt().endswith("#")):
+            if credentials.enable_secret or not session.get_prompt().endswith("#"):
                 session.enter_enable()
                 _abort_if_cancelled(cancel)
             session.disable_paging()

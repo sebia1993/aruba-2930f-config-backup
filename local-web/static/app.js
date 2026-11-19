@@ -1182,9 +1182,9 @@ async function start() {
       $('profileFiles').querySelector('a')?.focus();
     } else if (resumed?.action === 'control.quick-execute') {
       window.controlTools.showQuickResult(resumed.result,resumed.cancelled,true);
-    } else if (resumed?.action === 'cable.show' || resumed?.action === 'cable.test') {
+    } else if (resumed?.action === 'cable.test') {
       window.cableTools?.sync(true);
-      window.cableTools?.showResult(resumed.action,resumed.result,resumed.cancelled,true);
+      window.cableTools?.showResult(resumed.result,resumed.cancelled,true);
     } else if (resumed?.action === 'control.apply' && resumed.result.results?.length) {
       window.controlTools.finishProgress();
       showControlResults(resumed.result,operationNames[resumed.result.operation] || '포트 제어');
