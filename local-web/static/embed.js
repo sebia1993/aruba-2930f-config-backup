@@ -1,4 +1,8 @@
 (() => {
+  if (window === window.top && location.protocol === "http:") {
+    import('/static/browser-presence.js').then(module=>module.watchBrowserTab()).catch(()=>{});
+    return;
+  }
   if (parent === window || new URLSearchParams(location.search).get("embedded") !== "1") return;
   document.documentElement.classList.add("embedded");
   window.addEventListener("message", async event => {
