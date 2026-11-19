@@ -82,6 +82,7 @@ class LanSharingTests(unittest.TestCase):
         digest = hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest()
         self.assertEqual(digest, view["fingerprint"].replace(":", "").lower())
         self.client_tls = ssl.create_default_context(cadata=pem)
+        self.client_tls.minimum_version = ssl.TLSVersion.TLSv1_2
         return urlsplit(view["invitation"]).path
 
     def sign_in(self, invite):

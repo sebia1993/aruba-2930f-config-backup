@@ -80,6 +80,7 @@ class TLSIdentityTests(unittest.TestCase):
             listener.listen()
             listener.settimeout(5)
             client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            client.minimum_version = ssl.TLSVersion.TLSv1_2
             client.check_hostname = False
             client.verify_mode = ssl.CERT_NONE
             for _ in range(2):
@@ -94,3 +95,4 @@ class TLSIdentityTests(unittest.TestCase):
                 reply.result(timeout=5)
                 # The second handshake verifies the pinned self-signed leaf and IP SAN.
                 client = ssl.create_default_context(cadata=ssl.DER_cert_to_PEM_cert(der))
+                client.minimum_version = ssl.TLSVersion.TLSv1_2
