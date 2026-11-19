@@ -127,14 +127,15 @@ async function run(action, body, receive) {
   $('stopJob').disabled = false;
   sync();
   const quick = action === 'control.quick-execute' ? body : null;
+  const requestId = quick || action==='cable.test' ? body.requestId : null;
   setJobProgress({});
   notify(quick ? operationNames[quick.operation] + ' 즉시 실행 · 선택 ' + quick.targets.length + '개' : jobNames[action] + ' 진행 중…');
   try {
     window.portTools?.onJob?.(action,'running',body);
     const submitted = await api('/api/jobs', {action,body}).catch(error=>{
-      if (!quick || (error.status && error.status < 500)) throw error;
+      if (!requestId || (error.status && error.status < 500)) throw error;
       // The server may have accepted the operation. Read its original job without submitting again.
-      return {id:quick.requestId};
+      return {id:requestId};
     });
     body = null;
     ui.jobId = submitted.id;

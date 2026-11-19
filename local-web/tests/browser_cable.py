@@ -209,6 +209,16 @@ def exercise(page, url, switch, other, shots, _backup):
         test.click()
         page.locator("#cableConfirm").click()
         assert switch.confirmed.wait(20), "Switch did not receive the approved test"
+        # Reload between status requests. WebKit cancels a document's outstanding
+        # fetch on navigation even though the server-side cable test continues.
+        poll = (
+            page.wait_for_event(
+                "requestfinished", predicate=lambda r: r.method == "GET" and "/api/jobs/" in r.url
+            )
+            .response()
+            .json()
+        )
+        assert poll["action"] == "cable.test" and poll["state"] == "running"
         page.reload()
         expect(page.locator("#statusText")).to_contain_text(endpoint)
     finally:
