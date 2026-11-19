@@ -257,12 +257,17 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .embedded .port-tile.unclassified{color:var(--ink)}
 .port-failure-mark{display:inline-grid;place-items:center;width:1.05rem;height:1.05rem;flex:none;border-radius:50%;background:#172331;color:#fff;border:1px solid #fff;font:bold 12px/1 sans-serif}
 .port-tile[data-read-failed=true]{display:inline-flex;align-items:center;justify-content:center;gap:3px}
-#mReadFailed{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--ink)}
+#mReadFailed{display:inline-flex;align-items:center;gap:4px;min-height:32px;white-space:nowrap;color:var(--ink)}
+#mReadFailed[aria-pressed=true]{border-color:var(--teal);color:var(--teal);box-shadow:inset 0 -2px var(--teal)}
+.embedded #overviewRoot>#mReadFailed{margin-left:4px;vertical-align:top}
+@media(max-width:560px){
+  .embedded #overviewRoot:has(>#mReadFailed[aria-pressed=true])>:is(#shortFilterToggle,#mReadFailed,#matrixMultiSelect){padding-inline:5px;margin-inline:0;font-size:11px}
+}
 #portReadFailure{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;margin:5px 0;padding:6px 8px;background:var(--surface2);border-inline-start:3px solid var(--ink);border-radius:3px}
 #portReadFailure .read-failure-copy{flex:1 1 14rem;min-width:0;font-size:12px;overflow-wrap:anywhere}
 #portReadFailure .read-failure-copy strong{display:block}
 #portReadFailure .btn{min-height:32px;white-space:nowrap}
-@media(max-width:560px),(pointer:coarse){#portReadFailure .btn{min-height:44px}}
+@media(max-width:560px),(pointer:coarse){#portReadFailure .btn,#mReadFailed{min-height:44px}}
 @media(max-width:600px){
   .embedded .content{padding:3px 1px}
   .embedded .matrix-area{padding:1px 2px 4px}
@@ -406,7 +411,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     <div class="metric red"><label data-power-label="unpowered"></label><div class="value" id="mUnpowered">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-alert"/></svg></div>
     <div class="metric amber"><label data-power-label="limited"></label><div class="value" id="mLimited">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-info"/></svg></div>
     <div class="metric green"><label data-power-label="normal"></label><div class="value" id="mNormal">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-check"/></svg></div>
-    <span id="mReadFailed" hidden><span class="port-failure-mark" aria-hidden="true">!</span><span id="readFailedCount"></span></span>
+    <button id="mReadFailed" type="button" class="btn" aria-pressed="false" aria-controls="matrix tbody" title="조회 실패 포트만 보기" hidden><span class="port-failure-mark" aria-hidden="true">!</span><span id="readFailedCount"></span></button>
    </div>
    <div class="filterbar">
     <label class="search"><svg fill="none" stroke="currentColor"><use href="#i-search"/></svg><input type="search" id="search" placeholder="스위치 Hostname / IP / 포트 / LLDP AP 검색" aria-label="스위치 및 포트 검색" autocomplete="off"></label>
@@ -663,6 +668,7 @@ window.PortViews = (() => {
   const embedded=parent!==window && location.pathname==='/matrix' && new URLSearchParams(location.search).get('embedded')==='1';
   let checkedPorts=new Set(), excludedPorts=new Set(), selectablePorts=new Set();
   let controlsBusy=false, multiSelect=false;
+  let failureReturn=null;
   function liveSelectionId() { return embedded && state.current?.liveId; }
   function publishSource() {
     if (embedded) parent.postMessage({type:'aruba-port-source'},location.origin);
@@ -722,6 +728,7 @@ window.PortViews = (() => {
       el('site').value=sites.includes(site)?site:'';
       el('device').value=devices.has(device)?device:'';
     } else {
+      failureReturn=null;
       clearFilters();
       state.selected=null;
     }
@@ -751,10 +758,11 @@ window.PortViews = (() => {
       return status==='all' || row.status===status;
     }
     state.found = state.rows.filter(row => (!embedded || state.view!=='review' || isIssue(row))
+      && (!failureReturn || row.readFailure)
       && (!state.changesOnly || state.view==='review' || row.comparison?.changed)
       && (!site || site === row.site) && (!device || device===endpoint(row)) && matchesStatus(row)
       && (!query || [row.hostname,endpoint(row),row.port,row.apName,row.ap,row.site,row.label,row.poeStatus,row.link,row.reportedLink,
-        row.assessmentModel,row.diagnosis,row.raw.message,statusNames[row.status]].some(value => String(value||'').toLowerCase().includes(query))));
+        row.assessmentModel,row.diagnosis,row.raw.message,row.readFailure,statusNames[row.status]].some(value => String(value||'').toLowerCase().includes(query))));
     state.issueRows = state.found.filter(isIssue).sort((a,b) => severity[a.status]-severity[b.status]);
     if (!state.found.some(row => row.key === state.selected)) {
       const fallback=state.view==='review' ? state.issueRows[0] : !embedded && (state.issueRows[0] || state.found[0]);
@@ -777,10 +785,14 @@ window.PortViews = (() => {
     count('mLimited',counts.limited);
     count('mNormal',counts.normal);
     el('mUnclassified').textContent = '전력 미측정 ' + counts.unclassified.toLocaleString('ko-KR') + '개'+(unobserved?' · 재조회 필요 '+unobserved+'개':'');
-    el('mReadFailed').hidden=!failed;
+    const toggle=el('mReadFailed');
+    toggle.hidden=!failed && !failureReturn;
+    toggle.setAttribute('aria-pressed',String(!!failureReturn));
+    toggle.title=failureReturn ? '원래 보던 화면으로 돌아가기' : '조회 실패 포트만 보기';
     el('readFailedCount').textContent='조회 실패 '+failed.toLocaleString('ko-KR')+'개';
   }
   function emptyResultsText() {
+    if (failureReturn) return '현재 조건에서 조회에 실패한 포트가 없습니다. 조회 실패 개수를 다시 누르면 이전 화면으로 돌아갑니다.';
     if (state.view==='review') return '현재 조건에서 우선 확인할 포트가 없습니다.';
     if (state.changesOnly) return state.rows.some(row=>row.comparison?.comparable)
       ? '현재 조건에 변화가 있는 포트가 없습니다.' : '비교할 실측값이 없습니다. 같은 포트를 다시 조회하세요.';
@@ -1141,6 +1153,71 @@ window.PortViews = (() => {
     el('matrixCount').hidden=list;
     el('zoom').closest('.filter-help').hidden=list;
   }
+  function viewPosition() {
+    return {top:window.scrollY,table:el('tbody').closest('.tablewrap').scrollTop,
+      matrix:el('matrix').scrollTop,issues:el('issues').scrollTop};
+  }
+  function restorePosition(position) {
+    el('tbody').closest('.tablewrap').scrollTop=position.table;
+    el('matrix').scrollTop=position.matrix;
+    el('issues').scrollTop=position.issues;
+    window.scrollTo({top:position.top,behavior:'instant'});
+  }
+  function showFailureFilter({search,selectedKey,activeSearch,activeSelectedKey}={}) {
+    if (!liveSelectionId() || failureReturn) return;
+    // A failure filter opened during collection can arrive with the inventory search and port.
+    if (typeof search==='string') el('search').value=search;
+    if (typeof selectedKey==='string') state.selected=state.lookup.has(selectedKey) ? selectedKey : null;
+    const filters=['search','site','device','status','sort'].map(id=>[id,el(id).value]);
+    const searchToggle=el('shortFilterToggle');
+    failureReturn={filters,view:state.view,presentation:state.presentation,changesOnly:state.changesOnly,
+      selected:state.selected,page:state.page,position:viewPosition(),multiSelect,
+      controlKey:state.current.currentControlKey?.(),searchExpanded:searchToggle.getAttribute('aria-expanded'),
+      docked:el('detailTitle').closest('section').classList.contains('selection-dock'),
+      facts:!!el('detail').querySelector('.port-facts')?.open,more:!!el('detail').querySelector('.more-facts')?.open};
+    if (typeof activeSearch==='string') el('search').value=activeSearch;
+    if (typeof activeSelectedKey==='string') state.selected=state.lookup.has(activeSelectedKey) ? activeSelectedKey : null;
+    state.page=0;
+    const compact=searchToggle.getClientRects().length>0;
+    if (compact) searchToggle.setAttribute('aria-expanded','false');
+    renderOverview();
+    el('tbody').closest('.tablewrap').scrollTop=0;
+    el('matrix').scrollTop=0;
+    if (compact) {
+      const first=state.presentation==='list' ? el('tbody').querySelector('[data-port-key]') : el('matrix').querySelector('.port-tile');
+      if (first) revealPort(first);
+    }
+  }
+  function resetFailureFilter() {
+    const saved=failureReturn;
+    if (!saved) return;
+    const toggle=el('mReadFailed'),hadFocus=document.activeElement===toggle;
+    failureReturn=null;
+    for (const [id,value] of saved.filters) el(id).value=value;
+    state.selected=saved.selected;
+    state.page=saved.page;
+    state.changesOnly=saved.changesOnly;
+    state.presentation=saved.presentation;
+    multiSelect=saved.multiSelect;
+    el('shortFilterToggle').setAttribute('aria-expanded',saved.searchExpanded);
+    applyPresentation();
+    showView(saved.view);
+    const detail=el('detail');
+    for (const [selector,open] of [['.port-facts',saved.facts],['.more-facts',saved.more]]) {
+      const disclosure=detail.querySelector(selector);
+      if (disclosure) disclosure.open=open;
+    }
+    el('detailTitle').closest('section').classList.toggle('selection-dock',!!state.selected && saved.docked);
+    if (state.selected && state.selected===saved.controlKey && !matrixMultiActive()) {
+      parent.postMessage({type:'aruba-observed-port',liveId:liveSelectionId(),key:state.selected},location.origin);
+    }
+    if (hadFocus && toggle.hidden) {
+      const selected=state.presentation==='list' ? el('tbody').querySelector('tr.selected .row-select') : state.tileByKey.get(state.selected);
+      const toolbar=el('shortFilterToggle').getClientRects().length ? el('shortFilterToggle') : el('search');
+      (selected || toolbar).focus({preventScroll:true});
+    }
+    restorePosition(saved.position);
+  }
   function setPresentation(mode) {
     if (!liveSelectionId() || !['matrix','list'].includes(mode) || state.presentation===mode) return;
     state.presentation=mode;
@@ -1269,11 +1346,9 @@ window.PortViews = (() => {
     return {previous,comparable:power || ap,changed:(power && previous.watts!==row.watts) ||
       (ap && previous.apName!==row.apName) || (color && previous.status!==row.status)};
   }
-  function loadLive(liveId, records, stillCurrent, unobserved=[], keepView=false, periodic=false) {
+  function loadLive(liveId, records, stillCurrent, unobserved=[], keepView=false, periodic=false, currentControlKey) {
     if (!liveId || !stillCurrent()) return;
-    const viewport=periodic && {
-      top:window.scrollY, table:el('tbody').closest('.tablewrap').scrollTop, matrix:el('matrix').scrollTop
-    };
+    const viewport=periodic && viewPosition();
     keepView=state.preserveView || (keepView && !!liveSelectionId());
     state.preserveView=false;
     const rows=records.map(observedRow);
@@ -1289,21 +1364,18 @@ window.PortViews = (() => {
         if (value>latestTime) { latestTime=value; latestObserved=stamp; }
       }
     }
-    state.current={liveId,rows,unobserved:pending,latestObserved};
+    state.current={liveId,rows,unobserved:pending,latestObserved,currentControlKey};
     if (!keepView) state.presentation='matrix';
     if (embedded) applyPresentation();
     setDataset(keepView);
     updateSource();
     if (keepView) showView(state.view,state.found);
     else openView('overview');
-    if (viewport) {
-      el('tbody').closest('.tablewrap').scrollTop=viewport.table;
-      el('matrix').scrollTop=viewport.matrix;
-      window.scrollTo({top:viewport.top,behavior:'instant'});
-    }
+    if (viewport) restorePosition(viewport);
   }
   function invalidateLive(preserveView=false) {
     if (!preserveView) {
+      failureReturn=null;
       state.presentation='matrix';
       if (embedded) applyPresentation();
       state.changesOnly=false;
@@ -1351,6 +1423,7 @@ window.PortViews = (() => {
     window.PortMonitor={
       loadLive,
       navigate,
+      showFailureFilter,resetFailureFilter,
       scope:monitorScope,
       setPresentation,
       source: ()=>({hasData:!!state.current,view:state.view,presentation:state.presentation,liveId:state.current?.liveId,multiSelect:matrixMultiActive(),
@@ -1430,14 +1503,18 @@ window.PortViews = (() => {
     shortToggle.setAttribute('aria-expanded','false');
     shortToggle.onclick=()=>shortToggle.setAttribute('aria-expanded',String(shortToggle.getAttribute('aria-expanded')!=='true'));
     bar.before(shortToggle);
-    const multiButton=el('matrixMultiSelect');
+    const multiButton=el('matrixMultiSelect'),failureButton=el('mReadFailed');
+    failureButton.onclick=()=>failureReturn ? resetFailureFilter() : showFailureFilter();
     const multiHome=multiButton.parentElement;
     const compactControls=matchMedia('(max-width:600px), (max-height:320px)');
     function positionControls() {
       toggle.hidden=compactControls.matches;
       filterTools.hidden=!compactControls.matches && toggle.getAttribute('aria-expanded')!=='true';
-      if (compactControls.matches) shortToggle.after(multiButton);
-      else multiHome.append(multiButton);
+      if (compactControls.matches) shortToggle.after(failureButton,multiButton);
+      else {
+        multiHome.append(multiButton);
+        el('mUnclassified').before(failureButton);
+      }
     }
     compactControls.addEventListener('change',positionControls);
     positionControls();

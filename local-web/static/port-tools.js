@@ -6,6 +6,7 @@
   let groups = [], preview = null, page = 0, focused = '', live = new Map(), loading = new Set();
   let matrixJob = '', registeredText = '', progressGroups = null, fullQuery = null;
   let directCableTarget=false;
+  let failureView=null, failureGroups=new Map();
   const pageSize = 192;
   const noPowerData = PowerMatrix.classify({});
   const phaseLabels = {pending:'조회 대기',loading:'조회 중',stale:'재조회 필요'};
@@ -28,6 +29,11 @@
     legend.append(entry);
   }
   $('matrixCounts').before(legend);
+  const countText=elem('span');
+  const failureToggle=button('',toggleFailures);
+  failureToggle.setAttribute('aria-controls','matrixGroups');
+  failureToggle.hidden=true;
+  $('matrixCounts').append(countText,failureToggle);
 
   const editor = $('targetEditor'), modeField = $('targetInputMode'), rawDraft = $('editorTargets');
   const rowPane = $('targetRowsPane'), pastePane = $('targetPastePane');
@@ -150,7 +156,7 @@
       groups = stableGroups(r.groups);
       raw.value = r.targets;
       registeredText = raw.value;
-      focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
+      failureView=null; focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
       $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
       updateTargetCount();
       if (editor.open && preview === accepted) editor.close();
@@ -252,7 +258,7 @@
         notify('관제에서 검색할 포트를 표시하세요.',true);
         return null;
       }
-      const visible=new Set(scope ? scope.rows.map(controlPortKey) : entries().map(item=>item.key));
+      const visible=new Set(scope ? scope.rows.map(controlPortKey) : visibleEntries(entries()).map(item=>item.key));
       return available.filter(key=>visible.has(key));
     }
     return device ? available.filter(key=>key.split('|')[0]===device) : available;
@@ -297,6 +303,30 @@
     }
     return result;
   }
+  function visibleEntries(items) {
+    return failureView ? items.filter(item=>item.view.failure) : items;
+  }
+  function toggleFailures() {
+    const scroller=$('monitorInventory'), search=$('inventorySearch');
+    if (failureView) {
+      const previous=failureView;
+      failureView=null;
+      page=previous.page;
+      focused=previous.focused;
+      search.value=previous.search;
+      renderPorts();
+      if (failureToggle.hidden) search.focus({preventScroll:true});
+      scroller.scrollTop=previous.scroll;
+    } else {
+      failureView={page,focused,search:search.value,scroll:scroller.scrollTop};
+      page=0;
+      renderPorts();
+    }
+  }
+  function groupCheckKeys(g) {
+    const addr=address(g);
+    return failureView ? failureGroups.get(addr) || [] : g.interfaces.map(p=>addr+'|'+p);
+  }
   function details(item) {
     const area=$('matrixDetails');
     area.hidden = !item;
@@ -328,7 +358,7 @@
     for (const node of matrix.querySelectorAll('[data-check-group]')) {
       const g=known.get(node.dataset.checkGroup);
       if (!g) continue;
-      const keys=g.interfaces.map(p=>address(g)+'|'+p).filter(key=>available.has(key));
+      const keys=groupCheckKeys(g).filter(key=>available.has(key));
       const count=keys.filter(key=>ui.selected.has(key)).length;
       node.checked=count>0 && count===keys.length; node.indeterminate=count>0&&!node.checked; node.disabled=ui.busy || !keys.length;
     }
@@ -342,6 +372,17 @@
     if (item.view.failure) $('matrixDetails').scrollIntoView({block:'nearest'});
   }
   function showInventory(visible) {
+    const viewer=monitor();
+    if (!visible && failureView && ui.liveId && viewer?.source().liveId===ui.liveId) {
+      const previous=failureView;
+      failureView=null;
+      const liveKey=key=>{
+        const row=ui.rows.find(item=>portKey(item)===key);
+        return row ? row.ip+':'+(row.ssh_port || 22)+'/'+row.interface : '';
+      };
+      viewer.showFailureFilter?.({search:previous.search,selectedKey:liveKey(previous.focused),
+        activeSearch:$('inventorySearch').value,activeSelectedKey:liveKey(focused)});
+    }
     if (matrix.hidden===visible) {
       matrix.hidden=!visible;
       if (visible) renderMatrix();
@@ -349,7 +390,17 @@
   }
   function renderMatrix() {
     if (matrix.hidden) return;
-    const visible=entries(), counts={};
+    if (!matrixJob && !ui.rows.length && !live.size) failureView=null;
+    const matches=entries(), visible=visibleEntries(matches), counts={};
+    failureGroups=new Map();
+    if (failureView) {
+      if (focused && !visible.some(item=>item.key===focused)) focused='';
+      for (const item of visible) {
+        const addr=address(item.g);
+        if (!failureGroups.has(addr)) failureGroups.set(addr,[]);
+        failureGroups.get(addr).push(item.key);
+      }
+    }
     for(const item of visible) counts[item.state]=(counts[item.state]||0)+1;
     for(const badge of legend.children) badge.lastElementChild.textContent=counts[badge.dataset.state] || 0;
     const pages=Math.max(1,Math.ceil(visible.length/pageSize));
@@ -357,9 +408,17 @@
     const start=page*pageSize, shown=visible.slice(start,start+pageSize);
     const summary = ['표시 '+visible.length+'포트'];
     if (counts.unclassified) summary.push('미분류 '+counts.unclassified);
-    const failures=visible.filter(item=>item.view.failure).length;
-    if (failures) summary.push('! 조회 실패 '+failures+'포트');
-    $('matrixCounts').textContent = visible.length ? summary.join(' · ') : (inventory().length ? '검색 조건에 맞는 포트가 없습니다.' : '검증한 스위치 목록을 적용하거나 포트를 조회하세요.');
+    const failedCount=failureView ? visible.length : matches.filter(item=>item.view.failure).length;
+    let message=summary.join(' · ');
+    if (!visible.length) {
+      message=failureView ? '현재 조건에서 조회에 실패한 포트가 없습니다.' : '검색 조건에 맞는 포트가 없습니다.';
+      if (!failureView && !inventory().length) message='검증한 스위치 목록을 적용하거나 포트를 조회하세요.';
+    }
+    countText.textContent=message;
+    failureToggle.hidden=!failedCount && !failureView;
+    failureToggle.setAttribute('aria-pressed',String(!!failureView));
+    failureToggle.title=failureView ? '이전 화면으로 돌아가기' : '조회 실패 포트만 보기';
+    failureToggle.textContent='조회 실패 '+failedCount.toLocaleString('ko-KR')+'개';
     $('matrixGroups').dataset.zoom=$('matrixSize').value;
     const nodes=[], grids=new Map();
     for(const item of shown) {
@@ -368,18 +427,18 @@
         const group=elem('section',undefined,'matrix-group'), head=elem('div',undefined,'matrix-group-head');
         const label=elem('label',undefined,'inline-check'), check=elem('input');
         check.type='checkbox'; check.dataset.checkGroup=addr;
-        check.setAttribute('aria-label',addr+' 등록 포트 전체 체크');
+        check.setAttribute('aria-label',addr+(failureView?' 조회 실패 포트 전체 체크':' 등록 포트 전체 체크'));
         check.onchange=()=>{
           const available=new Set(availableControlTargets().map(controlPortKey));
-          for (const p of item.g.interfaces) {
-            const key=addr+'|'+p;
+          for (const key of groupCheckKeys(item.g)) {
             if (check.checked && available.has(key)) ui.selected.add(key); else ui.selected.delete(key);
           }
           renderPorts();
         };
         const name=item.row?.hostname || item.g.label;
         label.append(check,document.createTextNode((name && name!==addr ? name+' · ' : '')+addr));
-        head.append(label,elem('small',item.g.interfaces.length+'포트'));group.append(head);
+        const count=failureView ? failureGroups.get(addr).length : item.g.interfaces.length;
+        head.append(label,elem('small',count+'포트'));group.append(head);
         const grid=elem('div',undefined,'matrix-tiles');group.append(grid);grids.set(addr,grid);nodes.push(group);
       }
       const tile=button(item.port,()=>selectItem(item),'matrix-tile');
@@ -411,12 +470,13 @@
   function replaceQueryInventory(items,text,preserveView=false) {
     directCableTarget=false;
     groups=stableGroups(items); registeredText=text;
-    focused=''; page=0; live.clear(); loading.clear(); $('inventorySearch').value='';
+    failureView=null; focused=''; page=0; live.clear(); loading.clear(); $('inventorySearch').value='';
     clearPorts(preserveView);
     $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
     updateTargetCount();
   }
   function showStartingMatrix(items,text) {
+    monitor()?.resetFailureFilter?.();
     replaceQueryInventory(items,text,true);
     setQueryWorkspace(true);
   }

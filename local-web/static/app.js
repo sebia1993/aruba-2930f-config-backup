@@ -392,7 +392,7 @@ function selectObservedBatch() {
 }
 function postMatrix(keepView=false,periodic=false) {
   const viewer=monitor(), id=ui.liveId;
-  if (viewer && id) viewer.loadLive(id,ui.rows,()=>ui.liveId===id,window.portTools.unobservedTargets(),keepView,periodic);
+  if (viewer && id) viewer.loadLive(id,ui.rows,()=>ui.liveId===id,window.portTools.unobservedTargets(),keepView,periodic,()=>ui.tileRow?.key);
 }
 window.addEventListener('message',e=>{
   if (e.origin !== location.origin || !e.data) return;
