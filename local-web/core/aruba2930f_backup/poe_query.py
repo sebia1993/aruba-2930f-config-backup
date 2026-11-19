@@ -36,10 +36,12 @@ from .poe_power import (
 from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from .poe_targets import merge_targets
 from .port_control import (
+    UNKNOWN_LINK,
     InterfaceState,
     PoEState,
     PortSession,
     PortSnapshot,
+    parse_interface_links,
     parse_interface_status,
     parse_poe_status,
 )
@@ -274,11 +276,15 @@ class PoEQueryService:
             # AOS-S show interfaces brief reports all local interfaces.
             # Reading it once per switch prevents hundreds of duplicate SSH
             # commands when an operator selects many AP ports.
-            interfaces_output: str | None = None
+            try:
+                interfaces_output = _bounded(cancel, session.read_interfaces)
+            except CollectionFailure as exc:
+                if exc.code is not ErrorCode.COMMAND_REJECTED:
+                    raise
+                # The CLI returned to EXEC. Keep the other independent reads available.
+                interfaces_output = ""
             for interface in group.interfaces:
                 try:
-                    if interfaces_output is None:
-                        interfaces_output = _bounded(cancel, session.read_interfaces)
                     port = parse_interface_status(interfaces_output, interface)
                     poe, evidence = self._read_poe(session, interface, identity, port, cancel)
                     _check_cancel(cancel)
@@ -288,7 +294,7 @@ class PoEQueryService:
                         identity.hostname or "확인 불가",
                         identity.model,
                         port.enabled,
-                        port.link_status,
+                        UNKNOWN_LINK,
                         poe.enabled,
                         poe.status,
                         poe.watts,
@@ -340,9 +346,25 @@ class PoEQueryService:
                 except Exception:
                     fatal = _unexpected_failure()
                     lldp = _lldp_failure(fatal)
-                finished = _finish(row, lldp)
-                rows[index] = finished
-                _deliver(finished, on_result)
+                rows[index] = replace(row, lldp=lldp)
+
+            # Obtain the independent link table once per switch. A failed status
+            # command cannot erase PoE measurements or already collected LLDP.
+            if fatal is None:
+                output = _bounded(cancel, session.read_interface_status)
+                received_at = datetime.now(UTC).isoformat()
+                links = parse_interface_links(output)
+                for index, row in enumerate(rows):
+                    if row.interface in links:
+                        link = links[row.interface]
+                        rows[index] = replace(
+                            row,
+                            link_status=link,
+                            link_observed_at=received_at,
+                            snapshot=replace(row.snapshot, link_status=link)
+                            if row.snapshot
+                            else None,
+                        )
         except CollectionFailure as exc:
             fatal = exc
         except Exception:
@@ -354,13 +376,13 @@ class PoEQueryService:
         failure = fatal or _unexpected_failure()
         if cancel.is_set():
             failure = CollectionFailure(ErrorCode.CANCELLED, "포트 전력 조회를 중지했습니다.")
-        for index, row in enumerate(rows):
-            if not row.complete:
-                finished = _finish(row, _lldp_failure(failure))
-                rows[index] = finished
-                _deliver(finished, on_result)
         for interface in group.interfaces[len(rows) :]:
-            row = _finish(_terminal(group, interface, failure, identity), _lldp_failure(failure))
-            rows.append(row)
+            rows.append(_terminal(group, interface, failure, identity))
+        for index, row in enumerate(rows):
+            lldp = row.lldp
+            if lldp is None or lldp.status is LLDPStatus.PENDING:
+                lldp = _lldp_failure(failure)
+            rows[index] = _finish(row, lldp)
+        for row in rows:
             _deliver(row, on_result)
         return tuple(rows)

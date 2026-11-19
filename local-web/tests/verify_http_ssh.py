@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 import zipfile
@@ -26,10 +27,36 @@ import paramiko
 from loopback_server import LoopbackArubaSSHServer
 
 
+def interface_status_table(ports, *, terminal_width=False):
+    """AOS-S fixed-width columns, including the optional friendly port name."""
+    widths = (10, 19, 8, 13, 9, 12, 8, 9)
+    header = ("Port", "Name", "Status", "Config-mode", "Speed", "Type", "Tagged", "Untagged")
+    records = (
+        (port, name, link, "Auto", "1000FDx", "100/1000T", "No", "1") for port, name, link in ports
+    )
+    lines = [header, tuple("-" * (width - 1) for width in widths), *records]
+
+    def pad(value, width):
+        columns = (
+            sum(2 if unicodedata.east_asian_width(c) in "FW" else 1 for c in value)
+            if terminal_width
+            else len(value)
+        )
+        return value + " " * (width - columns)
+
+    return [
+        "".join(pad(value, width) for value, width in zip(row, widths, strict=True)).rstrip()
+        for row in lines
+    ]
+
+
 class MonitorFixture(LoopbackArubaSSHServer):
     """Extend the source release's fixture with one simulated AP-535 port."""
 
     poe_enabled = True
+
+    def status_lines(self):
+        return interface_status_table([("1", "", "Up" if self.poe_enabled else "Down")])
 
     def _respond(self, channel, command):
         prompt = self.prompt
@@ -52,8 +79,11 @@ class MonitorFixture(LoopbackArubaSSHServer):
         elif command == "show interfaces brief":
             lines = [
                 "Port Type | Alert Enabled Status Mode",
-                f"1 100/1000T | No Yes {'Up' if self.poe_enabled else 'Down'} Auto",
+                # Deliberately disagree with status so an accidental fallback is observable.
+                f"1 100/1000T | No Yes {'Down' if self.poe_enabled else 'Up'} Auto",
             ]
+        elif command == "show interfaces status":
+            lines = self.status_lines()
         elif command == "show power-over-ethernet 1":
             lines = [
                 "Status and Configuration Information for port 1",
@@ -166,6 +196,8 @@ def exercise(http, switch):
     text = http.download(ports["files"][0]).decode("utf-8-sig")
     saved = next(csv.DictReader(io.StringIO(text)))
     assert saved["interface"] == "1" and "fixture-ap" in saved["ap_names"]
+    assert saved["link_status"] == "Up" and saved["enabled"] == "yes"
+    assert switch.commands.count("show interfaces status") == 1
     profile = http.job("profiles.export", targets=address + " 1")["files"][0]
     profile_text = http.download(profile).decode("utf-8")
     restored = http.job("profiles.import", text=profile_text)
@@ -174,8 +206,10 @@ def exercise(http, switch):
     target = {"ip": "127.0.0.1", "sshPort": switch.port, "port": "1"}
     plan = http.job("control.preview", operation="poe_off", scope="batch", targets=[target])
     assert switch.poe_enabled
+    assert "링크 Up" in plan["targets"][0]["detail"], plan
     result = http.job("control.apply", planId=plan["planId"], confirmation=plan["confirmationText"])
     assert result["results"][0]["status"] == "verified", result["results"][0]["message"]
+    assert result["results"][0]["after"]["link"] == "Down", result
     assert not switch.poe_enabled
     http.job(
         "control.apply",
@@ -185,8 +219,10 @@ def exercise(http, switch):
     )
     assert switch.commands.count("no interface 1 power-over-ethernet") == 1
     plan = http.job("control.preview", operation="poe_on", scope="single", targets=[target])
+    assert plan["targets"][0]["link"] == "Down", plan
     result = http.job("control.apply", planId=plan["planId"], confirmation=plan["confirmationText"])
     assert result["results"][0]["status"] == "verified" and switch.poe_enabled
+    assert result["results"][0]["after"]["link"] == "Up", result
     assert switch.commands.count("interface 1 power-over-ethernet") == 1
     history = http.job("control.history")["rows"]
     assert {"poe_on", "poe_off"} <= {r["operation"] for r in history if r["status"] == "verified"}

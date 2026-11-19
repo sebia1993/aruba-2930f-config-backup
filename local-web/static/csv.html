@@ -399,19 +399,21 @@ $('themeDark').addEventListener('click', () => applyTheme('dark'));
       throw new Error(number + "번째 레코드의 IP, SSH 포트 또는 인터페이스를 확인하세요.");
     const power = window.PowerMatrix.classify(raw);
     const rawLink = v("link_status");
-    const link = /^up$/i.test(rawLink) ? "Up" : /^down$/i.test(rawLink) ? "Down" : rawLink || unknown;
+    const link = window.PowerMatrix.linkLabel(rawLink);
     const queryStatus = v("status").toLowerCase();
     const lldp = v("lldp_status").toLowerCase();
     const neighbor = neighbors(v("lldp_neighbors"),v("ap_names"),lldp);
     const row = {
       key:ip + ":" + sshPort + "/" + port, ip, sshPort, port,
       hostname:v("hostname") || unknown, site:v("site") || v("site_name") || v("사업장") || "사업장 미지정",
-      label:v("label"), model:v("model"), link, poe:setting(v("poe_enabled"),"ON","OFF"),
+      label:v("label"), model:v("model"), link,
+      reportedLink:link === "미확인" ? rawLink : link,
+      poe:setting(v("poe_enabled"),"ON","OFF"),
       admin:setting(v("enabled"),"Enable","Disable"),
       status:power.state, reason:power.reason, watts:power.watts, apName:power.apName,
       rawWatts:measurement(v("watts")),
       ap:neighbor.names, neighborIdentity:neighbor.identity, observed:v("observed_at") || v("finished_at"),
-      finished:v("finished_at"), lldp, queryStatus, poeStatus:v("poe_status") || unknown,
+      finished:v("finished_at"), linkObserved:v("link_observed_at"), lldp, queryStatus, poeStatus:v("poe_status") || unknown,
       errorCode:v("error_code"), lldpError:v("lldp_error_code"),
       assessment:v("assessment_label"), assessmentStatus:v("assessment_status"), assessmentModel:v("assessment_model"),
       requestedWatts:measurement(v("requested_watts")), allocatedWatts:measurement(v("allocated_watts")),
@@ -444,7 +446,7 @@ $('themeDark').addEventListener('click', () => applyTheme('dark'));
       const row = mapRow(cells,columns,record);
       if (seen.has(row.key)) throw new Error("동일 포트가 중복되어 한 시점으로 비교할 수 없습니다. " + row.key);
       seen.add(row.key); rows.push(row);
-      for (const stamp of [row.observed,row.finished]) {
+      for (const stamp of [row.observed,row.finished,row.linkObserved]) {
         const time = Date.parse(stamp);
         if (Number.isFinite(time)) latest = Math.max(latest,time);
       }
@@ -459,7 +461,7 @@ $('themeDark').addEventListener('click', () => applyTheme('dark'));
   const comparison = [
     ["status","전력 판정",null,v => stateNames[v]], ["hostname","Hostname","hostname"],
     ["model","스위치 모델","model"], ["label","장비 별칭","label"],
-    ["admin","포트 관리 설정","enabled"], ["link","링크","link_status"],
+    ["admin","포트 관리 설정","enabled"], ["reportedLink","링크","link_status",v => v || missing],
     ["poe","PoE 설정","poe_enabled"], ["poeStatus","PoE 공급 상태","poe_status"],
     ["rawWatts","실측 전력","watts",formatWatts], ["queryStatus","조회 결과","status",v => queryNames[v] || v || missing],
     ["lldp","LLDP 조회","lldp_status",v => lldpNames[v] || v || missing],
@@ -606,8 +608,10 @@ window.PortViews = (() => {
       ['실측 전력',watts(row.watts)],['PoE 공급 상태',row.poeStatus],['PoE 설정',row.poe],
       ['LLDP AP 이름',row.apName],['LLDP 이웃 이름',row.ap],['LLDP 수집',collectionLabels.get(row.lldp) || row.lldp],
       ['포트 조회',collectionLabels.get(row.queryStatus) || row.queryStatus],['관리 상태',row.admin],
-      ['링크 상태 (참고)',row.link],['관측 시각',row.observed]
+      ['관측 당시 링크',row.link],['관측 시각',row.observed]
     ];
+    if (row.link === '미확인' && row.reportedLink) fields.push(['링크 원문',row.reportedLink]);
+    if (row.linkObserved) fields.push(['링크 관측 시각',row.linkObserved]);
     for (const [label,value] of fields) {
       const pair = el('div',label === '관측 시각' ? 'dr-wide' : '');
       pair.append(el('dt',null,label),el('dd',null,text(value)));
@@ -660,9 +664,12 @@ window.PortViews = (() => {
     }
     box.append(table);
     const dates = el('dl','dr-evidence');
-    for (const [label, item] of [['기준 관측 시각',entry.before],['비교 관측 시각',entry.after]]) {
+    const stamps = [['기준 관측 시각',entry.before.observed],['비교 관측 시각',entry.after.observed]];
+    if (entry.before.linkObserved) stamps.push(['기준 링크 관측 시각',entry.before.linkObserved]);
+    if (entry.after.linkObserved) stamps.push(['비교 링크 관측 시각',entry.after.linkObserved]);
+    for (const [label, value] of stamps) {
       const pair = el('div');
-      pair.append(el('dt',null,label),el('dd',null,text(item.observed)));
+      pair.append(el('dt',null,label),el('dd',null,text(value)));
       dates.append(pair);
     }
     box.append(dates);
@@ -942,8 +949,10 @@ window.PortViews = (() => {
       ['실측 전력',watts(row)],['PoE 공급 상태',row.poeStatus],['PoE 설정',row.poe],
       ['LLDP AP 이름',row.apName],['LLDP 이웃 이름',row.ap],['LLDP 수집',collectionNames[row.lldp] || row.lldp],
       ['포트 조회',collectionNames[row.queryStatus] || row.queryStatus],['관리 상태',row.admin],
-      ['링크 상태 (참고)',row.link],['관측 시각',timeText(row.observed)]
+      ['관측 당시 링크',row.link],['관측 시각',timeText(row.observed)]
     ];
+    if (row.link === '미확인' && row.reportedLink) values.push(['링크 원문',row.reportedLink]);
+    if (row.linkObserved) values.push(['링크 관측 시각',timeText(row.linkObserved)]);
     if (row.label) values.push(['장비 라벨',row.label]);
     for (const [name,value] of values) {
       const cell=node('div',null,name==='관측 시각'?'dfield wide':'dfield');

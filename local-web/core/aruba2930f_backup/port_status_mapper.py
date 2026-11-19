@@ -88,7 +88,7 @@ def make_matrix_port(
         or group.label
         or "확인 전"
     )
-    link = snapshot.link_status if snapshot else "확인 불가"
+    link = (result.observed_link if result else "") or "확인 불가"
     poe = (
         "OFF"
         if snapshot and snapshot.poe_enabled is False
@@ -118,7 +118,7 @@ def make_matrix_port(
     elif snapshot.poe_enabled is False:
         state = MatrixState.OFF
         note = "PoE 설정 OFF. 장애 여부는 운영 의도와 비교해야 합니다."
-    elif "down" in link.casefold():
+    elif link.casefold() == "down":
         state = MatrixState.ATTENTION
         note = "링크 Down 관측. 서비스 장애 여부는 별도 확인이 필요합니다."
     elif snapshot.poe_enabled is None or snapshot.poe_status.strip().casefold() in (
@@ -134,7 +134,7 @@ def make_matrix_port(
     elif result.assessment is not None and result.assessment.label == "확인 필요":
         state = MatrixState.WARNING
         note = result.assessment.reason
-    elif "up" in link.casefold():
+    elif link.casefold() == "up":
         state = MatrixState.NORMAL
     else:
         state = MatrixState.UNKNOWN

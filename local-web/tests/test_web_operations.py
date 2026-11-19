@@ -6,13 +6,16 @@ import secrets
 import shutil
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 from unittest.mock import Mock, patch
 
 from localweb.backup_destination import copy_backup_files
+from localweb.controls import Controls
 from localweb.operations import Operations, TargetInputError, _devices
 from openpyxl import Workbook, load_workbook
+from verify_http_ssh import interface_status_table
 
 from aruba2930f_backup.collector import ArubaCollector
 from aruba2930f_backup.hostkeys import HostKeyStore, sha256_fingerprint
@@ -24,6 +27,7 @@ from aruba2930f_backup.models import (
 )
 from aruba2930f_backup.poe_query import PoEQueryService
 from aruba2930f_backup.poe_query_models import PoEQueryResult, QueryStatus
+from aruba2930f_backup.port_control import PortControlService
 
 
 class OperationsTests(unittest.TestCase):
@@ -399,7 +403,10 @@ class OperationsTests(unittest.TestCase):
 
     def test_port_query_uses_native_evidence_and_csv_and_session_invalidation(self):
         self.session.read_interfaces.return_value = (
-            "Port Type | Alert Enabled Status Mode\n24 100/1000T | No Yes Up Auto"
+            "Port Type | Alert Enabled Status Mode\n24 100/1000T | No Yes Down Auto"
+        )
+        self.session.read_interface_status.return_value = "\n".join(
+            interface_status_table([("24", "", "Up")])
         )
         self.session.read_poe.return_value = (
             "Status and Configuration Information for port 24\nPower Enable : Yes\n"
@@ -418,6 +425,7 @@ class OperationsTests(unittest.TestCase):
         )
         self.assertIn("sample-ap", row["ap_names"])
         self.assertIn("poe_off", row["eligible_operations"])
+        self.assertEqual(row["link_status"], "Up")
         self.assertIsNotNone(self.ops.last_results[0].snapshot)
         path = self.base / self.call("ports.export")["files"][0]["id"]
         with path.open(encoding="utf-8-sig", newline="") as stream:
@@ -429,6 +437,93 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual(self.ops.session_summary(), {"active": False, "username": ""})
         with self.assertRaises(ValueError):
             self.call("ports.export")
+
+    def test_link_sample_and_completion_timestamps_follow_the_independent_reads(self):
+        self.session.read_interfaces.return_value = (
+            "Port Type | Alert Enabled Status Mode\n1 100/1000T | No Yes Down Auto"
+            "\n2 100/1000T | No Yes Down Auto"
+        )
+        second = 0
+
+        def power(port):
+            nonlocal second
+            second = int(port)
+            return f"Port Power Status for port {port}\nPower Enable : Yes\nDetection Status : Delivering\nPower : 2 W"
+
+        def lldp(port):
+            nonlocal second
+            second = 10 + int(port)
+            return "LLDP Remote Device Information Detail\nNo neighbors found."
+
+        self.session.read_poe.side_effect = power
+        self.session.read_lldp.side_effect = lldp
+        for rejected in (False, True):
+            with self.subTest(rejected=rejected):
+
+                def status(rejected=rejected):
+                    nonlocal second
+                    second = 20
+                    if rejected:
+                        raise TimeoutError
+                    # The status response contains only port 1.
+                    return "\n".join(interface_status_table([("1", "", "Up")]))
+
+                self.session.read_interface_status.side_effect = status
+                with patch("aruba2930f_backup.poe_query.datetime") as clock:
+                    clock.now.side_effect = lambda tz: datetime(2026, 1, 1, 0, 0, second, tzinfo=tz)
+                    response = self.call("ports.query", targets=f"{self.target.endpoint} 1-2")
+                rows = response["rows"]
+                completed = datetime(2026, 1, 1, 0, 0, 20, tzinfo=UTC).isoformat()
+                self.assertEqual([r["finished_at"] for r in rows], [completed, completed])
+                self.assertEqual(
+                    [r["link_observed_at"] for r in rows], ["" if rejected else completed, ""]
+                )
+                for number, row in enumerate(rows, 1):
+                    self.assertEqual(datetime.fromisoformat(row["poe_finished_at"]).second, number)
+                    self.assertEqual(
+                        datetime.fromisoformat(row["lldp_observed_at"]).second, 10 + number
+                    )
+                    self.assertEqual(row["watts"], "2.0")
+                with (self.base / response["files"][0]["id"]).open(
+                    encoding="utf-8-sig", newline=""
+                ) as stream:
+                    reader = csv.DictReader(stream)
+                    self.assertEqual(reader.fieldnames[-1], "link_observed_at")
+                    self.assertEqual(
+                        [r["link_observed_at"] for r in reader], ["" if rejected else completed, ""]
+                    )
+
+    def test_display_inspection_preserves_physical_link_without_authorizing_bad_poe(self):
+        self.session.read_interfaces.return_value = (
+            "Port Type | Alert Enabled Status Mode\n1 100/1000T | No Yes Down Auto"
+        )
+        self.session.read_interface_status.return_value = "\n".join(
+            interface_status_table([("1", "", "Up")])
+        )
+        # Power Enable is present but the required detection status is missing.
+        self.session.read_poe.return_value = (
+            "Port Power Status for port 1\nPower Enable : Yes\nPower : 11 W"
+        )
+        control_service = PortControlService(
+            host_key_store=self.ops.host_key_store,
+            host_key_probe=self.probe,
+            session_factory=lambda *args: self.session,
+        )
+        web = Controls(self.ops, service_factory=lambda: control_service)
+        targets = [{"ip": self.target.endpoint, "port": "1"}]
+        view = web.dispatch("control.inspect", {"targets": targets}, self.cancel)["snapshot"]
+        self.assertEqual((view["link"], view["watts"], view["poeEnabled"]), ("Up", None, None))
+        self.assertIsNone(control_service._snapshot)
+        with self.assertRaises(CollectionFailure):
+            web.dispatch(
+                "control.preview",
+                {"targets": targets, "scope": "single", "operation": "poe_on"},
+                self.cancel,
+            )
+        self.assertIsNone(web._approval)
+        self.assertEqual(self.session.read_poe.call_count, 2)  # one per explicit request
+        self.session.read_interface_status.assert_called_once()
+        self.session.change_port.assert_not_called()
 
     def test_native_profiles_roundtrip_ranges_and_ssh_ports(self):
         response = self.call("profiles.export", targets=f"{self.target.endpoint} 1/23-1/24,1/25")

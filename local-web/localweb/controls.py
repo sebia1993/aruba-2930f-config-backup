@@ -89,11 +89,10 @@ def _targets(payload: dict) -> list[tuple[DeviceTarget, str]]:
     return targets
 
 
-def _detail(enabled: bool, link: str, poe: bool | None, watts: float | None) -> str:
+def _detail(enabled: bool, link: str | None, poe: bool | None, watts: float | None) -> str:
     power = "미지원·미측정" if poe is None else ("ON" if poe else "OFF")
-    parts = ["포트 사용" if enabled else "포트 비활성", f"PoE {power}"]
-    if link:
-        parts.append(f"링크 {link}")
+    observed_link = {"up": "Up", "down": "Down"}.get((link or "").strip().casefold(), "미확인")
+    parts = ["포트 사용" if enabled else "포트 비활성", f"PoE {power}", f"링크 {observed_link}"]
     if watts is not None:
         parts.append(f"{watts:g} W")
     return " · ".join(parts)
@@ -193,6 +192,7 @@ class Controls:
                     *target[0],
                     self.operations.credentials,
                     approve_host_key=first_use_host_key_policy(cancel),
+                    display_only=True,
                 )
                 return {"snapshot": _snapshot_info(state)}
             if action == "control.quick":

@@ -132,6 +132,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#reviewBody")).to_contain_text(
         "no interface 1 power-over-ethernet", timeout=90000
     )
+    expect(page.locator("#reviewBody")).to_contain_text("링크 Up")
     assert switch.poe_enabled
     page.locator("#review").get_by_role("button", name="닫기").click()
     assert "no interface 1 power-over-ethernet" not in switch.commands
@@ -146,6 +147,9 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
         assert switch.poe_enabled is not expected
         page.get_by_role("button", name="승인하고 명령 실행").click()
         expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
+        expect(page.locator("#controlResult")).to_contain_text(
+            "링크 Up" if expected else "링크 Down"
+        )
         assert switch.poe_enabled is expected
         page.locator("#refreshSwitch").click()
         expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)

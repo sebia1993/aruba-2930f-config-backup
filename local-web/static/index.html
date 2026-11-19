@@ -74,10 +74,10 @@
         <details id="rowDetails" hidden><summary>선택한 포트 상세</summary><dl id="detailFields"></dl></details>
       </div></article>
       <article class="panel" id="controlPanel"><header><h2>포트 제어</h2><span id="selectedCount">선택 0개</span></header><div class="panelbody">
-        <div class="bar"><label>제어 방식<select id="controlMode"><option value="batch">조회 결과에서 선택</option><option value="single">단일 포트 직접 지정</option></select></label><label>작업<select id="operation"><option value="poe_off">PoE 전원 OFF</option><option value="poe_on">PoE 전원 ON</option><option value="disable">포트 Down</option><option value="enable">포트 Up</option></select></label></div>
+        <div class="bar"><label>제어 방식<select id="controlMode"><option value="batch">조회 결과에서 선택</option><option value="single">단일 포트 직접 지정</option></select></label><label>작업<select id="operation"><option value="poe_off">PoE 전원 OFF</option><option value="poe_on">PoE 전원 ON</option><option value="disable">포트 비활성화 (Disable)</option><option value="enable">포트 활성화 (Enable)</option></select></label></div>
         <div id="batchControls" class="bar"><label>선택 범위<select id="selectionScope"><option value="filtered">검색 결과</option><option value="switch">현재 스위치</option><option value="all">조회된 전체</option></select></label><button type="button" id="selectVisible">범위 전체 선택</button><button type="button" id="selectEligible">제어 가능 포트만 선택</button><button type="button" id="clearSelection">선택 해제</button></div>
         <div id="singleControls" class="bar" hidden><label>스위치 주소<input id="singleIP" placeholder="스위치 IP 또는 IP:SSH포트"></label><label>포트<input id="singlePort" placeholder="인터페이스 번호"></label></div>
-        <p id="controlHint" class="hint">일괄 전원 OFF와 포트 Down은 LLDP로 AP-535가 확인된 포트에서 사용할 수 있습니다.</p>
+        <p id="controlHint" class="hint">일괄 전원 OFF와 포트 비활성화는 LLDP로 AP-535가 확인된 포트에서 사용할 수 있습니다.</p>
         <button id="preview" type="button" class="primary" data-live>제어 대상과 명령 검토</button><div id="controlResult" class="output" hidden></div>
       </div></article>
       </div>
