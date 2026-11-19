@@ -449,12 +449,18 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#statusText")).to_contain_text("종료했습니다.")
 
 
-def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chromium"):
-    root = Path(os.environ.get("ARUBA_WEB_ROOT", Path(__file__).resolve().parents[1]))
-    python = os.environ.get("ARUBA_WEB_PYTHON", sys.executable)
+def launch_test_browser(browser_type):
+    if browser_type.name == "webkit":
+        return browser_type.launch()
     chrome = os.environ.get(
         "ARUBA_WEB_CHROME", r"C:\Program Files\Google\Chrome\Application\chrome.exe"
     )
+    return browser_type.launch(executable_path=chrome, headless=True)
+
+
+def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chromium"):
+    root = Path(os.environ.get("ARUBA_WEB_ROOT", Path(__file__).resolve().parents[1]))
+    python = os.environ.get("ARUBA_WEB_PYTHON", sys.executable)
     shots = (
         Path(os.environ["ARUBA_WEB_SCREENSHOTS"]) if "ARUBA_WEB_SCREENSHOTS" in os.environ else None
     )
@@ -495,10 +501,7 @@ def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chr
                     raise RuntimeError(f"Server exited: {process.returncode}")
                 time.sleep(0.1)
             info = json.loads((folder / "server-info.json").read_text(encoding="utf-8"))
-            if browser_engine == "webkit":
-                browser = playwright.webkit.launch()
-            else:
-                browser = playwright.chromium.launch(executable_path=chrome, headless=True)
+            browser = launch_test_browser(getattr(playwright, browser_engine))
             try:
                 page = browser.new_page(viewport={"width": 1440, "height": 960}, locale="ko-KR")
                 page.set_default_timeout(15000)

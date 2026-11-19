@@ -6,7 +6,13 @@ import socket
 import ssl
 from urllib.parse import urlsplit
 
-from browser_qa import click_quick_poe, enter_ssh_credentials, expect_power_result, run_browser_case
+from browser_qa import (
+    click_quick_poe,
+    enter_ssh_credentials,
+    expect_power_result,
+    launch_test_browser,
+    run_browser_case,
+)
 from browser_unified_controls import hit_point, resize_workspace
 from playwright.sync_api import expect
 
@@ -144,7 +150,9 @@ def exercise(page, url, switch, _second_switch, shots, _backup):
             device_scale_factor=3,
             locale="ko-KR",
         ) as remote,
-        browser.new_context(ignore_https_errors=True) as second,
+        # A second device has its own browser process and network connections.
+        launch_test_browser(browser.browser_type) as guest_browser,
+        guest_browser.new_context(ignore_https_errors=True) as second,
     ):
         peer = remote.new_page()
         guest = second.new_page()
