@@ -65,7 +65,7 @@
       <div id="portTargets" hidden>
       <article class="panel"><header><h2>조회 대상</h2><span>스위치별 한 줄</span></header><form id="queryForm" class="panelbody">
         <label>스위치 주소와 포트 <textarea id="queryTargets" rows="3" placeholder="한 줄에 스위치 주소와 조회할 포트 목록을 입력하세요." required></textarea></label>
-        <div class="bar"><button class="primary" data-live>포트 조회</button><button type="button" data-import="queryTargets">대상 / 프로필 열기</button><button type="button" id="exportProfile" data-job>대상 프로필 저장</button><a class="session-link" href="#connect">SSH 접속 설정</a></div><div id="profileFiles" class="filelinks" hidden></div>
+        <div class="bar"><button id="queryPorts" class="primary" data-job disabled>포트 조회</button><button type="button" data-import="queryTargets">대상 / 프로필 열기</button><button type="button" id="exportProfile" data-job>대상 프로필 저장</button><a class="session-link" href="#connect">SSH 접속 설정</a></div><div id="profileFiles" class="filelinks" hidden></div>
       </form></article>
       </div>
       <div id="portLiveControl" hidden>
@@ -113,5 +113,15 @@
   </main>
 </div>
 <dialog id="review"><form method="dialog" class="dialog-head"><h2 id="reviewTitle">작업 검토</h2><button aria-label="검토 닫기">닫기</button></form><div id="reviewBody"></div></dialog>
+<dialog id="queryCredentials" aria-labelledby="queryCredentialsTitle">
+  <header class="dialog-head"><h2 id="queryCredentialsTitle">포트 조회용 SSH 계정</h2></header>
+  <form id="queryLoginForm" class="panelbody" autocomplete="off">
+    <label>사용자 이름<input id="queryUsername" required maxlength="128" autocomplete="off" data-job autofocus></label>
+    <label>비밀번호<input id="queryPassword" type="password" required autocomplete="off" data-job></label>
+    <label>Enable 비밀번호 (선택)<input id="queryEnableSecret" type="password" autocomplete="off" data-job></label>
+    <p id="queryLoginError" class="warning" role="alert" hidden></p>
+    <div class="bar"><button type="submit" id="submitQueryCredentials" class="primary" data-job>계정 적용 후 조회</button><button type="button" id="cancelQueryCredentials">취소</button></div>
+  </form>
+</dialog>
 <input id="targetFile" type="file" accept=".txt,.csv,.tsv,.json,text/plain,text/csv,application/json" hidden>
 </body></html>
