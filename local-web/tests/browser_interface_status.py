@@ -66,7 +66,7 @@ def assert_live_readings(page, switch, expected, *, poe_failed=None):
             has=matrix_view.get_by_text("관측 당시 링크", exact=True)
         )
         expect(link_field.locator(".data")).to_have_text("미확인" if link == "확인 불가" else link)
-    page.locator("#clearSelection").click()
+    page.get_by_role("button", name="전체 선택 해제", exact=True).click()
     query = page.evaluate("fetch('/api/workspace').then(r => r.json()).then(w => w.query)")
     assert not query.get("files")
     rows = query["rows"]
@@ -97,6 +97,11 @@ def assert_live_readings(page, switch, expected, *, poe_failed=None):
         expect(link_field.locator(".data")).to_have_text("미확인" if link == "확인 불가" else link)
         link_time = matrix_view.locator("#detail label").filter(has_text="링크 관측 시각")
         expect(link_time).to_have_count(int(link in ("Up", "Down")))
+        if port != poe_failed:
+            # Opening an eligible tile also checks it. Leave later refreshes with a clean selection.
+            expect(tile).to_have_attribute("aria-pressed", "true")
+            tile.click()
+            expect(tile).to_have_attribute("aria-pressed", "false")
 
 
 def exercise(page, url, switch, _other, _shots, _backup):
@@ -128,10 +133,19 @@ def exercise(page, url, switch, _other, _shots, _backup):
         assert_live_readings(page, switch, expected)
     switch.reject_status = False
     switch.reject_poe = True
-    page.frame_locator("#matrixViewer").locator('#matrix [data-port-key$="/10"]').click()
+    matrix = page.frame_locator("#matrixViewer").locator("#matrix")
+    matrix.locator('[data-port-key$="/10"]').click()
+    expect(matrix.locator('[aria-pressed="true"]')).to_have_count(1)
+    commands_before_refresh = len(switch.commands)
     page.locator("#refreshPorts").click()
     expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
     assert switch.commands.count("show interfaces status") == 4
+    poe_reads = [
+        command
+        for command in switch.commands[commands_before_refresh:]
+        if command.startswith("show power-over-ethernet ")
+    ]
+    assert poe_reads == ["show power-over-ethernet 10"], poe_reads
     assert_live_readings(
         page, switch, {"1": "확인 불가", "10": "Up", "2/1": "확인 불가"}, poe_failed="10"
     )
