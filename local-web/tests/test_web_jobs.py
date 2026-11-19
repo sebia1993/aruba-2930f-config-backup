@@ -95,7 +95,7 @@ class JobTests(unittest.TestCase):
         (job,) = reopened.history()
         self.assertEqual(job["action"], "ports.query")
         self.assertEqual(job["files"], [attachments[1]])
-        self.assertEqual(reopened.download("log"), report)
+        self.assertTrue(reopened.download("log").samefile(report))
         with self.assertRaises(ValueError):
             reopened.download("old")
         with self.assertRaises(ValueError):
