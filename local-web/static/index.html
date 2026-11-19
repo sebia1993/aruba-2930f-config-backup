@@ -55,7 +55,6 @@
       <div class="port-heading">
         <h1>포트·PoE 관리</h1>
         <div class="bar port-workspace-bar" role="group" aria-label="관제 결과 보기">
-          <button type="button" id="portMonitorTab" aria-pressed="true" aria-controls="portMonitor">관제</button>
           <button type="button" id="portChanges" aria-pressed="false" aria-controls="portMonitor" disabled>변화만 보기</button>
           <button type="button" id="portReviewTab" aria-pressed="false" aria-controls="portMonitor" disabled>우선 확인</button>
         </div>
@@ -67,13 +66,7 @@
             <div><h2 id="queryHeading">실시간 조회</h2><label for="queryTargets">스위치 주소와 포트 (한 줄에 한 대)</label></div>
             <textarea id="queryTargets" rows="1" autocapitalize="none" spellcheck="false" placeholder="주소와 포트 목록을 공백으로 구분하세요." required></textarea>
           </div>
-          <details id="targetOptions"><summary>대상 목록 관리</summary>
-            <div class="bar target-tools">
-              <button type="button" data-job id="targetRows">스위치 행 편집</button><button type="button" data-job id="targetPaste">표 붙여넣기</button><button type="button" data-job id="targetVerify">입력한 대상 검증</button>
-              <button type="button" data-import="queryTargets">대상 / 프로필 열기</button><button type="button" id="exportProfile" data-job>대상 프로필 저장</button>
-            </div>
-            <div id="profileFiles" class="filelinks" hidden></div>
-          </details>
+          <button type="button" id="manageTargets" data-job aria-haspopup="dialog" aria-controls="targetEditor">대상 목록 관리</button>
           </div>
           <div class="query-commands">
             <span id="targetCount" role="status"></span>
@@ -101,7 +94,7 @@
           <details id="controlPanel"><summary id="controlHeading">제어 옵션</summary><div class="panelbody">
             <div class="bar"><label>제어 방식<select id="controlMode"><option value="batch">조회 결과에서 선택</option><option value="single" selected>단일 포트 직접 지정</option></select></label><label>작업<select id="operation"><option value="poe_off">PoE 전원 OFF</option><option value="poe_on">PoE 전원 ON</option><option value="disable">포트 비활성화 (Disable)</option><option value="enable">포트 활성화 (Enable)</option></select></label></div>
             <div id="batchControls" hidden><label>선택 범위<select id="selectionScope"><option value="filtered">검색 결과</option><option value="switch">현재 스위치</option><option value="all">조회된 전체</option></select></label><button type="button" id="selectVisible">범위 전체 선택</button><button type="button" id="selectEligible">제어 가능 포트만 선택</button><button type="button" id="clearSelection">선택 해제</button></div>
-            <div id="singleControls" class="bar"><label>스위치 주소<input id="singleIP" placeholder="스위치 IP 또는 IP:SSH포트"></label><label>포트<input id="singlePort" placeholder="인터페이스 번호"></label></div>
+            <div id="singleControls" class="bar"><label>스위치 주소<input id="singleIP" placeholder="스위치 IP 또는 IP:SSH포트"></label><label>포트<input id="singlePort" placeholder="인터페이스 번호"></label><button type="button" id="inspectSingle" data-job>현재 상태 조회</button></div>
             <p id="controlHint" class="hint">직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.</p>
             <button id="preview" type="button" class="primary" data-job>제어 대상과 명령 검토</button>
           </div></details>
@@ -183,6 +176,27 @@
     <p id="queryLoginError" class="warning" role="alert" hidden></p>
     <div class="bar"><button type="submit" id="submitQueryCredentials" class="primary" data-job>계정 적용 후 계속</button><button type="button" id="cancelQueryCredentials">취소</button></div>
   </form>
+</dialog>
+<dialog id="targetEditor" aria-labelledby="targetEditorTitle">
+  <div class="dialog-head"><h2 id="targetEditorTitle">대상 목록 관리</h2><button type="button" id="targetClose">닫기</button></div>
+  <div class="target-body">
+    <label>입력 방식<select id="targetInputMode" data-job><option value="raw">현재 입력</option><option value="rows">스위치 행 편집</option><option value="paste">표 붙여넣기</option></select></label>
+    <section id="targetRawPane">
+      <label>스위치 주소와 포트<textarea id="editorTargets" rows="4" autocapitalize="none" spellcheck="false"></textarea></label>
+      <div class="bar"><button type="button" data-import="queryTargets">대상 / 프로필 열기</button><button type="button" id="exportProfile" data-job>대상 프로필 저장</button></div>
+      <div id="profileFiles" class="filelinks" hidden></div>
+    </section>
+    <section id="targetRowsPane" hidden>
+      <div class="bar"><button id="addTargetRow" type="button" data-job>스위치 추가</button><label class="inline-check"><input id="advancedTargets" type="checkbox"> SSH 포트 · 별칭</label></div>
+      <div class="tablebox"><table><thead><tr><th>스위치 IPv4</th><th>인터페이스 목록</th><th class="advanced">SSH 포트</th><th class="advanced">별칭</th><th>행</th></tr></thead><tbody id="editTargetRows"></tbody></table></div>
+    </section>
+    <section id="targetPastePane" hidden>
+      <div class="bar"><label>적용 방식<select id="pasteMode"><option value="replace">기존 목록 교체</option><option value="append">현재 입력에 추가</option></select></label><button id="readClipboard" type="button">클립보드에서 가져오기</button></div>
+      <label>스위치·포트 목록<textarea id="pasteTargets" rows="6" placeholder="엑셀에서 복사한 IP와 포트 열을 붙여넣으세요."></textarea></label>
+    </section>
+    <div class="bar"><button id="verifyEditor" type="button" data-job>검증·미리보기</button><button id="acceptTargets" type="button" class="primary" disabled>검증된 대상 적용</button></div>
+    <p id="targetMessage" role="status"></p><div class="tablebox" id="targetPreview"></div>
+  </div>
 </dialog>
 <input id="targetFile" type="file" accept=".txt,.tsv,.json" hidden>
 </body></html>

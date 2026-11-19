@@ -29,8 +29,8 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   #monitorInterval {width:44px}
   .monitor-verb {display:none}
 }
-#targetOptions summary {color:var(--teal);padding:5px 0}
-#targetOptions .target-tools {margin-top:6px}
+#manageTargets {margin-top:4px}
+#targetEditor textarea {width:100%;min-width:0}
 #targetCount {color:var(--muted);font-size:12px;overflow-wrap:anywhere}
 #targetCount:empty {display:none}
 #profileFiles:not([hidden]) {margin-top:8px}

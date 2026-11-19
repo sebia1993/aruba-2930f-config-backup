@@ -254,7 +254,6 @@ function clearInspection() {
   $('controlMode').onchange();
   updatePortActions();
 }
-const monitorTabs = {overview:'portMonitorTab', review:'portReviewTab'};
 function updatePortActions() {
   const source=monitor()?.source();
   const inventory=displayingInventory();
@@ -268,7 +267,8 @@ function updatePortActions() {
   $('matrixView').setAttribute('aria-pressed',String(!list));
   $('listView').setAttribute('aria-pressed',String(list));
   $('matrixWorkspaceTitle').textContent=list ? '포트별 조회 결과' : '포트 상태 매트릭스';
-  for (const [name,id] of Object.entries(monitorTabs)) $(id).setAttribute('aria-pressed',String(view===name));
+  $('portReviewTab').setAttribute('aria-pressed',String(view==='review'));
+  $('portReviewTab').title=view==='review' ? '전체 포트로 돌아가기' : '점검할 포트 보기';
   $('portReviewTab').disabled=!source?.hasData || inventory;
   $('portChanges').disabled=$('portReviewTab').disabled || view!=='overview';
   $('portChanges').setAttribute('aria-pressed',String(!!source?.changesOnly));
@@ -279,12 +279,12 @@ function updatePortActions() {
 }
 $('matrixView').onclick=()=>monitor()?.setPresentation('matrix');
 $('listView').onclick=()=>monitor()?.setPresentation('list');
-for (const [view,id] of Object.entries(monitorTabs)) {
-  $(id).onclick=()=>{
-    if (!displayingInventory()) monitor()?.navigate(view);
-    updatePortActions();
-  };
-}
+$('portReviewTab').onclick=()=>{
+  const viewer=monitor();
+  if (!viewer || $('portReviewTab').disabled) return;
+  viewer.navigate(viewer.source().view==='review' ? 'overview' : 'review');
+  updatePortActions();
+};
 $('portChanges').onclick=()=>{
   const viewer=monitor();
   if (!viewer || $('portChanges').disabled) return;
@@ -310,25 +310,13 @@ $('portLiveControl').addEventListener('keydown',event=>{
     $('controlHeading').focus({preventScroll:true});
   }
 });
-function selectObservedPort(message,inspect) {
+function selectObservedPort(message) {
   if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
   const row=monitor()?.selected();
   if (!row || row.key!==message.key || !ui.liveId || message.liveId!==ui.liveId || monitor().source().liveId!==ui.liveId) return;
   clearInspection();
   ui.tileRow=ui.selected.size ? null : row;
   $('controlMode').value='batch'; $('controlMode').onchange();
-  if (!inspect || ui.selected.size) return;
-  if (!ui.session.active) return withSshAccount(()=>selectObservedPort(message,true));
-  const address=row.sshPort===22?row.ip:row.ip+':'+row.sshPort;
-  run('control.inspect',{targets:[{ip:row.ip,sshPort:row.sshPort,port:row.port}]},(result,cancelled)=>{
-    if (cancelled || !result.snapshot || ui.selected.size || ui.tileRow!==row || row!==monitor()?.selected() || $('portMonitor').closest('[data-page]').hidden) return;
-    ui.inspectedRow=row;
-    $('controlMode').value='single'; $('controlMode').onchange();
-    $('singleIP').value=address; $('singlePort').value=row.port;
-    window.controlTools.showInspection(result.snapshot);
-    $('controlPanel').open=true;
-    updatePortActions();
-  });
 }
 function selectObservedBatch() {
   if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
@@ -350,8 +338,7 @@ function postMatrix(keepView=false,periodic=false) {
 window.addEventListener('message',e=>{
   if (e.origin !== location.origin || !e.data) return;
   if (e.source === $('matrixViewer').contentWindow) {
-    if (e.data.type==='aruba-observed-port') selectObservedPort(e.data,false);
-    if (e.data.type==='aruba-inspect-port') selectObservedPort(e.data,true);
+    if (e.data.type==='aruba-observed-port') selectObservedPort(e.data);
     if (e.data.type==='aruba-port-checks') selectObservedBatch();
     if (e.data.type==='aruba-port-context') {
       if (ui.tileRow!==monitor()?.selected()) ui.tileRow=null;
@@ -655,10 +642,17 @@ function powerBadge(view) {
   badge.title = view.reason;
   return badge;
 }
+function observedInspectionTarget() {
+  const viewer=monitor();
+  if (ui.selected.size || !ui.liveId || viewer?.source().liveId!==ui.liveId) return null;
+  if (currentInspection()) return ui.inspectedRow;
+  return $('controlMode').value==='batch' ? viewer.inspectionTarget() : null;
+}
 function updateControlTarget() {
   const target=$('controlTarget');
   const batch=$('controlMode').value==='batch';
   const targets=batch ? matrixControlTargets() : [];
+  const observed=batch && observedInspectionTarget();
   if (currentInspection()) {
     target.textContent='실시간으로 다시 조회한 대상 · '+$('singleIP').value+' / 포트 '+$('singlePort').value;
   } else if (targets.length) {
@@ -676,13 +670,22 @@ function updateControlTarget() {
       }
     }
     target.textContent=ports.join(' · ')+(keys.length>3?' 외 '+(keys.length-3)+'개':'');
+  } else if (observed) {
+    target.textContent=observed.ip+(observed.sshPort===22 ? '' : ':'+observed.sshPort)+' / 포트 '+observed.port;
   } else target.textContent='';
   target.hidden=!target.textContent;
   $('selectedCount').hidden=!batch;
   $('selectedCount').textContent='선택 '+targets.length+'개';
   $('quickActions').hidden=!targets.length;
   $('liveScope').hidden=!!currentInspection() || !(ui.liveId || displayingInventory());
-  $('portActionStrip').hidden=target.hidden && $('quickActions').hidden && $('liveScope').hidden;
+  const inspect=$('inspectSingle');
+  const strip=$('portActionStrip');
+  const container=observed ? strip : $('singleControls');
+  if (inspect.parentElement!==container) container.insertBefore(inspect,observed ? $('liveScope') : null);
+  inspect.hidden=batch && !observed;
+  if (observed) inspect.title=observed.ip+':'+observed.sshPort+' / 포트 '+observed.port;
+  else inspect.removeAttribute('title');
+  strip.hidden=!observed && target.hidden && $('quickActions').hidden && $('liveScope').hidden;
 }
 function syncMonitorChecks() {
   const viewer=monitor();
@@ -943,35 +946,47 @@ function dateText(value) {
   const stamp = new Date(value);
   return isNaN(stamp.getTime()) ? value : stamp.toLocaleString('ko-KR',{hour12:false});
 }
-let fileDestination = null;
+let fileDestination = null, fileRequest = 0, fileDraft = null;
 for (const node of all('[data-import]')) node.onclick = () => {
+  fileRequest++;
   fileDestination = node.dataset.import;
+  fileDraft = fileDestination === 'queryTargets' ? window.portTools.targetDraftVersion() : null;
   $('targetFile').accept = fileDestination === 'queryTargets' ? '.txt,.tsv,.json' : '.txt,.tsv';
   $('targetFile').value = '';
   $('targetFile').click();
 };
 $('targetFile').onchange = async () => {
-  const file = $('targetFile').files[0], dest = fileDestination;
+  const file = $('targetFile').files[0], dest = fileDestination, request = fileRequest, draft = fileDraft;
   if (!file || !dest) return;
+  const isQuery = dest === 'queryTargets';
+  const current = () => request === fileRequest && (!isQuery || (draft !== null && window.portTools.targetDraftVersion() === draft));
+  function fileError(message) {
+    if (!current()) return;
+    if (isQuery) $('targetMessage').textContent = message;
+    notify(message,true);
+  }
+  if (!current()) return;
   const allowed=$('targetFile').accept.split(',');
   if (!allowed.some(ext=>file.name.toLowerCase().endsWith(ext))) {
-    notify('대상 목록 파일 형식을 확인하세요. 허용 형식: '+allowed.join(', '),true);
+    fileError('대상 목록 파일 형식을 확인하세요. 허용 형식: '+allowed.join(', '));
     return;
   }
-  if (file.size > 2 * 1024 * 1024) { notify('2 MB 이하인 대상 목록 파일을 선택하세요.',true); return; }
+  if (file.size > 2 * 1024 * 1024) { fileError('2 MB 이하인 대상 목록 파일을 선택하세요.'); return; }
   try {
-    const text = (await file.text()).replace(/^\uFEFF/,'');
-    if (dest==='queryTargets' && ui.busy) return;
-    if (dest === 'queryTargets' && file.name.toLowerCase().endsWith('.json')) {
+    let text = (await file.text()).replace(/^\uFEFF/,'');
+    if (!current() || (isQuery && ui.busy)) return;
+    if (isQuery && file.name.toLowerCase().endsWith('.json')) {
       let profile;
       await run('profiles.import',{text},r=>{ profile = r; });
-      if (profile && dest === 'queryTargets') {
-        await run('targets.apply',{targets:profile.targets},applied=>{
-          clearPorts(); window.portTools.restoreInventory(applied.groups,applied.targets);
-        });
-      }
-    } else { $(dest).value = text; $(dest).dispatchEvent(new Event('input')); }
-  } catch (e) { notify(e.message,true); }
+      if (!current()) return;
+      if (!profile) { $('targetMessage').textContent = $('statusText').textContent; return; }
+      text = profile.targets;
+    }
+    const input = $(isQuery ? 'editorTargets' : dest);
+    input.value = text;
+    input.dispatchEvent(new Event('input'));
+    if (isQuery) input.focus();
+  } catch (e) { fileError(e.message); }
 };
 for (const node of all('[data-save]')) node.onclick = () => {
   const value = $(node.dataset.save).value.trim();
@@ -983,7 +998,18 @@ for (const node of all('[data-save]')) node.onclick = () => {
 function showProfileFiles(r) {
   $('profileFiles').hidden = false; $('profileFiles').replaceChildren(filelinks(r.files));
 }
-$('exportProfile').onclick = () => run('profiles.export',{targets:$('queryTargets').value.trim()},showProfileFiles);
+$('exportProfile').onclick = async () => {
+  const draft = window.portTools.targetDraftVersion();
+  if (draft === null) return;
+  let saved = false;
+  await run('profiles.export',{targets:$('editorTargets').value.trim()},r=>{
+    if (window.portTools.targetDraftVersion() !== draft) return;
+    saved = true;
+    showProfileFiles(r);
+    $('profileFiles').querySelector('a')?.focus();
+  });
+  if (!saved && window.portTools.targetDraftVersion() === draft) $('targetMessage').textContent = $('statusText').textContent;
+};
 $('shutdown').onclick = () => confirmDialog('로컬 웹 서버 종료',[elem('p','현재 SSH 세션을 닫고 이 PC의 로컬 웹 서버를 종료합니다.')],'서버 종료',async () => {
   try {
     await api('/api/shutdown',{});
@@ -1034,8 +1060,9 @@ async function start() {
       showBackupResult(resumed.result);
     } else if (resumed?.action === 'profiles.export' && resumed.result.files?.length) {
       setQueryExpanded(true);
-      $('targetOptions').open=true;
+      window.portTools.openTargetEditor();
       showProfileFiles(resumed.result);
+      $('profileFiles').querySelector('a')?.focus();
     } else if (resumed?.action === 'control.quick-execute') {
       window.controlTools.showQuickResult(resumed.result,resumed.cancelled,true);
     } else if (resumed?.action === 'cable.show' || resumed?.action === 'cable.test') {

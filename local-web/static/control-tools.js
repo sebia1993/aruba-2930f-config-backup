@@ -14,18 +14,34 @@
   }
   function hideInspection() { inspection.hidden = true; inspection.replaceChildren(); }
   for (const id of ['singleIP','singlePort','controlMode']) $(id).addEventListener('input',hideInspection);
-  function inspectSingle() {
+  $('inspectSingle').onclick=()=>{
+    const row=observedInspectionTarget();
+    const mode=$('controlMode').value;
+    if (!row && mode!=='single') return;
+    const target=row ? {ip:row.ip,sshPort:row.sshPort,port:row.port} :
+      {ip:$('singleIP').value.trim(),port:$('singlePort').value.trim()};
+    if (!target.ip || !target.port) return notify('스위치 주소와 한 개의 포트를 입력하세요.',true);
+    const inContext=()=>!$('portMonitor').closest('[data-page]').hidden && $('controlMode').value===mode &&
+      (row ? observedInspectionTarget()===row : !ui.inspectedRow &&
+        $('singleIP').value.trim()===target.ip && $('singlePort').value.trim()===target.port);
     hideInspection();
-    const ip = $('singleIP').value.trim(), port = $('singlePort').value.trim();
-    if (!ip || !port) return notify('스위치 주소와 한 개의 포트를 입력하세요.',true);
-    runSsh('control.inspect',{targets:[{ip,port}]},(result,cancelled) => {
-      if (cancelled || !result.snapshot || $('singleIP').value.trim()!==ip || $('singlePort').value.trim()!==port) return;
-      showInspection(result.snapshot);
+    withSshAccount(()=>{
+      if (!inContext()) return;
+      run('control.inspect',{targets:[target]},(result,cancelled)=>{
+        if (cancelled || !result.snapshot || !inContext()) return;
+        if (row) {
+          ui.tileRow=ui.inspectedRow=row;
+          $('controlMode').value='single';
+          $('controlMode').onchange();
+          $('singleIP').value=row.sshPort===22 ? row.ip : row.ip+':'+row.sshPort;
+          $('singlePort').value=row.port;
+          $('controlPanel').open=true;
+          updatePortActions();
+        }
+        showInspection(result.snapshot);
+      });
     });
-  }
-  const inspect = button('현재 상태 조회',inspectSingle);
-  inspect.id='inspectSingle'; inspect.dataset.job='';
-  single.append(inspect);
+  };
   function showInspection(s) {
     inspection.hidden = false;
     inspection.replaceChildren(elem('b','현재 포트 상태'),simpleTable([

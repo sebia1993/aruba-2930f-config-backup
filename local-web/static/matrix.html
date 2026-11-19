@@ -301,14 +301,19 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 @media(min-width:640px){
   .embedded .port-review .dr-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 }
-@media(max-width:560px){
-  .embedded #overviewRoot>.filterbar{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto}
+@media(max-width:600px){
+  .embedded #overviewRoot>.filterbar{grid-template-columns:repeat(2,minmax(0,1fr))}
   .embedded #overviewRoot>.filterbar>.search{grid-column:1/-1}
   .embedded #overviewRoot .filterbar select{max-width:none}
   .embedded .filter-options select{flex:1 1 100px}
+}
+@media(max-width:560px){
   .embedded .metrics{gap:3px 8px}
   .embedded .port-reading .detail-actions{margin-left:0}
   .embedded .port-review .dr-list{max-height:clamp(104px,27vh,190px)}
+}
+@media(max-height:320px) and (min-width:601px){
+  .embedded #overviewRoot>.filterbar{grid-template-columns:minmax(100px,1fr) repeat(2,minmax(86px,auto))}
 }
 @media(max-height:320px){
   .embedded #overviewRoot>#shortFilterToggle{display:inline-flex;min-height:32px;margin:0 0 5px;padding:3px 9px}
@@ -408,7 +413,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       <div class="matrix-area" id="portMatrixPane"><div class="matrix-top"><strong>포트별 PoE 전력</strong><span class="hint">기본 정렬 · 사업장 → 스위치 IP → 포트 번호</span></div><div id="matrix" class="matrix-sections" aria-label="지정 포트 상태 매트릭스"></div></div>
       <div class="matrix-footer"><div class="legend" aria-label="PoE 전력 범례"><span><i class="swatch unpowered"></i><b data-power-label="unpowered"></b></span><span><i class="swatch limited"></i><b data-power-label="limited"></b></span><span><i class="swatch normal"></i><b data-power-label="normal"></b></span></div><span class="matrix-note">점선 테두리는 전력 미측정</span></div>
      </section>
-     <section class="panel" id="portListPane" aria-labelledby="tableTitle"><div class="panel-head"><div><h2 id="tableTitle">포트별 조회 결과</h2><div class="panel-sub">포트를 선택하면 해당 장비의 조회 결과를 확인할 수 있습니다</div></div><div class="table-head-tools"><span class="count" id="tableCount">—</span><select id="sort" aria-label="결과 정렬"><option value="natural">IP·포트 순</option><option value="issues">전력 점검 우선</option><option value="power">전력 높은 순</option></select></div></div>
+     <section class="panel" id="portListPane" aria-labelledby="tableTitle"><div class="panel-head"><div><h2 id="tableTitle">포트별 조회 결과</h2><div class="panel-sub">포트를 선택하면 해당 장비의 조회 결과를 확인할 수 있습니다</div></div><div class="table-head-tools"><select id="sort" aria-label="결과 정렬"><option value="natural">IP·포트 순</option><option value="issues">전력 점검 우선</option><option value="power">전력 높은 순</option></select></div></div>
       <div class="tablewrap"><table class="resulttable" aria-labelledby="tableTitle"><colgroup><col class="port-col"><col class="power-state-col"><col class="watts-col"><col></colgroup><thead><tr><th scope="col">포트 번호</th><th scope="col">전력 판정</th><th scope="col">실측 W</th><th scope="col">LLDP AP 이름</th></tr></thead><tbody id="tbody"></tbody></table></div>
       <div class="table-foot"><span id="tableRange">—</span><div class="paginate"><button id="prevPage" aria-label="이전 페이지">이전</button><span id="pageNum">1 / 1</span><button id="nextPage" aria-label="다음 페이지">다음</button></div></div>
      </section>
@@ -621,17 +626,14 @@ window.PortViews = (() => {
     filter.addEventListener('change',refilter);
     drawPage();
   }
-  function renderReview(host,rows,onBack,onSelect,addAction) {
+  function renderReview(host,rows,onBack,onSelect) {
     const container = toolbar(host,onBack);
     const items = rows.filter(row => Object.hasOwn(issueLabels,row.status)).map(row => ({
       key:row.key,category:row.status,row,entry:row,search:searchText(row),
       note:[portAddress(row),row.reason].filter(Boolean).join(' · ')
     })).sort((a,b) => issueOrder[a.category]-issueOrder[b.category]);
     explorer(container,items,{title:'점검 목록',detailTitle:'선택 포트 상세',filterTitle:'점검 유형',
-      categories:issueLabels,empty:'현재 조회 결과에 우선 확인할 포트가 없습니다.',details:(box,row) => {
-        reviewDetails(box,row,onSelect);
-        if (addAction) addAction(box,row,'reviewObservedPort');
-      }});
+      categories:issueLabels,empty:'현재 조회 결과에 우선 확인할 포트가 없습니다.',details:(box,row)=>reviewDetails(box,row,onSelect)});
   }
   return Object.freeze({renderReview});
 })();
@@ -815,7 +817,7 @@ window.PortViews = (() => {
       if (row.lastGood) tile.dataset.stale='true';
       if (row.comparison?.changed) tile.dataset.changed='true';
       labelTile(tile,row);
-      tile.setAttribute('aria-pressed',String(multiSelect ? checkedPorts.has(row.key) : row.key===state.selected));
+      tile.setAttribute('aria-pressed',String(matrixMultiActive() ? checkedPorts.has(row.key) : row.key===state.selected));
       tile.classList.toggle('selected',row.key===state.selected);
       tile.classList.toggle('for-action',!!liveSelectionId() && checkedPorts.has(row.key));
       group.grid.append(tile);
@@ -917,7 +919,7 @@ window.PortViews = (() => {
       badges.append(node('strong',watts(row),'observed-watts'));
       selection.append(identity,badges);
       badges.append(node('span','LLDP AP · '+(row.apName || (row.lldp==='ok'?'이름 없음':'미수집')),'ap-name'));
-      addPortAction(selection,row,state.view==='review'?'reviewObservedPort':'inspectObservedPort');
+      addRefreshNotice(selection,row);
       facts=node('details',null,'port-facts');
       facts.open=!!factsOpen;
       facts.append(node('summary','포트 상세 정보'),fields,reason);
@@ -949,24 +951,18 @@ window.PortViews = (() => {
   function selectedActionRow() {
     return liveSelectionId() ? state.lookup.get(state.selected) : null;
   }
-  function addPortAction(box,row,id) {
-    if (embedded && liveSelectionId() && !canCheck(row)) {
-      const action=button('현재 상태 조회','btn');
-      action.id=id;
-      action.disabled=controlsBusy || checkedPorts.size>0;
-      action.addEventListener('click',()=>{
-        parent.postMessage({type:'aruba-inspect-port',liveId:liveSelectionId(),key:row.key},location.origin);
-      });
-      const actions=node('div',null,'detail-actions');
+  function addRefreshNotice(box,row) {
+    if (!liveSelectionId() || canCheck(row)) return;
+    const notes=node('div',null,'detail-actions');
+    if (needsRefresh(row)) {
       const notice=node('strong',refreshNotice+' · 위 수치는 마지막 조회 시점의 값입니다.','detail-foot');
       notice.dataset.freshnessKey=row.key;
-      notice.hidden=!needsRefresh(row);
-      actions.append(notice,action,node('span','현재 스위치 상태를 조회한 뒤 이 포트를 제어할 수 있습니다.','detail-foot'));
-      const address=box.querySelector('.dr-key');
-      if (address) address.after(actions);
-      else box.append(actions);
+      notes.append(notice);
     }
+    notes.append(node('span','현재 상태 조회 후 이 포트를 제어할 수 있습니다.','detail-foot'));
+    box.append(notes);
   }
+  function matrixMultiActive() { return state.presentation==='matrix' && multiSelect; }
   function canCheck(row) { return row.queryStatus==='ok' && !excludedPorts.has(row.key); }
   function targetKey(target) { return target.ip+':'+target.sshPort+'/'+target.port; }
   function controlBatch() {
@@ -978,15 +974,13 @@ window.PortViews = (() => {
   function renderChecks() {
     const live=!!liveSelectionId();
     const multi=el('matrixMultiSelect');
-    multi.hidden=!live;
+    multi.hidden=!live || state.presentation==='list';
     multi.disabled=controlsBusy;
     multi.setAttribute('aria-pressed',String(multiSelect));
     if (!live) return;
-    const inspect=el('inspectObservedPort') || el('reviewObservedPort');
-    if (inspect) inspect.disabled=controlsBusy || checkedPorts.size>0;
     for (const [key,tile] of state.tileByKey) {
       tile.classList.toggle('for-action',checkedPorts.has(key));
-      tile.setAttribute('aria-pressed',String(multiSelect ? checkedPorts.has(key) : key===state.selected));
+      tile.setAttribute('aria-pressed',String(matrixMultiActive() ? checkedPorts.has(key) : key===state.selected));
     }
     for (const input of el('tbody').querySelectorAll('input[data-control-key]')) {
       const key=input.dataset.controlKey;
@@ -1073,7 +1067,6 @@ window.PortViews = (() => {
     el('tbody').replaceChildren(frag);
     renderChecks();
     el('pageNum').textContent=(state.page+1)+' / '+max;
-    el('tableCount').textContent=sorted.length+'개';
     el('tableRange').textContent=(sorted.length?start+1:0)+'–'+Math.min(start+pageSize,sorted.length)+' / '+sorted.length+'개 표시';
     el('prevPage').disabled=state.page===0;
     el('nextPage').disabled=state.page===max-1;
@@ -1102,24 +1095,28 @@ window.PortViews = (() => {
     el('portListPane').hidden=!list;
     el('portMatrixPane').hidden=list;
     el('matrixCount').hidden=list;
+    el('zoom').closest('.filter-help').hidden=list;
   }
   function setPresentation(mode) {
     if (!liveSelectionId() || !['matrix','list'].includes(mode) || state.presentation===mode) return;
     state.presentation=mode;
     applyPresentation();
     if (mode==='list') renderTable(true);
-    else revealPort(state.tileByKey.get(state.selected));
+    else {
+      renderChecks();
+      revealPort(state.tileByKey.get(state.selected));
+    }
     parent.postMessage({type:'aruba-port-view'},location.origin);
   }
   function selectPort(key, scroll) {
     if (!state.lookup.has(key)) return;
     const oldTile=state.tileByKey.get(state.selected);
     oldTile?.classList.remove('selected');
-    if (!multiSelect) oldTile?.setAttribute('aria-pressed','false');
+    if (!matrixMultiActive()) oldTile?.setAttribute('aria-pressed','false');
     state.selected=key;
     const tile=state.tileByKey.get(key);
     tile?.classList.add('selected');
-    if (!multiSelect) tile?.setAttribute('aria-pressed','true');
+    if (!matrixMultiActive()) tile?.setAttribute('aria-pressed','true');
     for (const item of el('issues').querySelectorAll('[data-port-key]')) {
       const selected=item.dataset.portKey===key;
       item.classList.toggle('current',selected);
@@ -1129,7 +1126,7 @@ window.PortViews = (() => {
     for (const item of el('tbody').children) item.classList.toggle('selected',item.dataset.portKey===key);
     renderDetail();
     if (embedded) {
-      if (!multiSelect) parent.postMessage({type:'aruba-observed-port',liveId:liveSelectionId(),key},location.origin);
+      if (!matrixMultiActive()) parent.postMessage({type:'aruba-observed-port',liveId:liveSelectionId(),key},location.origin);
     }
     else if (scroll) el('detailTitle').scrollIntoView({block:'center'});
   }
@@ -1166,7 +1163,7 @@ window.PortViews = (() => {
       window.PortViews.renderReview(extra,scopedRows||state.rows,back,key=>{
         if (!state.found.some(r=>r.key===key)) clearFilters();
         state.selected=key; showView('overview'); selectPort(key,true);
-      },addPortAction);
+      });
     }
   }
   function openView(view, rows) { showView(view,rows); window.scrollTo({top:0,behavior:'instant'}); }
@@ -1299,7 +1296,7 @@ window.PortViews = (() => {
       navigate,
       scope:monitorScope,
       setPresentation,
-      source: ()=>({hasData:!!state.current,view:state.view,presentation:state.presentation,liveId:state.current?.liveId,multiSelect,
+      source: ()=>({hasData:!!state.current,view:state.view,presentation:state.presentation,liveId:state.current?.liveId,multiSelect:matrixMultiActive(),
         changesOnly:state.changesOnly,hasBaseline:state.rows.some(row=>row.comparison?.comparable)}),
       setChangesOnly(enabled) {
         if (!state.current || state.view!=='overview') return;
@@ -1310,6 +1307,10 @@ window.PortViews = (() => {
         publishSource();
       },
       selected:selectedActionRow,
+      inspectionTarget() {
+        const row=selectedActionRow();
+        return row && !row.unobserved && !canCheck(row) ? row : null;
+      },
       batch:controlBatch,
       setControlSelection,
       setControlBusy(busy) {
@@ -1375,12 +1376,14 @@ window.PortViews = (() => {
     const multiButton=el('matrixMultiSelect');
     const multiHome=multiButton.parentElement;
     const compactControls=matchMedia('(max-width:600px), (max-height:320px)');
-    function placeMultiButton() {
+    function positionControls() {
+      toggle.hidden=compactControls.matches;
+      filterTools.hidden=!compactControls.matches && toggle.getAttribute('aria-expanded')!=='true';
       if (compactControls.matches) shortToggle.after(multiButton);
       else multiHome.append(multiButton);
     }
-    compactControls.addEventListener('change',placeMultiButton);
-    placeMultiButton();
+    compactControls.addEventListener('change',positionControls);
+    positionControls();
     el('device').hidden=false;
     el('tbody').addEventListener('change',event=>{
       const key=event.target.dataset.controlKey;
@@ -1402,7 +1405,7 @@ window.PortViews = (() => {
     const item=event.target.closest('[data-port-key]');
     if(!item) return;
     selectPort(item.dataset.portKey,id==='tbody'||window.matchMedia('(max-width:780px)').matches);
-    if (embedded && multiSelect && id==='matrix') {
+    if (embedded && matrixMultiActive() && id==='matrix') {
       const row=state.lookup.get(item.dataset.portKey);
       checkRow(row,!checkedPorts.has(row.key));
     }

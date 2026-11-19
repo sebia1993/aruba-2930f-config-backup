@@ -29,12 +29,9 @@
   }
   $('matrixCounts').before(legend);
 
-  const editor = document.createElement('dialog');
-  editor.id = 'targetEditor';
-  editor.innerHTML = '<div class="dialog-head"><h2 id="targetEditorTitle">스위치 행 편집</h2><button type="button" id="targetClose">닫기</button></div><div class="target-body"><section id="targetRowsPane"><div class="bar"><button id="addTargetRow" type="button">스위치 추가</button><label class="inline-check"><input id="advancedTargets" type="checkbox"> SSH 포트 · 별칭</label></div><div class="tablebox"><table><thead><tr><th>스위치 IPv4</th><th>인터페이스 목록</th><th class="advanced">SSH 포트</th><th class="advanced">별칭</th><th>행</th></tr></thead><tbody id="editTargetRows"></tbody></table></div></section><section id="targetPastePane"><div class="bar"><label>적용 방식<select id="pasteMode"><option value="replace">기존 목록 교체</option><option value="append">기존 목록에 추가</option></select></label><button id="readClipboard" type="button">클립보드에서 가져오기</button></div><label>스위치·포트 목록<textarea id="pasteTargets" rows="6" placeholder="엑셀에서 복사한 IP와 포트 열을 붙여넣으세요."></textarea></label></section><div class="bar"><button id="verifyEditor" type="button" data-job>미리보기</button><button id="acceptTargets" type="button" class="primary" disabled>검증된 대상 적용</button></div><p id="targetMessage" role="status"></p><div class="tablebox" id="targetPreview"></div></div>';
-  document.body.append(editor);
+  const editor = $('targetEditor'), modeField = $('targetInputMode'), rawDraft = $('editorTargets');
   const rowPane = $('targetRowsPane'), pastePane = $('targetPastePane');
-  let draftVersion = 0;
+  let draftVersion = 0, rowsSource = null, rowsEdited = false;
 
   function targetCount(items) { return items.reduce((n,g)=>n+g.interfaces.length,0); }
   function stableGroups(items) { return items.map(g=>({...g,interfaces:[...g.interfaces].sort(cmp)})).sort((a,b)=>cmp(a.ip,b.ip)||Number(a.ssh_port)-Number(b.ssh_port)); }
@@ -60,11 +57,12 @@
       if (field === 'ssh_port') { input.type='number'; input.min=1; input.max=65535; }
       cell.append(input);
     }
-    row.insertCell().append(button('삭제',()=>{row.remove();editorDirty();}));
+    row.insertCell().append(button('삭제',()=>{row.remove();rowsEdited=true;editorDirty();}));
     return row;
   }
   function previewPayload() {
-    if (!pastePane.hidden) return {targets:$('pasteTargets').value, mode:$('pasteMode').value,existing:raw.value};
+    if (modeField.value === 'raw') return {targets:rawDraft.value};
+    if (modeField.value === 'paste') return {targets:$('pasteTargets').value, mode:$('pasteMode').value,existing:rawDraft.value};
     return {rows:[...$('editTargetRows').rows].map(tr=>Object.fromEntries([...tr.querySelectorAll('input')].map(node=>[node.dataset.field,node.value])))};
   }
   async function requestPreview(body, receive) {
@@ -84,45 +82,62 @@
     $('targetPreview').replaceChildren(simpleTable([['스위치 IPv4','ip'],['SSH 포트','ssh_port'],['포트',g=>g.interfaces.join(', ')],['별칭','label']],result.groups,'등록 목록을 비웁니다.'));
     $('acceptTargets').disabled = false;
   }
-  async function openEditor(mode) {
+  function targetDraftVersion() {
+    return editor.open && modeField.value === 'raw' ? draftVersion : null;
+  }
+  async function selectInputMode() {
     editorDirty();
+    $('targetRawPane').hidden = modeField.value !== 'raw';
+    rowPane.hidden = modeField.value !== 'rows';
+    pastePane.hidden = modeField.value !== 'paste';
+    if (rowPane.hidden || rowsEdited || rowsSource === rawDraft.value) return;
+    const source = rawDraft.value;
     $('editTargetRows').replaceChildren();
-    const rows = mode === 'rows', verify = mode === 'verify';
-    if (verify && !raw.value.trim()) {
-      raw.focus(); notify('검증할 스위치 주소와 포트를 입력하세요.',true);
-      return;
+    const populate = items => {
+      rowsSource = source;
+      $('advancedTargets').checked = items.some(g=>Number(g.ssh_port)!==22 || g.label);
+      rowPane.classList.toggle('show-advanced',$('advancedTargets').checked);
+      if (items.length) items.forEach(addRow); else addRow();
+    };
+    if (!source.trim()) populate([]);
+    else if (source === registeredText) populate(groups);
+    else {
+      await requestPreview({targets:source},r=>populate(r.groups));
+      if (editor.open && !rowPane.hidden && rawDraft.value === source && !rowsEdited && !$('editTargetRows').rows.length) addRow();
     }
-    $('targetEditorTitle').textContent = rows ? '스위치 행 편집' : verify ? '조회 대상 검증' : '표 붙여넣기';
-    rowPane.hidden = !rows; pastePane.hidden = mode!=='paste';
-    $('verifyEditor').hidden=verify;
+  }
+  function openTargetEditor() {
+    rawDraft.value = raw.value;
+    modeField.value = 'raw';
+    rowsEdited = false;
+    rowsSource = null;
+    $('editTargetRows').replaceChildren();
     $('pasteTargets').value = '';
     $('pasteMode').value = 'replace';
     editor.showModal();
-    if (rows) {
-      const populate = items => {
-        $('advancedTargets').checked = items.some(g=>Number(g.ssh_port)!==22 || g.label);
-        rowPane.classList.toggle('show-advanced',$('advancedTargets').checked);
-        if (items.length) items.forEach(addRow); else addRow();
-      };
-      if (raw.value.trim() && raw.value !== registeredText) {
-        await requestPreview({targets:raw.value},r=>populate(r.groups));
-      } else populate(groups);
-    } else if (verify) {
-      await requestPreview({targets:raw.value},showPreview);
-    } else $('pasteTargets').focus();
+    selectInputMode();
+    rawDraft.focus();
   }
-  $('targetRows').onclick = ()=>openEditor('rows');
-  $('targetPaste').onclick = ()=>openEditor('paste');
-  $('targetVerify').onclick = ()=>openEditor('verify');
+  $('manageTargets').onclick = openTargetEditor;
+  modeField.onchange = selectInputMode;
   $('targetClose').onclick = ()=>editor.close();
   editor.addEventListener('close',editorDirty);
-  rowPane.addEventListener('input', e=>{if (e.target.id !== 'advancedTargets') editorDirty();});
+  rawDraft.addEventListener('input',editorDirty);
+  rowPane.addEventListener('input', e=>{if (e.target.id !== 'advancedTargets') { rowsEdited=true; editorDirty(); }});
   pastePane.addEventListener('input',editorDirty);
   $('advancedTargets').onchange = e=>rowPane.classList.toggle('show-advanced',e.target.checked);
-  $('addTargetRow').onclick = ()=>{const tr=addRow(); if (tr) {editorDirty();tr.querySelector('input').focus();}};
+  $('addTargetRow').onclick = ()=>{const tr=addRow(); if (tr) {rowsEdited=true;editorDirty();tr.querySelector('input').focus();}};
   $('readClipboard').onclick = async ()=>{
-    try { $('pasteTargets').value = await navigator.clipboard.readText(); editorDirty(); }
-    catch { $('targetMessage').textContent = '입력란의 붙여넣기 기능을 사용하세요.'; }
+    const generation = draftVersion;
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!editor.open || generation !== draftVersion) return;
+      $('pasteTargets').value = text;
+      editorDirty();
+    } catch {
+      if (!editor.open || generation !== draftVersion) return;
+      $('targetMessage').textContent = '입력란의 붙여넣기 기능을 사용하세요.';
+    }
     $('pasteTargets').focus();
   };
   $('verifyEditor').onclick = ()=>{editorDirty();requestPreview(previewPayload(),showPreview);};
@@ -132,11 +147,14 @@
     $('acceptTargets').disabled = true;
     await run('targets.apply',accepted.groups.length ? {targets:accepted.targets} : {rows:[]},r=>{
       directCableTarget=false;
-      groups = stableGroups(r.groups); registeredText = raw.value = r.targets;
+      groups = stableGroups(r.groups);
+      raw.value = r.targets;
+      registeredText = raw.value;
       focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
       $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
       updateTargetCount();
-      editor.close(); renderMatrix();
+      if (editor.open && preview === accepted) editor.close();
+      renderMatrix();
     });
     if (editor.open && preview === accepted) {
       $('targetMessage').textContent = $('statusText').textContent; $('acceptTargets').disabled = false;
@@ -448,6 +466,7 @@
   function restoreInventory(items,targetsText=inventoryText(items),preserveDraft=false) {
     if(!Array.isArray(items) || !items.length) return;
     directCableTarget=false;
+    targetsText=targetsText.replace(/\r\n?/g,'\n');
     const editing=preserveDraft && raw.value.trim() && raw.value!==registeredText && raw.value.trim()!==targetsText.trim();
     groups=stableGroups(items); registeredText=targetsText;
     if (!editing) raw.value=targetsText;
@@ -469,7 +488,7 @@
     });
     return reconciled.concat([...invalid.values()]);
   }
-  window.portTools={reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,checkedTargets,scopeKeys,unobservedTargets,cableScope,
+  window.portTools={targetDraftVersion,openTargetEditor,reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,checkedTargets,scopeKeys,unobservedTargets,cableScope,
     hasInventory:()=>groups.length>0 || ui.rows.length>0,refreshTargets,restoreInventory,matchesInventory};
   updatePortActions();sync();
 })();

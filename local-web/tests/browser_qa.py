@@ -32,6 +32,15 @@ def edit_query_targets(page):
     return targets
 
 
+def open_target_editor(page, mode="raw"):
+    page.locator("#manageTargets").click()
+    expect(page.locator("#targetEditor")).to_be_visible()
+    selector = page.locator("#targetInputMode")
+    expect(selector).to_have_value("raw")
+    if mode != "raw":
+        selector.select_option(mode)
+
+
 def enter_ssh_credentials(page, switch, *, touch=False):
     dialog = page.get_by_role("dialog", name="SSH 접속 계정", exact=True)
     expect(dialog).to_be_visible()
@@ -324,7 +333,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(matrix_frame.locator("#tbody")).to_contain_text("fixture-ap", timeout=20000)
     page.locator("#portReviewTab").click()
     expect(matrix_frame.locator("#extraView")).to_be_visible()
-    page.locator("#portMonitorTab").click()
+    page.locator("#portReviewTab").click()
     expect(page.locator("#matrixViewer")).to_be_visible()
     open_port_controls(page)
     page.locator("#selectEligible").click()
