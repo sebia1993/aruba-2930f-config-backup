@@ -25,7 +25,7 @@ const stateNames = {ok:'성공',success:'성공',failed:'실패',cancelled:'취�
 const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), detail:null, logs:[], chosenLog:null, logLoaded:false, csvLoaded:false, matrixFile:null, pendingMatrix:null, portView:'monitor', inspectedRow:null };
 const dialog = $('review');
 const queryCredentials = $('queryCredentials');
-Object.assign(jobNames, {'targets.preview':'대상 목록 검토','targets.apply':'대상 목록 적용','control.inspect':'단일 포트 상태 조회','control.quick':'빠른 제어 검토','control.import-history':'작업 기록 열기','backup.pick-directory':'저장 폴더 선택','history.open-folder':'이력 위치 열기'});
+Object.assign(jobNames, {'targets.preview':'대상 목록 검토','targets.apply':'대상 목록 적용','control.inspect':'단일 포트 상태 조회','control.quick':'빠른 제어 검토','control.quick-execute':'빠른 PoE 제어','control.import-history':'작업 기록 열기','backup.pick-directory':'저장 폴더 선택','history.open-folder':'이력 위치 열기'});
 
 function elem(tag, text, className) {
   const node = document.createElement(tag);
@@ -76,7 +76,11 @@ async function api(path, data) {
   let json;
   try { json = await response.json(); }
   catch { throw new Error('로컬 서버에서 응답을 읽을 수 없습니다. Start-Local-Web.cmd로 웹 화면을 다시 여세요.'); }
-  if (!response.ok) throw new Error(json.error || '로컬 요청 실패 (' + response.status + ')');
+  if (!response.ok) {
+    const error = new Error(json.error || '로컬 요청 실패 (' + response.status + ')');
+    error.status = response.status;
+    throw error;
+  }
   return json;
 }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -91,8 +95,8 @@ async function poll(id) {
       await delay(850);
       continue;
     }
-    if (job.state === 'done') return {result:job.result || {}, cancelled:false};
-    if (job.state === 'cancelled') return {result:job.result || {}, cancelled:true};
+    if (job.state === 'done') return {action:job.action, result:job.result || {}, cancelled:false};
+    if (job.state === 'cancelled') return {action:job.action, result:job.result || {}, cancelled:true};
     if (job.state === 'failed') throw new Error(job.error || '작업이 실패했습니다.');
     if (!['running','queued'].includes(job.state)) throw new Error('작업 상태를 읽을 수 없습니다.');
     window.portTools?.onProgress?.(job.action,job.progress || {});
@@ -112,22 +116,33 @@ async function run(action, body, receive) {
   ui.busy = true;
   $('stopJob').disabled = false;
   sync();
-  notify(jobNames[action] + ' 진행 중…');
+  const quick = action === 'control.quick-execute' ? body : null;
+  notify(quick ? operationNames[quick.operation] + ' 즉시 실행 · 선택 ' + quick.targets.length + '개' : jobNames[action] + ' 진행 중…');
   try {
     window.portTools?.onJob?.(action,'running',body);
-    const submitted = await api('/api/jobs', {action,body});
+    const submitted = await api('/api/jobs', {action,body}).catch(error=>{
+      if (!quick || (error.status && error.status < 500)) throw error;
+      // The server may have accepted the operation. Read its original job without submitting again.
+      return {id:quick.requestId};
+    });
     body = null;
     ui.jobId = submitted.id;
     sync();
     const {result,cancelled} = await poll(ui.jobId);
     if (receive) receive(result, cancelled);
-    if (action === 'control.apply' && result.results?.some(row=>row.status === 'unverified')) {
+    if (['control.apply','control.quick-execute'].includes(action) && result.results?.some(row=>row.status === 'unverified')) {
       notify(result.message,true);
+    } else if (action === 'control.quick-execute' && result.blocked?.length) {
+      notify(result.message || '선택한 포트의 사전 검증에 실패했습니다.',true);
     } else {
       notify(jobNames[action] + (cancelled ? ' 취소됨. 완료된 항목은 결과에 표시됩니다.' : ' 완료'));
     }
   } catch (error) {
-    notify(error.message, true);
+    if (quick) window.controlTools.finishProgress();
+    if (quick && ui.jobId) {
+      markControlRowsUsed(quick.targets);
+      notify(error.message + ' 선택한 포트의 현재 상태를 다시 조회하세요.',true);
+    } else notify(error.message, true);
   } finally {
     ui.jobId = null;
     ui.busy = false;
@@ -395,7 +410,7 @@ function keyChecklist(checks) {
 }
 function homeSlot(action) {
   if (action === 'backup.run') return $('homeBackup');
-  if (['ports.query','ports.refresh','control.apply'].includes(action)) return $('homePorts');
+  if (['ports.query','ports.refresh','control.apply','control.quick-execute'].includes(action)) return $('homePorts');
   return null;
 }
 function displayHomeProgress(action,progress) {
@@ -575,6 +590,7 @@ function expireLiveMatrix() {
   updatePortActions();
 }
 function clearPorts() {
+  window.controlTools?.clearQuickResult();
   ui.rows = []; ui.selected.clear(); ui.detail = null; portPage = 0;
   $('rowDetails').hidden = true; $('controlResult').hidden = true;
   expireLiveMatrix();
@@ -655,7 +671,6 @@ function updateControlTarget() {
   } else target.textContent='';
   target.hidden=!target.textContent;
   $('selectedCount').hidden=$('controlMode').value==='single';
-  window.controlTools?.onChoiceChange();
 }
 function syncMonitorChecks() {
   const viewer=monitor();
@@ -868,6 +883,21 @@ function controlAfterText(row) {
   if (['paused','cancelled','preflight_failed'].includes(row.status)) return '변경 명령 미전송';
   return '재조회 필요';
 }
+function markControlRowsUsed(targets) {
+  const used = new Set(targets.map(item=>portKey({ip:item.ip,ssh_port:item.sshPort,interface:item.port})));
+  for (const key of used) ui.selected.delete(key);
+  for (const row of ui.rows) if (used.has(portKey(row))) row.controlUsed = true;
+  renderPorts();
+}
+function showControlResults(response, title) {
+  const results = response.results || [];
+  const box = $('controlResult');
+  box.hidden = false;
+  box.append(elem('p',response.message || title + ' 실행 결과'),simpleTable([
+    ['스위치',x=>x.sshPort && x.sshPort !== 22 ? x.ip + ':' + x.sshPort : x.ip],
+    ['포트','port'],['결과',x=>stateNames[x.status] || x.status],['상세','message',true],['변경 후 상태',controlAfterText,true]
+  ],results));
+}
 function renderPlan(plan, inspected=ui.inspectedRow) {
   const choice=controlChoice();
   const sameChoice=()=>controlContextMatches(inspected) && choice===controlChoice();
@@ -876,29 +906,21 @@ function renderPlan(plan, inspected=ui.inspectedRow) {
   const phrase = elem('code',plan.confirmationText), input = elem('input'), label = elem('label','표시된 확인 문구를 그대로 입력하세요.');
   input.autocomplete = 'off'; input.spellcheck = false; label.append(input);
   const execute = button('승인하고 명령 실행',() => {
-    if (!plan.confirmationText || (!plan.quick && input.value !== plan.confirmationText)) return;
+    if (!plan.confirmationText || input.value !== plan.confirmationText) return;
     dialog.close();
     if (!sameChoice()) {
       notify('제어 대상 또는 작업이 변경되었습니다. 현재 선택으로 다시 검토하세요.',true);
       return;
     }
-    run('control.apply',{planId:plan.planId,confirmation:plan.quick ? plan.confirmationText : input.value},r => {
+    run('control.apply',{planId:plan.planId,confirmation:input.value},r => {
       const continuePlan=sameChoice();
-      const results = r.results || [], box = $('controlResult');
-      box.hidden = false;
-      box.append(elem('p',r.message || title + ' 실행 결과'),simpleTable([['스위치',x=>x.sshPort && x.sshPort !== 22 ? x.ip + ':' + x.sshPort : x.ip],['포트','port'],['결과',x=>stateNames[x.status] || x.status],['상세','message',true],['변경 후 상태',controlAfterText,true]],results));
-      window.controlTools?.finishProgress();
-      for (const changed of results) {
-        for (const row of ui.rows) if (row.ip === changed.ip && Number(row.ssh_port || 22) === Number(changed.sshPort || 22) && String(row.interface) === String(changed.port)) {
-          ui.selected.delete(portKey(row));
-          row.controlUsed = true;
-        }
-      }
-      renderPorts();
+      window.controlTools.finishProgress();
+      showControlResults(r,title);
+      markControlRowsUsed(r.results || []);
       if (r.nextPlan && continuePlan) renderPlan(r.nextPlan,inspected);
     });
   },'danger');
-  execute.disabled = !plan.quick;
+  execute.disabled = true;
   input.oninput = () => { execute.disabled = !plan.confirmationText || input.value !== plan.confirmationText; };
   const children = [elem('b',title + ' · ' + (plan.targets || []).length + '개 포트'),targets];
   if (plan.later?.length) {
@@ -909,14 +931,8 @@ function renderPlan(plan, inspected=ui.inspectedRow) {
   }
   for (const warning of plan.warnings || []) children.push(elem('p',warning,'warning'));
   if (plan.expiresIn) children.push(elem('p','이 승인 요청의 유효 시간은 ' + plan.expiresIn + '초입니다.','hint'));
-  if (plan.quick) {
-    if (plan.skipped?.length) children.push(elem('p','이미 ON 상태로 확인된 ' + plan.skipped.length + '개 포트는 제외했습니다.'));
-    if (plan.targets.length > 10) children.push(elem('p','승인한 전체 대상을 순차 실행합니다. 진행 중에는 작업 취소를 누를 수 있습니다.','hint'));
-    openDialog('빠른 PoE 제어 승인',[...children,execute]);
-  } else {
-    openDialog('포트 제어 승인',[...children,phrase,label,execute]);
-    input.focus();
-  }
+  openDialog('포트 제어 승인',[...children,phrase,label,execute]);
+  input.focus();
 }
 $('preview').onclick = () => {
   const inspected=ui.inspectedRow;
@@ -932,6 +948,7 @@ $('preview').onclick = () => {
     targets = window.portTools?.checkedTargets() || ui.rows.filter(row => ui.selected.has(portKey(row))).map(targetFromRow);
     if (!targets.length) { notify('조회 결과에서 제어할 포트를 체크하세요.',true); return; }
   }
+  window.controlTools.clearQuickResult();
   $('controlResult').replaceChildren(); $('controlResult').hidden = true;
   run('control.preview',{operation:$('operation').value,scope:mode,targets},plan => {
     if (!plan.planId) return;
@@ -1023,15 +1040,18 @@ async function start() {
     import('/static/browser-presence.js').then(module=>module.watchBrowserTab(bootstrap)).catch(()=>{});
     ui.session = bootstrap.session || {active:false};
     $('version').textContent = 'v' + String(bootstrap.version || '').replace(/^v/,'');
+    let resumed;
     if (bootstrap.busyJob) {
       ui.busy = true; ui.jobId = bootstrap.busyJob; sync();
       notify('진행 중인 작업을 기다리고 있습니다.');
-      try { await poll(bootstrap.busyJob); }
+      let resumeError;
+      try { resumed=await poll(bootstrap.busyJob); }
+      catch (error) { resumeError=error.message; }
       finally {
         ui.busy = false; ui.jobId = null;
         const latest = await api('/api/bootstrap'); ui.session = latest.session || {active:false};
       }
-      notify('기존 작업이 끝났습니다. 작업 이력에서 결과를 확인하세요.');
+      notify(resumeError || '기존 작업이 끝났습니다. 작업 이력에서 결과를 확인하세요.',!!resumeError);
     }
     const workspace = await api('/api/workspace');
     if (workspace.groups?.length && !$('queryTargets').value.trim()) {
@@ -1041,6 +1061,11 @@ async function start() {
       if (document.readyState === 'loading') await new Promise(resolve=>window.addEventListener('DOMContentLoaded', resolve,{once:true}));
       window.portTools?.restoreInventory?.(workspace.groups,targets);
       if (workspace.query) receivePorts(workspace.query);
+    }
+    if (resumed?.action === 'control.quick-execute') {
+      window.controlTools.showQuickResult(resumed.result,resumed.cancelled,true);
+      if (resumed.result.results?.some(row=>row.status==='unverified') || resumed.result.blocked?.length)
+        notify(resumed.result.message,true);
     }
     route();
   } catch (error) { notify(error.message,true); }

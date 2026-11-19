@@ -2,15 +2,56 @@
 
 import json
 import os
+import re
 import site
 import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 from verify_http_ssh import MonitorFixture
+
+
+@contextmanager
+def click_quick_poe(page, operation, targets):
+    """Verify one user click submits exactly one job for the selected SSH endpoints."""
+    jobs = []
+
+    def record(request):
+        if request.method == "POST" and request.url.endswith("/api/jobs"):
+            jobs.append(request.post_data_json)
+
+    review_monitor = page.locator("#review").evaluate_handle("""dialog => {
+        let opened = false;
+        const observe = event => { if (event.newState === "open") opened = true; };
+        dialog.addEventListener("beforetoggle", observe);
+        return () => {
+            dialog.removeEventListener("beforetoggle", observe);
+            return opened;
+        };
+    }""")
+    page.on("request", record)
+    try:
+        name = "PoE ON 즉시 실행" if operation == "poe_on" else "PoE OFF 즉시 실행"
+        with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")):
+            page.get_by_role("button", name=name, exact=True).click()
+        assert len(jobs) == 1 and jobs[0]["action"] == "control.quick-execute", jobs
+        body = jobs[0]["body"]
+        assert re.fullmatch(r"[0-9a-f]{32}", body["requestId"])
+        assert body["operation"] == operation
+        requested = [(f"{t['ip']}:{t['sshPort']}", t["port"]) for t in body["targets"]]
+        assert sorted(requested) == sorted(targets), requested
+        yield
+        expect(page.locator("#review")).to_be_hidden()
+        assert len(jobs) == 1, jobs
+    finally:
+        page.remove_listener("request", record)
+        opened = review_monitor.evaluate("stop => stop()")
+        review_monitor.dispose()
+        assert not opened, "Quick PoE opened an approval dialog"
 
 
 def exercise(page, url, switch, second_switch, shots, backup_directory):
@@ -123,29 +164,15 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#csvViewer")).to_be_visible()
     page.locator("#selectEligible").click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
-    page.locator("#quickOn").click()
-    expect(page.locator("#quickResult")).to_contain_text("이미 ON 1개", timeout=90000)
-    expect(page.locator("#review")).not_to_be_visible()
+    with click_quick_poe(page, "poe_on", [(address, "1")]):
+        expect(page.locator("#quickResult")).to_contain_text("이미 ON 1개", timeout=90000)
     assert switch.poe_enabled and "interface 1 power-over-ethernet" not in switch.commands
-    page.locator("#quickOff").click()
-    expect(page.locator("#reviewBody")).to_contain_text(
-        "no interface 1 power-over-ethernet", timeout=90000
-    )
-    expect(page.locator("#reviewBody")).to_contain_text("링크 Up")
-    assert switch.poe_enabled
-    page.locator("#review").get_by_role("button", name="닫기").click()
-    assert "no interface 1 power-over-ethernet" not in switch.commands
-    for quick_id, operation, expected in (
-        ("quickOff", "poe_off", False),
-        ("quickOn", "poe_on", True),
-    ):
+    for operation, expected in (("poe_off", False), ("poe_on", True)):
         page.locator("#operation").select_option(operation)
         page.locator("#selectEligible").click()
-        page.locator("#" + quick_id).click()
-        expect(page.locator("#review")).to_be_visible(timeout=90000)
         assert switch.poe_enabled is not expected
-        page.get_by_role("button", name="승인하고 명령 실행").click()
-        expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
+        with click_quick_poe(page, operation, [(address, "1")]):
+            expect(page.locator("#controlResult")).to_contain_text("검증 완료", timeout=90000)
         expect(page.locator("#controlResult")).to_contain_text(
             "링크 Up" if expected else "링크 Down"
         )

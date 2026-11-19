@@ -256,10 +256,10 @@ class WebControlTests(unittest.TestCase):
         self.assertEqual((row["status"], row["source"]), ("result_unknown", "unfinished.jsonl"))
         self.service.apply.assert_not_called()
 
-    def quick(self, ports, operation="poe_off"):
+    def quick(self, ports, operation="poe_off", *, direct=False):
         self.state._inventory = (PoETarget(self.target, tuple(ports)),)
         return self.controls.dispatch(
-            "control.quick",
+            "control.quick-execute" if direct else "control.quick",
             {
                 "operation": operation,
                 "targets": [{"ip": self.target.endpoint, "port": port} for port in ports],
@@ -319,6 +319,66 @@ class WebControlTests(unittest.TestCase):
         self.assertEqual(len(self.state.progress["ports"]), 11)
         with self.assertRaises(ValueError):
             self.apply(plan)
+
+    def test_direct_quick_runs_only_selected_ports_across_checkpoint_without_public_plan(self):
+        self.query(12)
+        ports = [str(i) for i in range(1, 12)]
+        result = self.quick(ports, direct=True)
+        self.assertEqual(result["selected"], 11)
+        self.assertEqual([r["port"] for r in result["results"]], ports)
+        self.assertEqual(self.service.apply.call_count, 11)
+        self.assertEqual(self.state.progress["completed"], 11)
+        self.assertNotIn("planId", result)
+        self.assertNotIn("nextPlan", result)
+        self.assertIsNone(self.controls._approval)
+        self.assertEqual([r.interface for r in self.state.last_results], ["12"])
+        self.assertEqual(
+            len(self.controls.dispatch("control.history", {}, self.cancel)["rows"]), 11
+        )
+
+    def test_direct_quick_no_write_when_any_requested_change_is_blocked(self):
+        self.query(2)
+        first, second = self.state.last_results
+        self.state.last_results = first, replace(second, lldp=LLDPObservation(LLDPStatus.OK, ()))
+        result = self.quick(["1", "2"], direct=True)
+        self.assertEqual([row["port"] for row in result["blocked"]], ["2"])
+        self.assertEqual(result["results"], [])
+        self.service.apply.assert_not_called()
+        self.service.inspect.assert_not_called()
+
+    def test_direct_quick_skips_fresh_off_even_when_link_and_lldp_disappeared(self):
+        self.query(2)
+        first, second = self.state.last_results
+        self.state.last_results = (
+            first,
+            replace(
+                second,
+                snapshot=replace(second.snapshot, poe_enabled=False, link_status="Down"),
+                lldp=LLDPObservation(LLDPStatus.OK, ()),
+            ),
+        )
+        rows = [
+            {"ip": self.target.ip, "ssh_port": str(self.target.port), "interface": p}
+            for p in ["1", "2"]
+        ]
+        self.state._query = Mock(return_value={"rows": rows, "files": []})
+        result = self.quick(["1", "2"], direct=True)
+        self.assertEqual(result["rechecked"], 1)
+        self.assertEqual(self.state._query.call_args.args[0][0].interfaces, ("2",))
+        self.assertEqual([r["port"] for r in result["skipped"]], ["2"])
+        self.assertEqual([r["port"] for r in result["results"]], ["1"])
+        self.assertTrue(result["rows"][0]["controlUsed"])
+        self.assertNotIn("controlUsed", result["rows"][1])
+        self.service.apply.assert_called_once()
+
+    def test_direct_quick_requires_poe_operation_and_respects_cancel(self):
+        self.query(1)
+        with self.assertRaises(ValueError):
+            self.quick(["1"], "disable", direct=True)
+        self.cancel.set()
+        with self.assertRaises(ValueError):
+            self.quick(["1"], direct=True)
+        self.service.apply.assert_not_called()
 
     def test_import_journal_does_not_replay_pending_intent(self):
         header = {
