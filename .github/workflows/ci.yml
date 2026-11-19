@@ -109,6 +109,8 @@ jobs:
           $env:PYTHONPATH = (Resolve-Path ./core).Path
           python -m unittest discover -s tests -p 'test_*.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'Local web tests failed.' }
+          node --test tests/test_power_matrix.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Port power matrix tests failed.' }
 
       - name: Build and verify local web ZIP
         working-directory: local-web

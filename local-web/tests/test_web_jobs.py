@@ -1,5 +1,6 @@
 """Local job persistence, serialization, and the download registry."""
 
+import csv
 import tempfile
 import threading
 import time
@@ -8,6 +9,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from localweb.jobs import Busy, Jobs
+
+from aruba2930f_backup.models import Credentials
+from aruba2930f_backup.poe_query_models import PoEQueryResult, QueryStatus
+from aruba2930f_backup.port_control import PortSnapshot
 
 
 class JobTests(unittest.TestCase):
@@ -71,3 +76,131 @@ class JobTests(unittest.TestCase):
         self.jobs.claim_shutdown()
         with self.assertRaises(Busy):
             self.jobs.submit("session.close", {})
+
+    def collect_ports(self, groups, credentials, *, on_result, **kwargs):
+        (group,) = groups
+        results = []
+        for port in group.interfaces:
+            snapshot = PortSnapshot(
+                group.target,
+                port,
+                "edge",
+                "2930F",
+                True,
+                "Up",
+                True,
+                "Delivering",
+                float(port),
+                "key",
+            )
+            row = PoEQueryResult(group, port, QueryStatus.OK, snapshot=snapshot)
+            on_result(row)
+            results.append(row)
+        return results
+
+    def initial_query(self):
+        self.jobs.operations.credentials = Credentials("reader", "test")
+        with patch.object(self.jobs.operations.query_service, "collect", self.collect_ports):
+            job = self.finished(self.jobs.submit("ports.query", {"targets": "192.0.2.5:2222 1-3"}))
+        self.assertEqual(job["state"], "done")
+        return self.jobs.workspace()["query"]
+
+    def test_failed_refresh_keeps_other_rows_and_cannot_restore_stale_control_or_csv(self):
+        for failure in ("collection", "cancel", "export"):
+            with self.subTest(failure=failure):
+                initial = self.initial_query()
+                expected1, _, expected3 = initial["rows"]
+
+                def collect(*args, failure=failure, **kwargs):
+                    if failure == "cancel":
+                        kwargs["cancel_event"].set()
+                    if failure == "export":
+                        return self.collect_ports(*args, **kwargs)
+                    raise OSError("read failed")
+
+                ops = self.jobs.operations
+                with (
+                    patch.object(ops.query_service, "collect", collect),
+                    patch.object(ops, "_export_query", side_effect=OSError("output unavailable")),
+                ):
+                    job = self.finished(
+                        self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2222 2"})
+                    )
+                self.assertEqual(job["state"], "cancelled" if failure == "cancel" else "failed")
+                view = self.jobs.workspace()["query"]
+                self.assertEqual(view["files"], [])
+                first, invalid, third = view["rows"]
+                self.assertEqual((first, third), (expected1, expected3))
+                self.assertEqual(
+                    invalid["status"], "cancelled" if failure == "cancel" else "failed"
+                )
+                self.assertIsNone(invalid["watts"])
+                self.assertTrue(invalid["controlUsed"] and invalid["refreshInvalidated"])
+                self.assertEqual(invalid["eligible_operations"], [])
+                self.assertIsNone(ops.last_results[1].snapshot)
+                manual = self.finished(self.jobs.submit("ports.export", {}))
+                with self.jobs.download(manual["result"]["files"][0]["id"]).open(
+                    encoding="utf-8-sig", newline=""
+                ) as stream:
+                    saved = list(csv.DictReader(stream))
+                self.assertEqual([row["watts"] for row in saved], ["1.0", "", "3.0"])
+                self.assertEqual(self.jobs.workspace()["query"]["files"], [])
+
+    def test_partial_return_generates_current_csv_and_only_missing_port_loses_authority(self):
+        old = self.initial_query()
+
+        def partial(groups, *args, **kwargs):
+            returned = self.collect_ports(groups, *args, **kwargs)
+            return returned[:1]
+
+        ops = self.jobs.operations
+        with patch.object(ops.query_service, "collect", partial):
+            job = self.finished(
+                self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2222 2,3"})
+            )
+        self.assertEqual(job["state"], "done")
+        view = self.jobs.workspace()["query"]
+        self.assertNotEqual(view["files"], old["files"])
+        self.assertEqual(view["rows"][0], old["rows"][0])
+        self.assertFalse(view["rows"][1]["controlUsed"])
+        self.assertTrue(view["rows"][2]["refreshInvalidated"])
+        self.assertIsNone(ops.last_results[2].snapshot)
+        with self.jobs.download(view["files"][0]["id"]).open(
+            encoding="utf-8-sig", newline=""
+        ) as stream:
+            saved = list(csv.DictReader(stream))
+        self.assertEqual([row["watts"] for row in saved], ["1.0", "2.0", ""])
+        self.assertEqual(saved[2]["status"], "failed")
+        with patch.object(ops.query_service, "collect", self.collect_ports):
+            self.finished(self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2222 3"}))
+        restored = self.jobs.workspace()["query"]["rows"][2]
+        self.assertEqual(restored["watts"], "3.0")
+        self.assertFalse(restored["controlUsed"] or restored.get("refreshInvalidated"))
+
+    def test_cancel_before_collection_invalidates_only_the_registered_requested_port(self):
+        initial = self.initial_query()
+        ops = self.jobs.operations
+        dispatch = ops.dispatch
+
+        def stopped(action, body, cancel):
+            cancel.set()
+            return dispatch(action, body, cancel)
+
+        with (
+            patch.object(ops, "dispatch", stopped),
+            patch.object(ops.query_service, "collect") as collect,
+        ):
+            result = self.finished(
+                self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2222 2"})
+            )
+        collect.assert_not_called()
+        self.assertEqual(result["state"], "cancelled")
+        view = self.jobs.workspace()["query"]
+        self.assertEqual(view["files"], [])
+        self.assertEqual(view["rows"][0], initial["rows"][0])
+        self.assertEqual(view["rows"][1]["status"], "cancelled")
+        self.assertIsNone(view["rows"][1]["watts"])
+        self.assertEqual(view["rows"][2], initial["rows"][2])
+        invalid = self.finished(self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2223 2"}))
+        self.assertEqual(invalid["state"], "failed")
+        self.assertEqual(self.jobs.workspace()["query"], view)

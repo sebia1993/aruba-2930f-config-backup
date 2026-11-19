@@ -165,8 +165,8 @@ class Jobs:
             rows = [
                 dict(
                     row,
-                    controlUsed=(row["ip"], int(row["ssh_port"]), row["interface"])
-                    not in available,
+                    controlUsed=bool(row.get("controlUsed"))
+                    or (row["ip"], int(row["ssh_port"]), row["interface"]) not in available,
                 )
                 for row in view["rows"]
             ]
@@ -287,10 +287,20 @@ class Jobs:
                     )
         finally:
             with self.lock:
-                if action in {"ports.query", "ports.refresh"}:
+                if action == "ports.query":
                     self.port_view = result if result and "rows" in result else None
-                elif action == "control.quick" and result and "rows" in result:
-                    self.port_view = result
+                elif action in {"ports.refresh", "control.quick"}:
+                    if result and "rows" in result:
+                        self.port_view = result
+                    elif state != "done":
+                        invalid = self.operations.invalidate_failed_refresh(cancel.is_set())
+                        if invalid:
+                            previous = self.port_view["rows"] if self.port_view else []
+                            rows = {
+                                (r["ip"], int(r["ssh_port"]), r["interface"]): r
+                                for r in [*previous, *invalid]
+                            }
+                            self.port_view = {"rows": list(rows.values()), "files": []}
                 elif (
                     action in {"session.open", "session.close", "targets.apply", "hostkey.forget"}
                     and state == "done"

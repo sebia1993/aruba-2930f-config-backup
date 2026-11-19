@@ -1,7 +1,10 @@
 """Desktop target editor and native matrix parity on local, offline inputs."""
 
+import csv
+import json
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from threading import Event
 
@@ -9,7 +12,17 @@ from localweb.operations import Operations
 from localweb.port_tools import matrix_fields, matrix_observation
 
 from aruba2930f_backup.models import DeviceTarget
+from aruba2930f_backup.poe_power import (
+    AssessmentStatus,
+    LLDPNeighbor,
+    LLDPObservation,
+    LLDPStatus,
+    PowerAssessment,
+    PowerEvidence,
+)
 from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
+from aruba2930f_backup.poe_query_report import write_query_csv
+from aruba2930f_backup.port_control import PortSnapshot
 
 
 class TargetToolTests(unittest.TestCase):
@@ -63,3 +76,56 @@ class TargetToolTests(unittest.TestCase):
             self.assertEqual(live["interface"], "1/1")
             self.assertEqual(live["ssh_port"], 2222)
             self.assertEqual({k: live[k] for k in matrix_fields(native)}, matrix_fields(native))
+
+    def test_live_progress_preserves_csv_measurement_supply_and_neighbor_evidence(self):
+        target = DeviceTarget("192.0.2.5")
+        group = PoETarget(target, ("1",))
+        snapshot = PortSnapshot(
+            target, "1", "switch", "2930F", True, "Down", True, "Delivering", 1.2, ""
+        )
+        neighbor = LLDPNeighbor(
+            system_name="회의실", model="AP-535", system_description="Aruba AP-535"
+        )
+        native = PoEQueryResult(
+            group,
+            "1",
+            QueryStatus.OK,
+            snapshot=snapshot,
+            power_evidence=PowerEvidence(issues=("충돌",)),
+            lldp=LLDPObservation(LLDPStatus.OK, (neighbor,)),
+            assessment=PowerAssessment(
+                AssessmentStatus.WARNING,
+                "주의",
+                "할당 부족",
+                requested_watts=Decimal("20"),
+                allocated_watts=Decimal("10"),
+            ),
+        )
+        live = matrix_observation(native)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "query.csv"
+            write_query_csv(path, [native])
+            with path.open(encoding="utf-8-sig", newline="") as handle:
+                (saved,) = csv.DictReader(handle)
+        self.assertIs(live["complete"], True)
+        self.assertEqual(saved["complete"], "yes")
+        self.assertEqual(live["watts"], float(saved["watts"]))
+        self.assertIs(live["poe_enabled"], True)
+        self.assertEqual(saved["poe_enabled"], "yes")
+        for key in (
+            "status",
+            "poe_status",
+            "lldp_status",
+            "lldp_error_code",
+            "assessment_status",
+            "assessment_reason",
+            "requested_watts",
+            "allocated_watts",
+        ):
+            self.assertEqual(live[key], saved[key])
+        (saved_neighbor,) = json.loads(saved["lldp_neighbors"])
+        (live_neighbor,) = live["lldp_neighbors"]
+        self.assertEqual(live_neighbor, {key: saved_neighbor[key] for key in live_neighbor})
+        self.assertEqual(
+            list(live["power_evidence"]["issues"]), json.loads(saved["power_evidence"])["issues"]
+        )

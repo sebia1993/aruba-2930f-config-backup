@@ -72,7 +72,7 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     expect(direct.locator("#sourceName")).to_have_text(earlier["name"])
     expect(direct.locator("#fileError")).to_be_hidden()
     expect(direct.locator("#overviewRoot")).to_be_visible()
-    expect(direct.locator("#matrix [data-port-key]")).to_have_count(1)
+    expect(direct.locator("#matrix [data-port-key]")).to_have_attribute("data-state", "normal")
     expect(direct.locator("#tbody tr")).to_have_count(1)
     expect(direct.locator("#tbody tr")).to_contain_text("fixture-ap")
     direct.locator("#priorityButton").click()
@@ -118,6 +118,10 @@ def exercise_csv(page, url, switch, _second_switch, _shots, _backup_directory):
     page.locator("#queryForm .primary").click()
     expect(embedded.locator("#sourceName")).to_have_text("실시간 조회 결과.csv", timeout=60000)
     expect(embedded.locator("#overviewRoot")).to_be_visible()
+    # A disabled port without a measured wattage is a neutral cell.
+    expect(embedded.locator("#matrix [data-port-key]")).to_have_attribute(
+        "data-state", "unclassified"
+    )
     embedded.locator("#addCsv").set_input_files(earlier)
     assert_comparison(embedded, earlier, {"name": "실시간 조회 결과.csv"})
     expect(page.locator("#portControlTab")).to_be_disabled()

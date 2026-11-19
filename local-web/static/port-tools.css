@@ -24,16 +24,16 @@
 .matrix-tiles .matrix-tile {min-height:28px;min-width:30px;padding:2px 5px;border:1px solid currentColor;border-radius:5px;font-size:12px;background:var(--surface2);color:var(--muted);line-height:1.2}
 [data-zoom=small] .matrix-tile {min-height:22px;min-width:23px;font-size:11px}
 [data-zoom=large] .matrix-tile {min-height:38px;min-width:40px;font-size:14px}
-.matrix-tile[data-state=normal] {color:#76dfbe}
-.matrix-tile[data-state=attention] {color:#ff98a9}
-.matrix-tile[data-state=warning] {color:#edc37d}
-.matrix-tile[data-state=off] {color:#a6b2cf}
-.matrix-tile[data-state=loading] {border-style:dashed;color:#85cade}
-[data-theme=light] .matrix-tile[data-state=normal]{color:#0a7058}
-[data-theme=light] .matrix-tile[data-state=attention]{color:#a72b45}
-[data-theme=light] .matrix-tile[data-state=warning]{color:#885b0d}
-[data-theme=light] .matrix-tile[data-state=off]{color:#495773}
-[data-theme=light] .matrix-tile[data-state=loading]{color:#08738b}
+:root {--power-red:#ffacb5;--power-yellow:#f6d376;--power-green:#82e5b4}
+:root[data-theme=light] {--power-red:#a01e36;--power-yellow:#805000;--power-green:#00683c}
+.matrix-legend {display:flex;flex-wrap:wrap;gap:.35rem 1rem;margin-bottom:.4rem}
+.power-badge {display:inline-flex;align-items:center;gap:.4em;color:var(--muted);font-weight:650}
+.power-badge:is([data-state=unpowered],[data-state=limited],[data-state=normal])::before {content:"";width:.65em;height:.65em;border-radius:50%;background:currentColor;flex:none}
+.power-badge[data-state=unpowered],.matrix-tiles .matrix-tile[data-state=unpowered]{color:var(--power-red)}
+.power-badge[data-state=limited],.matrix-tiles .matrix-tile[data-state=limited]{color:var(--power-yellow)}
+.power-badge[data-state=normal],.matrix-tiles .matrix-tile[data-state=normal]{color:var(--power-green)}
+.matrix-tiles .matrix-tile:not([data-state=unclassified]) {background:color-mix(in srgb,currentColor 14%,var(--surface))}
+.matrix-tiles .matrix-tile[data-phase=loading]{border-style:dashed}
 .matrix-tile[aria-pressed=true],#matrixPriority[aria-pressed=true]{outline:2px solid var(--focus);outline-offset:1px}
 #matrixDetails {display:flex;align-items:center;flex-wrap:wrap;gap:6px 18px;margin-top:.75rem;padding:.65rem .85rem;background:var(--surface2);border-radius:6px}
 #matrixDetails small {flex-basis:100%}

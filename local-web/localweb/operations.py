@@ -36,6 +36,7 @@ from aruba2930f_backup.poe_query_models import (
     MAX_TARGETS,
     PoEQueryResult,
     PoETarget,
+    QueryStatus,
 )
 from aruba2930f_backup.poe_query_report import write_query_csv
 from aruba2930f_backup.poe_targets import (
@@ -207,13 +208,14 @@ class Operations:
         self.query_service = PoEQueryService(host_key_store=self.host_key_store)
         self.credentials: Credentials | None = None
         self.last_results: tuple[PoEQueryResult, ...] = ()
+        self._unreported_ports: set[tuple[DeviceTarget, str]] = set()
         self._inventory: tuple[PoETarget, ...] = ()
         self._review: dict[str, HostKeyCheck] = {}
         self._progress_lock = threading.Lock()
         self.progress: dict = {}
         self._backup_progress = None
         self._query_events = []
-        self._query_targets = []
+        self._query_targets = ()
 
     def progress_snapshot(self):
         progress = self.progress
@@ -227,13 +229,13 @@ class Operations:
             batch = self._query_events[after : after + 512]
             changes = {"observations": batch, "cursor": after + len(batch)}
             if after == 0:
-                changes["targets"] = self._query_targets
+                changes["targets"] = group_targets(self._query_targets)
             return changes
 
     def reset_query_progress(self):
         with self._progress_lock:
             self._query_events = []
-            self._query_targets = []
+            self._query_targets = ()
 
     def session_summary(self) -> dict:
         credentials = self.credentials
@@ -257,7 +259,8 @@ class Operations:
             self._start_progress(message, total, completed)
 
     def dispatch(self, action: str, body: dict, cancel: threading.Event) -> dict:
-        _abort_if_cancelled(cancel)
+        if action != "ports.refresh":
+            _abort_if_cancelled(cancel)
         if action in {"targets.preview", "targets.apply"}:
             view = preview_targets(body, _groups)
             if action == "targets.apply":
@@ -404,6 +407,7 @@ class Operations:
         else:
             self._inventory = groups
             self.last_results = ()
+            self._unreported_ports.clear()
         requested = {(g.target, port) for g in groups for port in g.interfaces}
         # A failed refresh must not authorize actions on stale snapshots of those ports.
         retained = {
@@ -415,7 +419,8 @@ class Operations:
         self._start_progress("스위치 포트 조회 중", len(requested))
         with self._progress_lock:
             self._query_events = []
-            self._query_targets = group_targets(groups)
+            self._query_targets = groups
+        _abort_if_cancelled(cancel)
 
         def on_row(row):
             observation = matrix_observation(row)
@@ -434,10 +439,54 @@ class Operations:
             cancel_event=cancel,
             on_result=on_row,
         )
-        retained.update(((r.group.target, r.interface), r) for r in observed)
-        ordered = ((g.target, port) for g in self._inventory for port in g.interfaces)
-        self.last_results = tuple(retained[key] for key in ordered if key in retained)
+        self._merge_query_results(groups, observed, cancel.is_set())
         return self._export_query(with_rows=True)
+
+    def _merge_query_results(self, groups, observed, cancelled):
+        """Fill only requested gaps with a terminal failure that cannot authorize a write."""
+        rows = {(r.group.target, r.interface): r for r in self.last_results}
+        returned = {(r.group.target, r.interface): r for r in observed}
+        missing = []
+        finished = datetime.now(UTC).isoformat()
+        for group in groups:
+            for port in group.interfaces:
+                key = group.target, port
+                row = returned.get(key)
+                if row is None:
+                    row = PoEQueryResult(
+                        group,
+                        port,
+                        QueryStatus.CANCELLED if cancelled else QueryStatus.FAILED,
+                        error_code=ErrorCode.CANCELLED if cancelled else ErrorCode.UNEXPECTED_ERROR,
+                        message="조회가 중지되어 새 측정값이 없습니다."
+                        if cancelled
+                        else "이번 조회의 포트 측정 결과를 받지 못했습니다.",
+                        finished_at=finished,
+                    )
+                    missing.append(row)
+                    self._unreported_ports.add(key)
+                else:
+                    self._unreported_ports.discard(key)
+                rows[key] = row
+        ordered = ((g.target, port) for g in self._inventory for port in g.interfaces)
+        self.last_results = tuple(rows[key] for key in ordered if key in rows)
+        self._unreported_ports.intersection_update(rows)
+        return missing
+
+    def invalidate_failed_refresh(self, cancelled):
+        """Drop measurements for the accepted request if no publishable result exists."""
+        if not self._query_targets:
+            return []
+        absent = self._merge_query_results(self._query_targets, (), cancelled)
+        return [
+            dict(
+                matrix_observation(row),
+                eligible_operations=[],
+                controlUsed=True,
+                refreshInvalidated=True,
+            )
+            for row in absent
+        ]
 
     def _run_dir(self) -> Path:
         base = self.data_dir / "outputs"
@@ -491,6 +540,8 @@ class Operations:
                 values.update(
                     eligible_operations=allowed, eligibleOff=PortAction.POE_OFF.value in allowed
                 )
+                if (native.group.target, native.interface) in self._unreported_ports:
+                    values.update(controlUsed=True, refreshInvalidated=True)
             result["rows"] = rows
         return result
 

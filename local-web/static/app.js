@@ -16,8 +16,8 @@ const labels = {
   poe_status: 'PoE 상태', watts: '공급 전력 (W)', observed_at: '관측 시각', finished_at: '조회 종료',
   error_code: '오류 코드', message: '메시지', poe_finished_at: 'PoE 조회 종료', complete: '조회 완결',
   lldp_status: 'LLDP 조회', lldp_observed_at: 'LLDP 관측 시각', lldp_error_code: 'LLDP 오류 코드',
-  lldp_message: 'LLDP 메시지', ap_names: 'AP 이름', lldp_neighbors: 'LLDP 이웃', power_evidence: '전력 근거',
-  assessment_label: '전력 판정', assessment_reason: '판정 근거', assessment_model: 'AP 모델',
+  lldp_message: 'LLDP 메시지', ap_names: 'LLDP 이웃 이름', lldp_neighbors: 'LLDP 이웃', power_evidence: '전력 근거',
+  assessment_label: '전력 협상 판정', assessment_reason: '협상 판정 근거', assessment_model: 'AP 모델',
   assessment_model_source: '모델 근거', requested_watts: '요청 전력 (W)', allocated_watts: '할당 전력 (W)',
   negotiation: '전력 협상', port_poe_state: '포트 전력 상태', port_poe_explanation: '전력 상세'
 };
@@ -55,6 +55,9 @@ function sync() {
     node.title = !active ? 'SSH 접속 설정에서 계정을 먼저 적용하세요.' : '';
   }
   for (const node of all('[data-job]')) node.disabled = ui.busy || !ui.token;
+  $('queryTargets').readOnly = ui.busy;
+  document.querySelector('[data-import="queryTargets"]').disabled = ui.busy;
+  for (const node of all('#portTable [data-port-selectable]')) node.disabled = ui.busy || node.dataset.portSelectable!=='true';
   $('stopJob').hidden = !ui.jobId;
   $('dismissStatus').hidden = ui.busy;
   $('shutdown').disabled = ui.busy || !ui.token;
@@ -168,10 +171,13 @@ function historicalSource() {
   const source=monitor()?.source();
   return source?.hasData && (!source.liveId || source.liveId!==ui.matrixFile);
 }
+function historicalControlOnly() {
+  return historicalSource() && !(monitor()?.source().expiredLive && ui.rows.length);
+}
 function updatePortActions() {
   const historical=historicalSource();
   const inspected=historical && !!ui.inspectedRow;
-  $('portControlTab').disabled=!!historical && !inspected;
+  $('portControlTab').disabled=!!historicalControlOnly() && !inspected;
   $('portControlTab').title=$('portControlTab').disabled?'관제에서 포트를 선택한 뒤 실시간으로 조회하세요.':'';
   $('controlRows').hidden=!!inspected;
   $('liveScope').hidden=ui.portView==='monitor' || (ui.portView==='control' && !!inspected);
@@ -180,7 +186,7 @@ function updatePortActions() {
   $('openPortCsv').disabled=!ui.csvLoaded;
 }
 function setPortView(view) {
-  if (view==='control' && historicalSource() && !ui.inspectedRow) return;
+  if (view==='control' && historicalControlOnly() && !ui.inspectedRow) return;
   ui.portView=view;
   for (const [name,tab,panel] of [['monitor','portMonitorTab','portMonitor'],['live','portLiveTab','portTargets'],['control','portControlTab','portLiveControl']]) {
     $(panel).hidden=name!==view;
@@ -233,8 +239,8 @@ window.addEventListener('message',e=>{
     if (e.data.type==='aruba-observed-port') selectObservedPort(e.data);
     if (e.data.type==='aruba-port-source') {
       ui.inspectedRow=null;
-      if (historicalSource()) { ui.selected.clear(); updateSelection(); }
-      if (ui.portView==='control' && historicalSource()) setPortView('monitor');
+      if (historicalControlOnly()) { ui.selected.clear(); updateSelection(); }
+      if (ui.portView==='control' && historicalControlOnly()) setPortView('monitor');
       updatePortActions();
     }
   }
@@ -501,25 +507,63 @@ const portKey = row => endpoint(row) + '|' + row.interface;
 const targetFromRow = row => ({ip:row.ip,sshPort:Number(row.ssh_port || 22),port:String(row.interface)});
 const portPageSize = 100;
 let portPage = 0;
-function clearPorts() {
-  ui.rows = []; ui.selected.clear(); ui.detail = null; portPage = 0;
-  $('queryFiles').replaceChildren(); $('rowDetails').hidden = true; $('controlResult').hidden = true;
+function expireLiveMatrix() {
   ui.matrixFile=null; ui.pendingMatrix=null; ui.inspectedRow=null;
+  $('queryFiles').replaceChildren();
   monitor()?.invalidateLive();
   $('showMatrix').hidden=true; $('liveResultsBar').hidden=true;
-  if (ui.portView==='control' && historicalSource()) setPortView('monitor');
+  if (ui.portView==='control' && historicalControlOnly()) setPortView('monitor');
   updatePortActions();
+}
+function clearPorts() {
+  ui.rows = []; ui.selected.clear(); ui.detail = null; portPage = 0;
+  $('rowDetails').hidden = true; $('controlResult').hidden = true;
+  expireLiveMatrix();
   $('switchFilter').replaceChildren(new Option('전체 스위치',''));
   renderPorts();
 }
+const powerStates = ['unpowered','limited','normal'];
+for (const state of powerStates) {
+  $('powerFilterOptions').append(new Option(PowerMatrix.labels[state],state));
+}
+function portFilters() {
+  return {term:$('portSearch').value.trim().toLowerCase(), device:$('switchFilter').value, filter:$('portFilter').value};
+}
+function matchesPortFilters(target, view, {term, device, filter}) {
+  const row = view.row;
+  if (device && endpoint(target)!==device) return false;
+  if (powerStates.includes(filter) && view.power.state!==filter) return false;
+  if (filter==='failed' && row?.status!=='failed' && row?.lldp_status!=='failed') return false;
+  if (filter==='off' && row?.poe_enabled!=='no' && row?.poe_enabled!==false) return false;
+  if (filter==='disabled' && row?.enabled!=='no' && row?.enabled!==false) return false;
+  return !term || [endpoint(target),target.label,target.interface,row?.hostname,row?.ap_names,row?.poe_status,
+    row?.link_status,row?.assessment_model,row?.port_poe_state,row?.message,view.label].join(' ').toLowerCase().includes(term);
+}
+function portView(row) {
+  return window.portTools.observation(portKey(row),row);
+}
 function filteredRows() {
-  const term = $('portSearch').value.trim().toLowerCase(), device = $('switchFilter').value, filter = $('portFilter').value;
-  const conditions = {
-    failed:row=>row.status === 'failed' || row.lldp_status === 'failed', unknown:row=>!row.assessment_label || row.assessment_label === '확인 필요',
-    off:row=>row.poe_enabled === 'no', disabled:row=>row.enabled === 'no'
-  };
-  return ui.rows.filter(row => (!filter || conditions[filter](row)) && (!device || device === endpoint(row)) && (!term ||
-    [endpoint(row),row.hostname,row.label,row.interface,row.ap_names,row.poe_status,row.link_status,row.assessment_model,row.port_poe_state,row.message].join(' ').toLowerCase().includes(term)));
+  const filters = portFilters();
+  if (!filters.term && !filters.device && !filters.filter) return ui.rows;
+  return ui.rows.filter(row=>matchesPortFilters(row,portView(row),filters));
+}
+function powerBadge(view) {
+  const badge = elem('span',view.label,'power-badge');
+  badge.dataset.state = view.power.state;
+  badge.title = view.reason;
+  return badge;
+}
+function renderDetailFields(row) {
+  const view = portView(row), badgeCell = elem('dd');
+  badgeCell.append(powerBadge(view));
+  const items = [elem('dt','전력 판정'), badgeCell, elem('dt','판정 근거'), elem('dd',view.reason)];
+  const facts = view.row || {ip:row.ip,ssh_port:row.ssh_port,interface:row.interface};
+  for (const [key,label] of Object.entries(labels)) {
+    if (facts[key] === undefined || facts[key] === null || facts[key] === '') continue;
+    const value = /(?:_at|_time)$/.test(key) ? dateText(facts[key]) : displayValue(facts[key]);
+    items.push(elem('dt',label),elem('dd',value));
+  }
+  $('detailFields').replaceChildren(...items);
 }
 function displayValue(value) {
   if (value == null || value === '') return '—';
@@ -530,13 +574,7 @@ function showDetail(row) {
   $('rowDetails').hidden = false;
   $('rowDetails').open = true;
   $('rowDetails').querySelector('summary').textContent = (row.hostname || row.ip) + ' · 포트 ' + row.interface + ' 상세';
-  const items = [];
-  for (const [key,label] of Object.entries(labels)) {
-    if (row[key] === undefined || row[key] === null || row[key] === '') continue;
-    const value = /(?:_at|_time)$/.test(key) ? dateText(row[key]) : displayValue(row[key]);
-    items.push(elem('dt',label),elem('dd',value));
-  }
-  $('detailFields').replaceChildren(...items);
+  renderDetailFields(row);
   for (const tr of $('portTable').querySelectorAll('tr[data-key]')) tr.classList.toggle('active',tr.dataset.key === ui.detail);
   window.portTools?.selectDetail?.(row);
 }
@@ -549,10 +587,16 @@ function renderPorts() {
   const filtered = filteredRows(), pages = Math.max(1, Math.ceil(filtered.length / portPageSize));
   portPage = Math.min(portPage,pages - 1);
   const start = portPage * portPageSize, visible = filtered.slice(start,start + portPageSize);
+  const displayed = visible.map(record=>{
+    const view = portView(record);
+    return {...view.row, ip:record.ip, ssh_port:record.ssh_port, interface:record.interface, view, record,
+      selectable:record.status==='ok' && !record.controlUsed && view.phase==='observed'};
+  });
   const table = simpleTable([
     ['선택',row => {
       const field = elem('input'); field.type = 'checkbox';
-      field.checked = ui.selected.has(portKey(row)); field.disabled = row.status !== 'ok' || row.controlUsed;
+      field.dataset.portSelectable=String(row.selectable);
+      field.checked = ui.selected.has(portKey(row)); field.disabled = ui.busy || !row.selectable;
       field.setAttribute('aria-label',endpoint(row) + ' 포트 ' + row.interface + ' 선택');
       field.onchange = () => {
         if (field.checked) ui.selected.add(portKey(row)); else ui.selected.delete(portKey(row));
@@ -560,12 +604,12 @@ function renderPorts() {
       };
       return field;
     }],['스위치',row=>row.hostname || row.ip],['IP',endpoint],['포트','interface'],
-    ['공급 전력',row=>row.watts === '' || row.watts == null ? '—' : row.watts + ' W'],
+    ['전력 판정',row=>powerBadge(row.view)],['공급 전력',row=>row.watts === '' || row.watts == null ? '—' : row.watts + ' W'],
     ['PoE 상태',row=>row.poe_status || '—'],['링크',row=>row.link_status || '—'],
-    ['AP 이름',row=>row.ap_names || '—'],['조회',row=>stateNames[row.status] || row.status],
+    ['LLDP 이웃 이름',row=>row.ap_names || '—'],['조회',row=>row.view.phase==='observed' ? stateNames[row.status] || row.status : row.view.label],
     ['관측 시각',row=>dateText(row.observed_at || row.finished_at)],
-    ['상세',row=>button('상세 보기',()=>showDetail(row),'detailsbtn')]
-  ],visible,ui.rows.length ? '검색 조건에 맞는 포트가 없습니다.' : '조회한 포트가 없습니다.');
+    ['상세',row=>button('상세 보기',()=>showDetail(row.record),'detailsbtn')]
+  ],displayed,ui.rows.length ? '검색 조건에 맞는 포트가 없습니다.' : '조회한 포트가 없습니다.');
   for (const [index,tr] of all('tbody tr',table).entries()) {
     tr.dataset.key = portKey(visible[index]);
     tr.classList.toggle('active',tr.dataset.key === ui.detail);
@@ -575,6 +619,8 @@ function renderPorts() {
   $('prevRows').hidden = $('nextRows').hidden = pages <= 1;
   $('prevRows').disabled = portPage === 0; $('nextRows').disabled = portPage === pages - 1;
   updateSelection();
+  const detail = !$('rowDetails').hidden && ui.rows.find(row=>portKey(row)===ui.detail);
+  if (detail) renderDetailFields(detail);
   window.portTools?.renderMatrix?.();
 }
 $('portSearch').oninput = $('switchFilter').onchange = $('portFilter').onchange = () => { portPage = 0; renderPorts(); };
@@ -583,22 +629,23 @@ $('nextRows').onclick = () => { portPage++; renderPorts(); };
 function receivePorts(result, openMonitor=false) {
   if (!Array.isArray(result.rows)) return;
   const previousSwitch = $('switchFilter').value;
-  ui.rows = result.rows;
+  ui.rows = window.portTools.reconcileRows(result.rows);
   const switches = new Map(ui.rows.map(row => [endpoint(row),row.hostname]));
   $('switchFilter').replaceChildren(new Option('전체 스위치',''));
   for (const [address,host] of switches) $('switchFilter').add(new Option(host ? host + ' · ' + address : address,address));
   if (switches.has(previousSwitch)) $('switchFilter').value = previousSwitch;
-  const available = new Set(ui.rows.filter(row=>row.status === 'ok').map(portKey));
+  const available = new Set(ui.rows.filter(row=>row.status === 'ok' && !row.controlUsed).map(portKey));
   ui.selected = new Set([...ui.selected].filter(key=>available.has(key)));
-  $('queryFiles').replaceChildren(filelinks(result.files));
-  const file=(result.files || []).find(f=>f.name.toLowerCase().endsWith('.csv'));
+  const files=ui.rows.some(row=>row.status==='refresh_pending') ? [] : result.files || [];
+  $('queryFiles').replaceChildren(filelinks(files));
+  const file=files.find(f=>f.name.toLowerCase().endsWith('.csv'));
   if (file) {
-    const replaceObservation=openMonitor || !historicalSource();
+    const replaceObservation=openMonitor || !historicalSource() || monitor()?.source().expiredLive;
     ui.matrixFile=file.id;
     $('liveResultsBar').hidden=$('showMatrix').hidden=false;
     if (replaceObservation) { ui.pendingMatrix=file.id; postMatrix(); }
     if (openMonitor) setPortView('monitor');
-  }
+  } else if (ui.matrixFile) expireLiveMatrix();
   renderPorts();
   const selected = ui.rows.find(row=>portKey(row) === ui.detail);
   if (selected) showDetail(selected); else $('rowDetails').hidden = true;
@@ -824,6 +871,7 @@ $('targetFile').onchange = async () => {
   if (file.size > 2 * 1024 * 1024) { notify('2 MB 이하인 대상 목록 파일을 선택하세요.',true); return; }
   try {
     const text = (await file.text()).replace(/^\uFEFF/,'');
+    if (dest==='queryTargets' && ui.busy) return;
     if (dest === 'queryTargets' && file.name.toLowerCase().endsWith('.json')) {
       let profile;
       await run('profiles.import',{text},r=>{ profile = r; });
