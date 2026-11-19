@@ -350,6 +350,30 @@ class OperationsTests(unittest.TestCase):
         many = {"targets": "\n".join(f"192.0.{n // 250}.{n % 250 + 1}" for n in range(301))}
         self.assertEqual(len(_backup_targets(many)), 301)
 
+    def test_ip_only_backup_connects_to_standard_ssh_port_for_each_address(self):
+        ips = ["192.0.2.47", "192.0.2.48"]
+        result = self.call("backup.run", ips="\ufeff" + " \r\n\r\n ".join(ips), max_attempts=1)
+        self.assertCountEqual(
+            [row["endpoint"] for row in result["rows"]], [f"{ip}:22" for ip in ips]
+        )
+        self.assertTrue(all(row["status"] == "success" for row in result["rows"]))
+        self.assertEqual(
+            {call.args[0] for call in self.probe.probe.call_args_list},
+            {DeviceTarget(ip, 22) for ip in ips},
+        )
+
+    def test_ip_only_backup_rejects_ports_malformed_duplicate_and_mixed_input_before_network(self):
+        bad_ips = "192.0.2.1\n192.0.2.1:22\n192.0.2.1:2222\n999.0.0.1\n192.0.2.1"
+        with self.assertRaises(TargetInputError) as caught:
+            self.call("backup.run", ips=bad_ips)
+        for n in (2, 3, 4, 5):
+            self.assertIn(f"{n}행", str(caught.exception))
+        for overrides in ({"ssh_port": 2222}, {"targets": self.target.endpoint}):
+            with self.subTest(overrides=overrides), self.assertRaises(ValueError):
+                self.call("backup.run", ips=self.target.ip, **overrides)
+        self.probe.probe.assert_not_called()
+        self.factory.create.assert_not_called()
+
     def test_folder_picker_returns_chosen_path_or_cancel(self):
         with patch("localweb.backup_tools.subprocess.Popen") as launch:
             dialog = launch.return_value.__enter__.return_value

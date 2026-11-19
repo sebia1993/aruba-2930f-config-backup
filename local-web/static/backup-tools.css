@@ -1,5 +1,5 @@
 #chooseBackupDirectory { justify-self: start; margin: .4rem 0; }
-#statusText { white-space: pre-line; max-height: 12rem; overflow: auto; }
+#statusText, #backupTargetError { white-space: pre-line; max-height: 12rem; overflow: auto; }
 #backupDeviceProgress, #backupDiagnostics { margin: .75rem 1rem; }
 #backupDeviceProgress summary, #backupDiagnostics summary { cursor: pointer; padding: .35rem 0; }
 #backupDiagnostics pre, #uiRequestPreview { white-space: pre-wrap; overflow-wrap: anywhere; }

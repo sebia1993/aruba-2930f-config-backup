@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 from contextlib import suppress
+from ipaddress import IPv4Address
 from types import TracebackType
 
 import paramiko
@@ -55,7 +56,7 @@ class _ServerInterface(paramiko.ServerInterface):
 
 
 class LoopbackArubaSSHServer:
-    """Small password-authenticated Aruba-like CLI bound only to 127.0.0.1."""
+    """Small password-authenticated Aruba-like CLI bound only to IPv4 loopback."""
 
     username = "fixture-operator"
     password = "test-password"
@@ -66,6 +67,7 @@ class LoopbackArubaSSHServer:
         legacy_algorithms_only: bool = False,
         login_banner: bool = False,
         prompt: str = "edge-lab#",
+        listen_on: tuple[str, int] = ("127.0.0.1", 0),
     ) -> None:
         self.host_key = paramiko.RSAKey.generate(2048)
         self.legacy_algorithms_only = legacy_algorithms_only
@@ -76,7 +78,9 @@ class LoopbackArubaSSHServer:
         self.pager_advances = 0
         self.banner_advances = 0
         self.errors: list[str] = []
-        self.port = 0
+        self.ip, self.port = listen_on
+        if not IPv4Address(self.ip).is_loopback:
+            raise ValueError("Only a loopback SSH listener is supported")
         self._listener: socket.socket | None = None
         self._stop = threading.Event()
         self._lock = threading.RLock()
@@ -86,7 +90,7 @@ class LoopbackArubaSSHServer:
     def __enter__(self) -> LoopbackArubaSSHServer:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(("127.0.0.1", 0))
+        listener.bind((self.ip, self.port))
         listener.listen(5)
         listener.settimeout(0.1)
         self.port = int(listener.getsockname()[1])
@@ -126,7 +130,7 @@ class LoopbackArubaSSHServer:
                 if not self._stop.is_set():
                     self.errors.append("listener_error")
                 return
-            if address[0] != "127.0.0.1":
+            if not IPv4Address(address[0]).is_loopback:
                 client.close()
                 self.errors.append("non_loopback_client")
                 continue

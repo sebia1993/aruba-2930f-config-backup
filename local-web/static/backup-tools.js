@@ -1,12 +1,32 @@
 'use strict';
 
 (() => {
-  const form = $('backupForm');
-  const portField = elem('label','기본 SSH 포트');
-  const port = elem('input');
-  Object.assign(port,{id:'backupSSHPort',type:'number',min:'1',max:'65535',value:'22',required:true});
-  portField.append(port);
-  form.querySelector('#concurrency').closest('label').before(portField);
+  const input = $('backupTargets'), error = $('backupTargetError');
+  function readIPs() {
+    const addresses = new Map(), errors = [];
+    if (input.value.length > 100000) {
+      errors.push('대상 목록은 100,000자까지 입력할 수 있습니다.');
+    } else {
+      input.value.split('\n').forEach((raw, index) => {
+        const ip = raw.trim(), line = index + 1;
+        if (!ip) return;
+        const octets = ip.split('.');
+        if (octets.length !== 4 || !octets.every(part => /^(0|[1-9][0-9]{0,2})$/.test(part) && Number(part) <= 255)) {
+          errors.push(line+'행 · 스위치 IPv4 주소만 입력하세요.');
+        } else if (addresses.has(ip)) {
+          errors.push(line+'행 · '+addresses.get(ip)+'행과 스위치 IP가 중복됩니다.');
+        } else {
+          addresses.set(ip,line);
+        }
+      });
+      if (!addresses.size && !errors.length) errors.push('스위치 IPv4 주소를 한 개 이상 입력하세요.');
+    }
+    error.textContent = errors.join('\n');
+    error.hidden = !errors.length;
+    input.setAttribute('aria-invalid',String(!!errors.length));
+    return errors.length ? null : [...addresses.keys()].join('\n');
+  }
+  input.addEventListener('input',() => { if (!error.hidden) readIPs(); });
 
   const choose = button('폴더 찾아보기', () => {
     run('backup.pick-directory', {}, r => { if (r.directory) $('backupDirectory').value = r.directory; });
@@ -75,7 +95,7 @@
     area.append(block);
   }
 
-  window.backupTools = {onProgress,showSummary};
+  window.backupTools = {onProgress,showSummary,readIPs};
 })();
 
 // Static support metadata. Request text is built from this catalog, never from input values or table contents.
@@ -85,13 +105,12 @@
     for (const [id, title, purpose] of items) catalog.push({screen,source,id,title,purpose,frame});
   }
   register('스위치 컨피그 백업','static/index.html',[
-    ['backupForm','백업 입력','대상과 백업 옵션을 입력합니다.'],['backupTargets','백업 대상','스위치 주소 목록을 입력합니다.'],
+    ['backupForm','백업 입력','대상과 백업 옵션을 입력합니다.'],['backupTargets','백업 대상','스위치 IPv4 주소를 한 줄에 하나씩 입력합니다.'],
     ['backupDirectory','저장 폴더','추가로 저장할 로컬 폴더를 입력합니다.'],['fileMode','파일 이름','장비 이름과 IP 조합을 선택합니다.'],
     ['concurrency','동시 접속','동시에 접속할 장비 수를 정합니다.'],['attempts','최대 시도','장비별 접속 시도 횟수를 정합니다.'],
     ['backupResult','백업 결과','장비별 결과와 진단 코드를 확인합니다.'],['backupFiles','백업 파일','생성한 설정과 보고서를 다운로드합니다.']
   ]);
   register('스위치 컨피그 백업','static/backup-tools.js',[
-    ['backupSSHPort','기본 SSH 포트','포트가 생략된 대상에 공통 포트를 적용합니다.'],
     ['chooseBackupDirectory','폴더 찾아보기','Windows에서 저장할 폴더를 선택합니다.'],
     ['backupDeviceProgress','장비별 진행 상황','SSH 키 확인과 설정 수집 단계를 표시합니다.'],
     ['backupDiagnostics','진단 코드 모음','실패 진단 코드와 발생 횟수를 복사합니다.']

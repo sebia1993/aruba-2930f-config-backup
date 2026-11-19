@@ -2,15 +2,16 @@
 
 import browser_qa
 from playwright.sync_api import expect
+from verify_http_ssh import backup_switch
 
 
 def first_use_keys(page, url, first, second, shots, output):
     page.goto(url)
-    addr = f"127.0.0.1:{first.port}"
-    other = f"127.0.0.1:{second.port}"
+    addr = f"{first.ip}:{first.port}"
+    other = f"{second.ip}:{second.port}"
 
     page.locator('nav a[href="#backup"]').click()
-    page.locator("#backupTargets").fill(addr + "\n" + other)
+    page.locator("#backupTargets").fill(first.ip + "\n" + second.ip)
     page.locator("#backupForm .primary").click()
     browser_qa.enter_ssh_credentials(page, first)
     expect(page.locator("#backupResult")).to_contain_text("성공", timeout=90000)
@@ -25,14 +26,14 @@ def first_use_keys(page, url, first, second, shots, output):
     expect(observed).to_contain_text("8.1 W", timeout=90000)
     page.reload()
     expect(observed).to_contain_text("8.1 W", timeout=30000)
-    assert str(second.port) in page.locator("#queryTargets").input_value()
+    assert second.ip in page.locator("#queryTargets").input_value()
     # A different key on the same endpoint must not replace the original pin.
     saved_fingerprint = second.host_key.fingerprint
     auth_count = len(second.auth_attempts)
     command_count = len(second.commands)
     second.host_key = first.host_key
     page.locator('nav a[href="#backup"]').click()
-    page.locator("#backupTargets").fill(other)
+    page.locator("#backupTargets").fill(second.ip)
     page.locator("#backupForm .primary").click()
     expect(page.locator("#backupResult")).to_contain_text("HOST_KEY_CHANGED", timeout=90000)
     assert len(second.auth_attempts) == auth_count and len(second.commands) == command_count
@@ -54,7 +55,9 @@ def first_use_keys(page, url, first, second, shots, output):
 
 
 if __name__ == "__main__":
-    browser_qa.run_browser_case(first_use_keys)
+    browser_qa.run_browser_case(
+        first_use_keys, switch_factory=backup_switch, second_switch_factory=backup_switch
+    )
     print(
         "PASS first-use key registration, workspace restore, changed-key blocking and stored pins"
     )

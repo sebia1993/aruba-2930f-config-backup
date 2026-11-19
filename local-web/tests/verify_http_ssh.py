@@ -11,6 +11,7 @@ import io
 import json
 import logging
 import os
+import secrets
 import site
 import subprocess
 import sys
@@ -110,6 +111,13 @@ class MonitorFixture(LoopbackArubaSSHServer):
             self.commands.append(command)
         channel.sendall(("\r\n".join([command, *lines, prompt])).encode("utf-8"))
         return False
+
+
+def backup_switch():
+    # Separate loopback addresses let real port-22 backup tests run concurrently.
+    subnet = [secrets.randbelow(254) + 1 for _ in range(3)]
+    address = "127." + ".".join(map(str, subnet))
+    return MonitorFixture(listen_on=(address, 22))
 
 
 class Http:
