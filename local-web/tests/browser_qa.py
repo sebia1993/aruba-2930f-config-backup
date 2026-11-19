@@ -11,6 +11,8 @@ import tempfile
 import time
 from contextlib import closing, contextmanager
 from pathlib import Path
+from threading import Event
+from unittest.mock import patch
 from urllib.parse import urljoin
 
 from playwright.sync_api import expect, sync_playwright
@@ -234,10 +236,42 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#attempts")).to_have_value("4")
     page.locator("#backupDirectory").fill(str(backup_directory))
     page.locator("#backupTargets").fill(address)
-    page.locator("#backupForm .primary").click()
-    enter_ssh_credentials(page, switch)
+    # A second tab opened during the backup must recover the same result and files.
+    reading, resume = Event(), Event()
+    respond = switch._respond
+
+    def hold_config_read(channel, command):
+        if command == "show running-config":
+            reading.set()
+            assert resume.wait(45), "Backup result check did not resume the SSH read"
+        return respond(channel, command)
+
+    with patch.object(switch, "_respond", hold_config_read):
+        try:
+            page.locator("#backupForm .primary").click()
+            enter_ssh_credentials(page, switch)
+            assert reading.wait(30), "Backup did not reach the loopback switch"
+            recovery_context = page.context.browser.new_context(
+                storage_state=page.context.storage_state()
+            )
+            reopened = recovery_context.new_page()
+            with reopened.expect_response("**/api/bootstrap") as bootstrap:
+                reopened.goto(page.url)
+            assert bootstrap.value.json()["busyJob"]
+        finally:
+            resume.set()
+
     expect(page.locator('[data-page="backup"]')).to_be_visible()
     expect(page.locator("#backupResult")).to_contain_text("성공", timeout=90000)
+    expect(reopened.locator("#backupResult")).to_contain_text("성공", timeout=90000)
+    resumed_report = reopened.locator('#backupFiles a[download$=".xlsx"]')
+    with reopened.expect_download() as recovered_download:
+        resumed_report.click()
+    assert (
+        recovered_download.value.path().read_bytes()
+        == next(backup_directory.rglob("result.xlsx")).read_bytes()
+    )
+    recovery_context.close()
     expect(page.locator("#backupResult")).to_contain_text(str(backup_directory))
     expect(page.locator("#backupResult")).to_contain_text("실제 저장 결과 폴더")
     assert list(backup_directory.rglob("result.xlsx"))
@@ -366,28 +400,14 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     logs.locator("#backToLogPort").click()
     expect(picked_port).to_be_focused()
     page.set_viewport_size({"width": 1440, "height": 960})
-    nav("history")
-    expect(page.locator("#historyTable")).to_contain_text("구성 백업")
-    expect(page.locator("#historyTable")).to_contain_text("포트 조회")
-    expect(page.locator('#historyTable a[download$=".csv" i]')).to_have_count(0)
-    page.locator("#historyTable").get_by_role("button", name="결과 폴더 열기").first.click()
-    expect(page.locator("#controlHistory")).to_be_visible()
-    page.locator("#controlHistory").click()
-    expect(page.locator("#controlHistoryTable")).to_contain_text("검증 완료")
-    old_header = {
-        "event": "plan",
-        "created_at": "2026-11-18",
-        "action": "poe_off",
-        "items": [{"endpoint": address, "interface": "1", "hostname": "old-fixture"}],
-    }
-    saved = json.dumps(old_header) + "\n" + json.dumps({"event": "intent", "index": 0})
-    page.locator("#importControlHistory + input").set_input_files(
-        {"name": "saved-batch.jsonl", "mimeType": "application/json", "buffer": saved.encode()}
-    )
-    expect(page.locator("#controlHistoryTable")).to_contain_text("결과 미기록")
-    expect(page.locator("#controlHistoryTable")).to_contain_text("old-fixture")
-    page.locator("#backupHistory").click()
-    expect(page.locator("#backupHistoryTable")).to_contain_text("result.xlsx")
+    expect(page.locator('a[href="#history"], [data-page="history"]')).to_have_count(0)
+    page.evaluate("location.hash = 'history'")
+    page.wait_for_url("**/#ports")
+    expect(page.locator('nav a[href="#ports"]')).to_have_attribute("aria-current", "page")
+    expect(page.locator("#controlResult")).to_contain_text("검증 완료")
+    nav("backup")
+    expect(report).to_be_visible()
+    page.locator("#backupResult").get_by_role("button", name="결과 폴더 열기").click()
     page.evaluate("location.hash = 'connect'")
     page.locator("#listKeys").click()
     expect(page.locator("#knownKeys")).to_contain_text("SHA256:")
@@ -503,7 +523,7 @@ def run_browser_case(case, *, switch_factory=MonitorFixture, browser_engine="chr
 def main():
     run_browser_case(exercise)
     print(
-        "PASS Chrome UI: local launch, three log states, themes, mobile layout, host trust, XLSX downloads, live matrix and review, confirmed batch/single SSH writes on loopback, live logs, history, session close and shutdown."
+        "PASS Chrome UI: local launch, three log states, themes, mobile layout, host trust, XLSX downloads, live matrix and review, confirmed batch/single SSH writes on loopback, live logs, retired history route, session close and shutdown."
     )
 
 

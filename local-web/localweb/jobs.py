@@ -55,6 +55,7 @@ PERSIST = {
 }
 EXTENSIONS = {".jsonl", ".json", ".txt", ".xlsx"}
 MAX_RESULTS = 8
+DUPLICATE_POE_REQUEST = "이미 접수한 빠른 PoE 요청입니다. 해당 포트의 현재 상태를 다시 조회하세요."
 
 
 def now():
@@ -138,7 +139,7 @@ class Jobs:
                 if not isinstance(key, str) or re.fullmatch(r"[0-9a-f]{32}", key) is None:
                     raise ValueError("빠른 PoE 요청 식별자가 올바르지 않습니다.")
                 if key in self.recent:
-                    raise Busy("이미 접수한 빠른 PoE 요청입니다. 작업 이력을 확인하세요.")
+                    raise Busy(DUPLICATE_POE_REQUEST)
             else:
                 key = secrets.token_hex(16)
             started = now()
@@ -151,9 +152,7 @@ class Jobs:
                         )
                     except sqlite3.IntegrityError:
                         if action == "control.quick-execute":
-                            raise Busy(
-                                "이미 접수한 빠른 PoE 요청입니다. 작업 이력을 확인하세요."
-                            ) from None
+                            raise Busy(DUPLICATE_POE_REQUEST) from None
                         raise
             self.recent[key] = dict(
                 id=key,

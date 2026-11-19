@@ -7,14 +7,13 @@ const jobNames = {
   'session.open': '접속 계정 적용', 'session.close': '세션 해제', 'hostkey.inspect': '호스트 키 조회',
   'hostkey.approve': '호스트 키 승인', 'hostkey.list':'등록된 키 조회', 'hostkey.forget':'등록된 키 삭제', 'ports.query': '포트 조회', 'ports.refresh':'선택 범위 재조회',
   'profiles.export': '대상 프로필 저장', 'profiles.import': '대상 프로필 열기', 'logs.query': '스위치 로그 수집',
-  'backup.run': '구성 백업', 'backup.history':'백업 보고서 조회', 'control.preview': '포트 제어 검토', 'control.apply': '포트 명령 실행', 'control.history': '포트별 기록 조회'
+  'backup.run': '구성 백업', 'control.preview': '포트 제어 검토', 'control.apply': '포트 명령 실행'
 };
-const states = {queued: '대기', running: '진행 중', done: '완료', failed: '실패', cancelled: '취소', interrupted:'서버 종료로 중단'};
 const stateNames = {ok:'성공',success:'성공',failed:'실패',cancelled:'취소',unsupported:'미지원',unknown:'미등록',changed:'키 변경',trusted:'등록됨',rejected:'거부',retry_exhausted:'접속 재시도 소진',verified:'검증 완료',unchanged:'이미 요청 상태',preflight_failed:'사전 검증 실패',unverified:'검증 미완료',paused:'일시 중지',skipped:'건너뜀',blocked:'실행 차단',result_unknown:'결과 미기록'};
 const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), logs:[], chosenLog:null, logLoaded:false, liveId:null, inspectedRow:null };
 const dialog = $('review');
 const queryCredentials = $('queryCredentials');
-Object.assign(jobNames, {'targets.preview':'대상 목록 검토','targets.apply':'대상 목록 적용','control.inspect':'단일 포트 상태 조회','control.quick':'빠른 제어 검토','control.quick-execute':'빠른 PoE 제어','control.import-history':'작업 기록 열기','backup.pick-directory':'저장 폴더 선택','history.open-folder':'이력 위치 열기'});
+Object.assign(jobNames, {'targets.preview':'대상 목록 검토','targets.apply':'대상 목록 적용','control.inspect':'단일 포트 상태 조회','control.quick':'빠른 제어 검토','control.quick-execute':'빠른 PoE 제어','backup.pick-directory':'백업 폴더 선택'});
 
 function elem(tag, text, className) {
   const node = document.createElement(tag);
@@ -96,7 +95,7 @@ async function poll(id) {
     let job;
     try { job = await api('/api/jobs/' + encodeURIComponent(id) + '?after=' + cursor); failures = 0; }
     catch (e) {
-      if (++failures >= 3) throw new Error(e.message + ' 작업 이력에서 실행 결과를 확인하세요.');
+      if (++failures >= 3) throw new Error(e.message + ' 작업 상태를 확인할 수 없습니다. 잠시 후 다시 연결하세요.');
       await delay(850);
       continue;
     }
@@ -168,7 +167,6 @@ async function run(action, body, receive) {
     ui.busy = false;
     sync();
     window.portTools?.onJob?.(action,'idle');
-    if (!document.querySelector('[data-page=history]').hidden) loadHistory();
   }
 }
 $('stopJob').onclick = async () => {
@@ -398,7 +396,7 @@ mobileServerInfo.addEventListener('keydown', event => {
   }
 });
 function route() {
-  if (location.hash==='#home') history.replaceState(history.state,'','#ports');
+  if (['#home','#history'].includes(location.hash)) history.replaceState(history.state,'','#ports');
   const key = location.hash.slice(1);
   const admin = key === 'connect';
   const links = all('nav a');
@@ -411,7 +409,6 @@ function route() {
   mobileServerInfo.open = false;
   $('crumb').textContent = admin ? $('connectionHeading').textContent : link.lastChild.textContent;
   if (name === 'ports' && !$('matrixViewer').hasAttribute('src')) $('matrixViewer').src = $('matrixViewer').dataset.src;
-  if (name === 'history' && ui.token) loadHistory();
   if (dialog.open) dialog.close();
   if (queryCredentials.open) queryCredentials.close();
 }
@@ -600,33 +597,34 @@ form('logForm', () => {
   });
 });
 function backup(body) {
-  runSsh('backup.run',body,r => {
-    const rows = r.rows || [], area = $('backupResult');
-    $('backupFiles').replaceChildren(filelinks(r.files));
-    area.replaceChildren(simpleTable([
-      ['스위치','endpoint'],['호스트 이름','hostname'],['모델 / SKU',x=>[x.model,x.sku].filter(Boolean).join(' / ') || '—'],
-      ['결과',x=>stateNames[x.status] || x.status],['지문 시도','host_key_attempts'],['백업 시도','attempts'],['오류 코드','error_code'],
-      ['상세','message',true],['진단 코드',x=>x.diagnostic_code ? button(x.diagnostic_code,async()=>{
-        try { await navigator.clipboard.writeText(x.diagnostic_code); notify('진단 코드를 복사했습니다.'); }
-        catch { notify('진단 코드 ' + x.diagnostic_code); }
-      }) : '—']
-    ],rows));
-    window.backupTools?.showSummary(area, rows);
-    if (r.output_directory) {
-      const path = elem('p',undefined,'hint');
-      if (body.output_directory) path.append(elem('b','요청한 추가 저장 위치 '),elem('code',body.output_directory),elem('br'));
-      path.append(elem('b',body.output_directory ? '실제 저장 결과 폴더 ' : '기본 저장 폴더 '),elem('code',r.output_directory));
-      area.prepend(path);
-    }
-    if (r.files?.length) area.append(openFolder(r.files[0]));
-    for (const warning of r.warnings || []) area.append(elem('p',warning,'warning'));
-    const retry = rows.filter(x=>x.status === 'retry_exhausted');
-    if (retry.length) {
-      const again = button('접속 실패 장비만 다시 시도 (' + retry.length + ')',()=>
-        backup({...body, targets:retry.map(x=>x.endpoint).join('\n')}));
-      again.dataset.job = ''; area.append(again);
-    }
-  });
+  runSsh('backup.run',body,r => showBackupResult(r,body));
+}
+function showBackupResult(r,body) {
+  const rows = r.rows || [], area = $('backupResult');
+  $('backupFiles').replaceChildren(filelinks(r.files));
+  area.replaceChildren(simpleTable([
+    ['스위치','endpoint'],['호스트 이름','hostname'],['모델 / SKU',x=>[x.model,x.sku].filter(Boolean).join(' / ') || '—'],
+    ['결과',x=>stateNames[x.status] || x.status],['지문 시도','host_key_attempts'],['백업 시도','attempts'],['오류 코드','error_code'],
+    ['상세','message',true],['진단 코드',x=>x.diagnostic_code ? button(x.diagnostic_code,async()=>{
+      try { await navigator.clipboard.writeText(x.diagnostic_code); notify('진단 코드를 복사했습니다.'); }
+      catch { notify('진단 코드 ' + x.diagnostic_code); }
+    }) : '—']
+  ],rows));
+  window.backupTools?.showSummary(area, rows);
+  if (r.output_directory) {
+    const path = elem('p',undefined,'hint');
+    if (body?.output_directory) path.append(elem('b','요청한 추가 저장 위치 '),elem('code',body.output_directory),elem('br'));
+    path.append(elem('b',body && !body.output_directory ? '기본 저장 폴더 ' : '실제 저장 결과 폴더 '),elem('code',r.output_directory));
+    area.prepend(path);
+  }
+  if (r.files?.length) area.append(openFolder(r.files[0]));
+  for (const warning of r.warnings || []) area.append(elem('p',warning,'warning'));
+  const retry = rows.filter(x=>x.status === 'retry_exhausted');
+  if (body && retry.length) {
+    const again = button('접속 실패 장비만 다시 시도 (' + retry.length + ')',()=>
+      backup({...body, targets:retry.map(x=>x.endpoint).join('\n')}));
+    again.dataset.job = ''; area.append(again);
+  }
 }
 form('backupForm', () => backup({targets:$('backupTargets').value, concurrency:Number($('concurrency').value),
   max_attempts:Number($('attempts').value), ssh_port:Number($('backupSSHPort')?.value || 22),
@@ -940,34 +938,6 @@ function dateText(value) {
   const stamp = new Date(value);
   return isNaN(stamp.getTime()) ? value : stamp.toLocaleString('ko-KR',{hour12:false});
 }
-async function loadHistory() {
-  try {
-    const data = await api('/api/history');
-    $('historyTable').replaceChildren(simpleTable([
-      ['시작',r=>dateText(r.started)],['작업',r=>jobNames[r.action] || r.action],['상태',r=>states[r.state] || r.state],
-      ['종료',r=>dateText(r.finished)],['결과','summary',true],['파일',r=>{
-        const links = filelinks(r.files);
-        if (r.action === 'backup.run' && r.files?.length) links.append(openFolder(r.files[0]));
-        return links;
-      },true]
-    ],data.items || [],'아직 실행한 작업이 없습니다.'));
-  } catch (e) { $('historyTable').replaceChildren(elem('p',e.message,'warning')); }
-}
-$('refreshHistory').onclick = loadHistory;
-$('backupHistory').onclick = () => run('backup.history',{output_directory: $('backupDirectory').value.trim()},r=>{
-  $('backupHistoryTable').replaceChildren(simpleTable([
-    ['저장 위치',x=>({desktop:'데스크톱',selected:'지정한 백업 폴더',web:'로컬 웹'}[x.source] || '—')],['실행','run'],['스위치','hostname'],['IP','ip'],
-    ['결과',x=>stateNames[x.status] || x.status],['파일 경로','path',true],['폴더', x=>window.backupTools?.historyButton(x)]
-  ],r.rows || [],'저장된 백업 보고서가 없습니다.'));
-});
-$('controlHistory').onclick = () => run('control.history',{},r => {
-  $('controlHistoryTable').replaceChildren(simpleTable([
-    ['시각',x=>dateText(x.time)],['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['호스트','hostname'],
-    ['작업',x=>operationNames[x.operation] || x.operation],['결과',x=>stateNames[x.status] || x.status],['상세','message',true],['출처','source'],
-    ['폴더', x=>window.backupTools?.historyButton(x)]
-  ],r.rows || [],'기록된 포트 제어 명령이 없습니다.'));
-  window.controlTools?.explainUnknown(r.rows || []);
-});
 let fileDestination = null;
 for (const node of all('[data-import]')) node.onclick = () => {
   fileDestination = node.dataset.import;
@@ -1005,9 +975,10 @@ for (const node of all('[data-save]')) node.onclick = () => {
   const url = URL.createObjectURL(new Blob(['\uFEFF' + value + '\n'],{type:'text/plain;charset=utf-8'}));
   a.href = url; a.download = 'switch-targets.txt'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
-$('exportProfile').onclick = () => run('profiles.export',{targets:$('queryTargets').value.trim()},r => {
+function showProfileFiles(r) {
   $('profileFiles').hidden = false; $('profileFiles').replaceChildren(filelinks(r.files));
-});
+}
+$('exportProfile').onclick = () => run('profiles.export',{targets:$('queryTargets').value.trim()},showProfileFiles);
 $('shutdown').onclick = () => confirmDialog('로컬 웹 서버 종료',[elem('p','현재 SSH 세션을 닫고 이 PC의 로컬 웹 서버를 종료합니다.')],'서버 종료',async () => {
   try {
     await api('/api/shutdown',{});
@@ -1027,15 +998,18 @@ async function start() {
     let resumed;
     if (bootstrap.busyJob) {
       ui.busy = true; ui.jobId = bootstrap.busyJob; sync();
+      setJobProgress({});
       notify('진행 중인 작업을 기다리고 있습니다.');
-      let resumeError;
-      try { resumed=await poll(bootstrap.busyJob); }
-      catch (error) { resumeError=error.message; }
-      finally {
+      try {
+        resumed=await poll(bootstrap.busyJob);
+        notify((jobNames[resumed.action] || '작업') + (resumed.cancelled ? ' 취소됨' : ' 완료'));
+      } catch (error) {
+        notify(error.message,true);
+      } finally {
+        setJobProgress(null);
         ui.busy = false; ui.jobId = null;
         const latest = await api('/api/bootstrap'); ui.session = latest.session || {active:false};
       }
-      notify(resumeError || '기존 작업이 끝났습니다. 작업 이력에서 결과를 확인하세요.',!!resumeError);
     }
     const workspace = await api('/api/workspace');
     if (workspace.groups?.length && !$('queryTargets').value.trim()) {
@@ -1049,9 +1023,17 @@ async function start() {
         }
       }
     }
-    if (resumed?.action === 'control.quick-execute') {
+    if (resumed?.action === 'backup.run' && Array.isArray(resumed.result.rows)) {
+      showBackupResult(resumed.result);
+    } else if (resumed?.action === 'profiles.export' && resumed.result.files?.length) {
+      setQueryExpanded(true);
+      $('targetOptions').open=true;
+      showProfileFiles(resumed.result);
+    } else if (resumed?.action === 'control.quick-execute') {
       window.controlTools.showQuickResult(resumed.result,resumed.cancelled,true);
     } else if (resumed?.action === 'control.apply' && resumed.result.results?.length) {
+      window.controlTools.finishProgress();
+      $('controlPanel').open=true;
       showControlResults(resumed.result,operationNames[resumed.result.operation] || '포트 제어');
     }
     if (resumed && (hasUncertainControl(resumed.result) || resumed.result.blocked?.length))

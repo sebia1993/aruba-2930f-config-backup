@@ -87,29 +87,6 @@
       ['단계',r=>stateNames[r.stage] || r.stage],['결과','message',true]],data.ports));
   }
   function finishProgress() { progress.hidden = true; stageTable.replaceChildren(); hideInspection(); }
-  const file = elem('input'); file.type = 'file'; file.accept = '.jsonl'; file.hidden = true;
-  const opener = button('JSONL 이력 파일 열기',()=>{ file.value = ''; file.click(); });
-  opener.id = 'importControlHistory'; opener.dataset.job = '';
-  $('controlHistory').after(opener,file);
-  file.onchange = async () => {
-    const selected = file.files[0]; if (!selected) return;
-    if (selected.size > 2 * 1024 * 1024) return notify('2 MiB 이하의 JSONL 파일을 선택하세요.',true);
-    try {
-      const text = await selected.text();
-      run('control.import-history',{name:selected.name,text},r => {
-        $('controlHistoryTable').replaceChildren(elem('b',selected.name),simpleTable([
-          ['시각',x=>dateText(x.time)],['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['호스트','hostname'],
-          ['작업',x=>operationNames[x.operation] || x.operation],['결과',x=>stateNames[x.status] || x.status],['상세','message',true]
-        ],r.rows || []));
-        explainUnknown(r.rows || []);
-      });
-    } catch { notify('선택한 JSONL 파일을 읽을 수 없습니다.',true); }
-  };
-  function explainUnknown(rows) {
-    if (rows.some(row=>row.status === 'result_unknown' || row.status === 'unverified')) {
-      $('controlHistoryTable').prepend(elem('p','명령의 결과가 확인되지 않은 포트가 있습니다. 해당 포트의 현재 상태를 다시 조회하세요.','warning'));
-    }
-  }
-  window.controlTools = {onProgress,finishProgress,explainUnknown,showInspection,hideInspection,showQuickResult,clearQuickResult};
+  window.controlTools = {onProgress,finishProgress,showInspection,hideInspection,showQuickResult,clearQuickResult};
   sync();
 })();
