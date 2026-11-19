@@ -2,7 +2,7 @@
 
 const $ = id => document.getElementById(id);
 const all = (selector, parent = document) => [...parent.querySelectorAll(selector)];
-const operationNames = {poe_on: 'PoE 전원 ON', poe_off: 'PoE 전원 OFF', enable: '포트 Up', disable: '포트 Down'};
+const operationNames = {poe_on: 'PoE 전원 ON', poe_off: 'PoE 전원 OFF', enable: '포트 활성화 (Enable)', disable: '포트 비활성화 (Disable)'};
 const jobNames = {
   'session.open': '접속 계정 적용', 'session.close': '세션 해제', 'hostkey.inspect': '호스트 키 조회',
   'hostkey.approve': '호스트 키 승인', 'hostkey.list':'등록된 키 조회', 'hostkey.forget':'등록된 키 삭제', 'ports.query': '포트 조회', 'ports.refresh':'선택 범위 재조회', 'ports.export': '조회 CSV 저장',
@@ -12,7 +12,7 @@ const jobNames = {
 const states = {queued: '대기', running: '진행 중', done: '완료', failed: '실패', cancelled: '취소', interrupted:'서버 종료로 중단'};
 const labels = {
   ip: 'IP 주소', ssh_port: 'SSH 포트', label: '장비 구분', hostname: '호스트 이름', model: '스위치 모델',
-  interface: '포트', status: '조회 결과', enabled: '관리 상태', link_status: '링크', poe_enabled: 'PoE 설정',
+  interface: '포트', status: '조회 결과', enabled: '관리 상태', link_status: '관측 링크', poe_enabled: 'PoE 설정',
   poe_status: 'PoE 상태', watts: '공급 전력 (W)', observed_at: '관측 시각', finished_at: '조회 종료',
   error_code: '오류 코드', message: '메시지', poe_finished_at: 'PoE 조회 종료', complete: '조회 완결',
   lldp_status: 'LLDP 조회', lldp_observed_at: 'LLDP 관측 시각', lldp_error_code: 'LLDP 오류 코드',
@@ -559,6 +559,10 @@ function renderDetailFields(row) {
   const items = [elem('dt','전력 판정'), badgeCell, elem('dt','판정 근거'), elem('dd',view.reason)];
   const facts = view.row || {ip:row.ip,ssh_port:row.ssh_port,interface:row.interface};
   for (const [key,label] of Object.entries(labels)) {
+    if (key === 'link_status') {
+      items.push(elem('dt',label),elem('dd',PowerMatrix.linkLabel(facts[key])));
+      continue;
+    }
     if (facts[key] === undefined || facts[key] === null || facts[key] === '') continue;
     const value = /(?:_at|_time)$/.test(key) ? dateText(facts[key]) : displayValue(facts[key]);
     items.push(elem('dt',label),elem('dd',value));
@@ -605,7 +609,7 @@ function renderPorts() {
       return field;
     }],['스위치',row=>row.hostname || row.ip],['IP',endpoint],['포트','interface'],
     ['전력 판정',row=>powerBadge(row.view)],['공급 전력',row=>row.watts === '' || row.watts == null ? '—' : row.watts + ' W'],
-    ['PoE 상태',row=>row.poe_status || '—'],['링크',row=>row.link_status || '—'],
+    ['PoE 상태',row=>row.poe_status || '—'],['관측 링크',row=>PowerMatrix.linkLabel(row.link_status)],
     ['LLDP 이웃 이름',row=>row.ap_names || '—'],['조회',row=>row.view.phase==='observed' ? stateNames[row.status] || row.status : row.view.label],
     ['관측 시각',row=>dateText(row.observed_at || row.finished_at)],
     ['상세',row=>button('상세 보기',()=>showDetail(row.record),'detailsbtn')]
@@ -759,7 +763,7 @@ $('controlMode').onchange = () => {
     const detail = ui.rows.find(row=>portKey(row) === ui.detail);
     if (detail) { $('singleIP').value = endpoint(detail); $('singlePort').value = detail.interface; }
   }
-  $('controlHint').textContent = single ? '직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.' : '일괄 전원 OFF와 포트 Down은 LLDP로 AP-535가 확인된 포트에서 사용할 수 있습니다.';
+  $('controlHint').textContent = single ? '직접 입력한 포트의 현재 상태와 전송할 명령을 먼저 검토합니다.' : '일괄 전원 OFF와 포트 비활성화는 LLDP로 AP-535가 확인된 포트에서 사용할 수 있습니다.';
 };
 function controlAfterText(row) {
   if (row.after) return [row.after.detail,row.after.poeStatus].filter(Boolean).join(' · ');

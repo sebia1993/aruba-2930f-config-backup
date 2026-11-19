@@ -152,7 +152,7 @@ def write_query_csv(path: Path, results: Sequence[PoEQueryResult]) -> None:
                     result.interface,
                     result.status.value,
                     _setting(snapshot.enabled) if snapshot else "",
-                    snapshot.link_status if snapshot else "",
+                    result.observed_link,
                     _setting(snapshot.poe_enabled) if snapshot else "",
                     snapshot.poe_status if snapshot else "",
                     "" if watts is None else "0" if watts == 0 else str(watts),

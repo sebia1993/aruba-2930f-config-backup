@@ -45,6 +45,9 @@ class PortControlSSHSession(NetmikoSSHSession):
     def read_interfaces(self) -> str:
         return self._read_port_command("show interfaces brief")
 
+    def read_interface_status(self) -> str:
+        return self._read_port_command("show interfaces status")
+
     def read_poe(self, interface: str) -> str:
         port = validate_port_identifier(interface)
         return self._read_port_command(f"show power-over-ethernet {port}")

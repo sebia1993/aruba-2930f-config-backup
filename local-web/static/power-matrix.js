@@ -11,6 +11,14 @@
   const text = value => typeof value === 'string' ? value.trim() : '';
   const token = value => text(value).toLowerCase();
 
+  function linkLabel(value) {
+    switch (token(value)) {
+      case 'up': return 'Up';
+      case 'down': return 'Down';
+      default: return '미확인';
+    }
+  }
+
   function measurement(value) {
     if (typeof value === 'string' && /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())) {
       const number = Number(value);
@@ -99,5 +107,5 @@
     return result('normal', '스위치에서 전력 공급과 LLDP 이웃 AP 이름을 확인했습니다.');
   }
 
-  globalThis.PowerMatrix = Object.freeze({labels, classify});
+  globalThis.PowerMatrix = Object.freeze({labels, classify, linkLabel});
 })();

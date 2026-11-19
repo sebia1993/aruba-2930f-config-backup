@@ -4,7 +4,7 @@ from threading import Event
 
 from browser_qa import run_browser_case
 from playwright.sync_api import expect
-from verify_http_ssh import MonitorFixture
+from verify_http_ssh import MonitorFixture, interface_status_table
 
 
 class PowerMatrixSwitch(MonitorFixture):
@@ -14,12 +14,17 @@ class PowerMatrixSwitch(MonitorFixture):
         self.allow_lldp = Event()
         self.allow_lldp.set()
 
+    def status_lines(self):
+        return interface_status_table(
+            (number, "Up Down", "Down" if number == "3" else "Up") for number in self.draws
+        )
+
     def _respond(self, channel, command):
         port = command.split()[-1]
         if command == "show interfaces brief":
             lines = ["Port Type | Alert Enabled Status Mode"]
             for number in self.draws:
-                link = "Down" if number == "3" else "Up"
+                link = "Up" if number == "3" else "Down"
                 lines.append(f"{number} 100/1000T | No Yes {link} Auto")
         elif command.startswith("show power-over-ethernet ") and port in self.draws:
             lines = [
@@ -41,7 +46,7 @@ class PowerMatrixSwitch(MonitorFixture):
                 "LLDP Remote Device Information Detail",
                 f" Local Port :{port}",
                 " ChassisType :mac-address",
-                f" ChassisId :00:11:22:33:44:0{port}",
+                f" ChassisId :00:11:22:33:44:{list(self.draws).index(port) + 1:02x}",
                 " PortType :local",
                 " PortId :eth0",
                 " System Descr :Aruba AP-535",

@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 from localweb.backup_destination import copy_backup_files
 from localweb.operations import Operations, TargetInputError, _devices
 from openpyxl import Workbook, load_workbook
+from verify_http_ssh import interface_status_table
 
 from aruba2930f_backup.collector import ArubaCollector
 from aruba2930f_backup.hostkeys import HostKeyStore, sha256_fingerprint
@@ -399,7 +400,10 @@ class OperationsTests(unittest.TestCase):
 
     def test_port_query_uses_native_evidence_and_csv_and_session_invalidation(self):
         self.session.read_interfaces.return_value = (
-            "Port Type | Alert Enabled Status Mode\n24 100/1000T | No Yes Up Auto"
+            "Port Type | Alert Enabled Status Mode\n24 100/1000T | No Yes Down Auto"
+        )
+        self.session.read_interface_status.return_value = "\n".join(
+            interface_status_table([("24", "", "Up")])
         )
         self.session.read_poe.return_value = (
             "Status and Configuration Information for port 24\nPower Enable : Yes\n"
@@ -418,6 +422,7 @@ class OperationsTests(unittest.TestCase):
         )
         self.assertIn("sample-ap", row["ap_names"])
         self.assertIn("poe_off", row["eligible_operations"])
+        self.assertEqual(row["link_status"], "Up")
         self.assertIsNotNone(self.ops.last_results[0].snapshot)
         path = self.base / self.call("ports.export")["files"][0]["id"]
         with path.open(encoding="utf-8-sig", newline="") as stream:

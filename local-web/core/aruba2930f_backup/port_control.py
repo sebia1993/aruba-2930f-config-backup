@@ -7,12 +7,14 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from itertools import pairwise
 from math import isfinite
 from pathlib import Path
 from typing import Protocol
@@ -91,7 +93,6 @@ class PortOperationResult:
 class InterfaceState:
     port_type: str
     enabled: bool
-    link_status: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,25 +115,92 @@ def _invalid_status(message: str) -> CollectionFailure:
 
 
 def parse_interface_status(output: str, interface: str) -> InterfaceState:
-    """Parse one exact row of the standard 2930F `show interfaces brief` table."""
+    """Read only Type and administrative Enabled from the brief table."""
 
     validate_interface(interface)
     if not re.search(r"\bPort\s+Type\s*\|\s*Alert\s+Enabled\s+Status\b", output):
         raise _invalid_status("포트 상태 표의 열을 확인하지 못했습니다. 변경을 중단합니다.")
-    candidates = re.findall(rf"(?m)^[ \t]*{re.escape(interface)}[ \t]+[^\n]*", output)
+    port = re.escape(interface) + r"(?:-Trk[1-9][0-9]*)?"
+    candidates = re.findall(rf"(?im)^[ \t]*{port}[ \t]+[^\n]*", output)
     if len(candidates) != 1:
         raise _invalid_status(
             "입력한 인터페이스를 장비의 포트 목록에서 유일하게 확인하지 못했습니다."
         )
     match = re.fullmatch(
-        rf"[ \t]*{re.escape(interface)}[ \t]+(\S+)[ \t]+\|[ \t]+"
-        r"(?:Yes|No)[ \t]+(Yes|No)[ \t]+(Up|Down)(?:[ \t]+[^\n]*)?",
+        rf"[ \t]*{port}[ \t]+(\S+)[ \t]+\|[ \t]+"
+        r"(?:Yes|No)[ \t]+(Yes|No)(?:[ \t]+[^\n]*)?",
         candidates[0].rstrip(),
         flags=re.IGNORECASE,
     )
     if match is None:
-        raise _invalid_status("포트 사용 설정과 물리 링크 상태를 해석하지 못했습니다.")
-    return InterfaceState(match[1], match[2].casefold() == "yes", match[3].title())
+        raise _invalid_status("포트 유형과 관리 설정을 해석하지 못했습니다.")
+    return InterfaceState(match[1], match[2].casefold() == "yes")
+
+
+UNKNOWN_LINK = "확인 불가"
+_STATUS_COLUMNS = ["port", "name", "status", "config-mode", "speed", "type", "tagged", "untagged"]
+
+
+def _terminal_cells(line: str) -> str:
+    """Represent the terminal width of non-ASCII names without creating ASCII status tokens."""
+    cells: list[str] = []
+    for char in line:
+        if unicodedata.combining(char):
+            if cells:
+                cells[-1] = "?"
+        elif unicodedata.east_asian_width(char) in {"W", "F"}:
+            cells.extend("??")
+        else:
+            cells.append(char)
+    return "".join(cells)
+
+
+def parse_interface_links(output: str) -> dict[str, str]:
+    """Read only the Port and Status cells of an unambiguous AOS-S status table."""
+    lines = output.expandtabs().splitlines()
+    headers = [i for i, line in enumerate(lines) if line.lower().split() == _STATUS_COLUMNS]
+    if len(headers) != 1 or headers[0] + 1 >= len(lines):
+        return {}
+    header = headers[0]
+    ruler = lines[header + 1]
+    spans = list(re.finditer(r"-+", ruler))
+    if len(spans) != len(_STATUS_COLUMNS) or not re.fullmatch(r"[ -]+", ruler):
+        return {}
+    if any(
+        lines[header][span.start() : span.end()].strip().lower() != label
+        for span, label in zip(spans, _STATUS_COLUMNS, strict=True)
+    ):
+        return {}
+
+    port_span, status_span = spans[0], spans[2]
+    gaps = [slice(left.end(), right.start()) for left, right in pairwise(spans)]
+    config = slice(spans[3].start(), spans[3].end())
+    status_cell = slice(status_span.start(), status_span.end())
+    seen: set[str] = set()
+    links: dict[str, str] = {}
+    for line in lines[header + 2 :]:
+        port = line[port_span.start() : port_span.end()].strip()
+        match = re.fullmatch(r"([1-9][0-9]*(?:/[1-9][0-9]*)?)(?:-Trk[1-9][0-9]*)?", port, re.I)
+        if not match or line[: port_span.start()].strip():
+            continue
+        interface = match[1]
+        if interface in seen:
+            links.pop(interface, None)
+            continue
+        seen.add(interface)
+        # Firmware can pad a name by character count or by terminal cell width.
+        # Only accept an aligned interpretation; conflicting readings are unknown.
+        layouts = (line,) if line.isascii() else (line, _terminal_cells(line))
+        readings = {
+            layout[status_cell].strip().lower()
+            for layout in layouts
+            if layout[config].strip() and not any(layout[gap].strip() for gap in gaps)
+        }
+        if readings == {"up"}:
+            links[interface] = "Up"
+        elif readings == {"down"}:
+            links[interface] = "Down"
+    return links
 
 
 def parse_poe_status(output: str, interface: str) -> PoEState:
@@ -206,6 +274,8 @@ class PortSession(Protocol):
     def get_prompt(self) -> str: ...
     def send_show(self, command: str) -> str: ...
     def read_interfaces(self) -> str: ...
+
+    def read_interface_status(self) -> str: ...
     def read_poe(self, interface: str) -> str: ...
     def read_lldp(self, interface: str) -> str: ...
     def change_port(self, interface: str, action: str) -> None: ...
@@ -533,13 +603,19 @@ class PortControlService:
         identity = validate_device_identity(version, modules, hostname=resolved.hostname)
         port = parse_interface_status(session.read_interfaces(), interface)
         poe = PortControlService._read_poe(session, interface, identity, port)
+        try:
+            links = parse_interface_links(session.read_interface_status())
+        except CollectionFailure as exc:
+            if exc.code is not ErrorCode.COMMAND_REJECTED:
+                raise
+            links = {}
         return PortSnapshot(
             target,
             interface,
             identity.hostname or "확인 불가",
             identity.model,
             port.enabled,
-            port.link_status,
+            links.get(interface, UNKNOWN_LINK),
             poe.enabled,
             poe.status,
             poe.watts,

@@ -63,3 +63,9 @@ class PoEQueryResult:
     assessment: PowerAssessment | None = None
     poe_finished_at: str = ""
     complete: bool = True
+    # A physical-link observation remains valid even when there is no PoE snapshot.
+    link_status: str = ""
+
+    @property
+    def observed_link(self) -> str:
+        return self.link_status or (self.snapshot.link_status if self.snapshot else "")

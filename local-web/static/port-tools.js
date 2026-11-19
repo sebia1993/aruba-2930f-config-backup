@@ -226,7 +226,7 @@
     const title = elem('strong',(row?.hostname || g.label || g.ip)+' · '+address(g)+' / '+port);
     const facts = [];
     if (view.power.watts != null) facts.push(view.power.watts+' W');
-    if (row?.link_status) facts.push(row.link_status);
+    if (row) facts.push('링크 ' + PowerMatrix.linkLabel(row.link_status));
     if (view.power.apName) facts.push(view.power.apName);
     if (row?.observed_at) facts.push(row.observed_at);
     const checkLabel = elem('label','', 'inline-check'), check = elem('input'); check.type='checkbox';

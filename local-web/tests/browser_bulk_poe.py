@@ -2,7 +2,7 @@
 
 from browser_qa import run_browser_case
 from playwright.sync_api import expect
-from verify_http_ssh import MonitorFixture
+from verify_http_ssh import MonitorFixture, interface_status_table
 
 
 class RangeSwitch(MonitorFixture):
@@ -19,6 +19,8 @@ class RangeSwitch(MonitorFixture):
         if command == "show interfaces brief":
             lines = ["Port Type | Alert Enabled Status Mode"]
             lines.extend(f"{p} 100/1000T | No Yes Down Auto" for p in self.power)
+        elif command == "show interfaces status":
+            lines = interface_status_table((p, "", "Down") for p in self.power)
         elif command.startswith("show power-over-ethernet ") and port in self.power:
             enabled = self.power[port]
             if port == self.stale_port:
