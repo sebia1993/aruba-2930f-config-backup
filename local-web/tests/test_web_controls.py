@@ -376,8 +376,7 @@ class WebControlTests(unittest.TestCase):
             ),
         )
         rows = [
-            {"ip": self.target.ip, "ssh_port": self.target.port, "interface": p}
-            for p in ["1", "2"]
+            {"ip": self.target.ip, "ssh_port": self.target.port, "interface": p} for p in ["1", "2"]
         ]
         self.state._query = Mock(return_value={"rows": rows})
         result = self.quick(["1", "2"], direct=True)
