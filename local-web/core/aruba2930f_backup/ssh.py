@@ -289,6 +289,7 @@ class NetmikoSSHSession:
         *,
         cancel_event: CancellationSignal | None,
         command: str | None = None,
+        check_rejection_for: str | None = None,
     ) -> str:
         connection = self._require_connection()
         deadline = self._clock() + self._options.command_timeout_seconds
@@ -307,6 +308,14 @@ class NetmikoSSHSession:
                     max_bytes=self._options.max_output_bytes,
                     max_lines=self._options.max_output_lines,
                 )
+                if check_rejection_for is not None and ("\n" in chunk or "\r" in chunk):
+                    # An explicit rejection survives a lost prompt or connection.
+                    # Ignore the unfinished line, which may change with the next chunk.
+                    complete, _, _ = _clean_channel_text(output).rpartition("\n")
+                    validate_cli_response(
+                        check_rejection_for,
+                        _strip_command_and_prompt(complete, check_rejection_for, prompt),
+                    )
             elif output:
                 # Retain raw text between reads: CRLF, ANSI escapes and backspace
                 # sequences may cross arbitrary channel boundaries (including idle).

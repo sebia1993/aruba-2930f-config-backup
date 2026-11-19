@@ -93,7 +93,7 @@
       run('control.import-history',{name:selected.name,text},r => {
         $('controlHistoryTable').replaceChildren(elem('b',selected.name),simpleTable([
           ['시각',x=>dateText(x.time)],['IP','ip'],['SSH 포트','sshPort'],['포트','port'],['호스트','hostname'],
-          ['작업',x=>operationNames[x.operation] || x.operation],['결과',x=>stateNames[x.status] || x.status]
+          ['작업',x=>operationNames[x.operation] || x.operation],['결과',x=>stateNames[x.status] || x.status],['상세','message',true]
         ],r.rows || []));
         explainUnknown(r.rows || []);
       });

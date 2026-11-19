@@ -10,11 +10,11 @@ from __future__ import annotations
 import re
 
 from .models import CollectionFailure, ErrorCode
+from .port_control import PreMutationRejected
 from .ssh import NetmikoSSHSession, _mapped_failure, _strip_command_and_prompt
 from .validation import validate_cli_response
 
 _INTERFACE_RE = re.compile(r"[1-9][0-9]*(?:/[1-9][0-9]*)?", re.ASCII)
-_CONTROL_PROMPT_RE = re.compile(r"[A-Za-z0-9_.+-]{1,255}#", re.ASCII)
 _OPERATIONS = {
     "poe_off": "no interface {port} power-over-ethernet",
     "poe_on": "interface {port} power-over-ethernet",
@@ -62,16 +62,25 @@ class PortControlSSHSession(NetmikoSSHSession):
         """
 
         command = port_change_command(interface, action)
-        prompt = self._require_prepared()
-        if _CONTROL_PROMPT_RE.fullmatch(prompt) is None:
-            raise CollectionFailure(
-                ErrorCode.PROMPT_PARSE_FAILED,
-                "포트 제어에 필요한 관리자 EXEC 프롬프트를 확인하지 못했습니다.",
-            )
-        config_prompt = f"{prompt[:-1]}(config)#"
         try:
+            # The cached prompt has passed the same whole-line EXEC validation as
+            # read-only commands. It may contain spaces or a display wrapper.
+            prompt = self._require_prepared()
+            if not prompt.endswith("#"):
+                raise CollectionFailure(
+                    ErrorCode.PROMPT_PARSE_FAILED, "관리자 EXEC 프롬프트를 확인하지 못했습니다."
+                )
+            config_prompt = f"{prompt[:-1]}(config)#"
             self._exchange("configure terminal", config_prompt)
-            self._exchange(command, config_prompt)
+        except Exception as exc:
+            failure = _mapped_failure(exc, during="command")
+            self.close()
+            raise PreMutationRejected(
+                failure.code,
+                f"설정 모드 진입을 확인하지 못해 포트 변경 명령을 보내지 않았습니다. ({failure.code.value})",
+            ) from exc
+        try:
+            self._exchange(command, config_prompt, check_rejection_before_prompt=True)
             self._exchange("end", prompt)
             self._prompt = prompt
         except Exception as exc:
@@ -111,14 +120,20 @@ class PortControlSSHSession(NetmikoSSHSession):
             )
         return self._require_cached_prompt()
 
-    def _exchange(self, command: str, expected_prompt: str) -> str:
+    def _exchange(
+        self, command: str, expected_prompt: str, *, check_rejection_before_prompt: bool = False
+    ) -> str:
         """Private primitive; public methods generate every command internally."""
 
         connection = self._require_connection()
         if hasattr(connection, "clear_buffer"):
             connection.clear_buffer()
         connection.write_channel(connection.normalize_cmd(command))
-        raw = self._read_until_prompt(expected_prompt, cancel_event=None)
+        raw = self._read_until_prompt(
+            expected_prompt,
+            cancel_event=None,
+            check_rejection_for=command if check_rejection_before_prompt else None,
+        )
         output = _strip_command_and_prompt(raw, command, expected_prompt)
         validate_cli_response(command, output)
         return output

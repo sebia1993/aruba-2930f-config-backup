@@ -257,6 +257,43 @@ def _same_settings_for_action(
     )
 
 
+def _check_readback(
+    before: PortSnapshot, after: PortSnapshot, action: PortAction
+) -> tuple[bool, str]:
+    """Return whether a second read is safe, and any disagreement in this observation."""
+    if (
+        before.target != after.target
+        or before.interface != after.interface
+        or before.model != after.model
+        or before.fingerprint != after.fingerprint
+        or not _hostname_matches_for_action(before, after, action)
+    ):
+        return False, "조회한 장비 또는 포트 식별 정보가 변경 전과 다릅니다."
+    if action.is_poe:
+        if before.enabled != after.enabled:
+            return False, "PoE 이외에 포트 사용 설정도 바뀌었습니다."
+        actual = after.poe_enabled
+        label = "Power Enable"
+    else:
+        if before.poe_enabled != after.poe_enabled:
+            return False, "포트 사용 설정 이외에 PoE 사용 설정도 바뀌었습니다."
+        actual = after.enabled
+        label = "Enabled"
+    if actual is action.desired_enabled:
+        return True, ""
+    observed = "확인 불가" if actual is None else ("Yes" if actual else "No")
+    requested = "Yes" if action.desired_enabled else "No"
+    return True, f"{label} 관측값은 {observed}이며 요청값은 {requested}입니다."
+
+
+def _failure_code(exc: Exception) -> ErrorCode:
+    if isinstance(exc, CollectionFailure):
+        return exc.code
+    return (
+        ErrorCode.COMMAND_TIMEOUT if isinstance(exc, TimeoutError) else ErrorCode.UNEXPECTED_ERROR
+    )
+
+
 def _state_record(snapshot: PortSnapshot | None) -> dict[str, object] | None:
     if snapshot is None:
         return None
@@ -356,6 +393,7 @@ class PortControlService:
         *,
         confirmation: str,
         expected_lldp_identity: tuple[str, str] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> PortOperationResult:
         with self._exclusive():
             approved, self._snapshot = self._snapshot, None
@@ -424,8 +462,12 @@ class PortControlService:
                         )
                 # From this line onward, pending audit or switch command
                 # failures are uncertain and must never be auto-replayed.
+                if cancel_event is not None and cancel_event.is_set():
+                    raise PreMutationRejected(
+                        ErrorCode.CANCELLED, "포트 변경 명령 전 중지했습니다."
+                    )
                 mutation_started = True
-                return self._apply_once(session, before, action)
+                return self._apply_once(session, before, action, credentials, cancel_event)
             except CollectionFailure as exc:
                 if mutation_started or isinstance(exc, PreMutationRejected):
                     raise
@@ -531,11 +573,40 @@ class PortControlService:
             return PoEState(None, "PoE 미지원", None)
         return parse_poe_status(output, interface)
 
+    def _read_again(
+        self, before: PortSnapshot, credentials: Credentials, cancel: threading.Event | None
+    ) -> PortSnapshot:
+        """Inspect via a fresh pinned connection without creating a new write authorization."""
+
+        def check_cancel() -> None:
+            if cancel is not None and cancel.is_set():
+                raise CollectionFailure(ErrorCode.CANCELLED, "읽기 전용 재조회를 중지했습니다.")
+
+        check_cancel()
+        observation = self._trusted_key(before.target, None)
+        if observation.fingerprint != before.fingerprint:
+            raise CollectionFailure(ErrorCode.HOST_KEY_CHANGED, "변경 전 SSH 지문과 다릅니다.")
+        check_cancel()
+        session = self._factory(before.target, credentials, self._options, self.host_key_store)
+        try:
+            self._prepare(session)
+            check_cancel()
+            after = self._read_snapshot(
+                session, before.target, before.interface, observation.fingerprint
+            )
+            check_cancel()
+            return after
+        finally:
+            with suppress(Exception):
+                session.close()
+
     def _apply_once(
         self,
         session: PortSession,
         before: PortSnapshot,
         action: PortAction,
+        credentials: Credentials,
+        cancel: threading.Event | None,
     ) -> PortOperationResult:
         current = before.poe_enabled if action.is_poe else before.enabled
         audit_path = (
@@ -554,40 +625,63 @@ class PortControlService:
         # means no mutation was transmitted.
         self._audit(audit_path, action, before, None, "pending")
         after: PortSnapshot | None = None
-        status = "unverified"
-        message = "변경 결과 확인 불가. 명령을 재전송하지 않았습니다. 현재 상태를 다시 조회하세요."
+        acknowledged = False
         try:
             session.change_port(before.interface, action.value)
+            acknowledged = True
             after = self._read_snapshot(
                 session, before.target, before.interface, before.fingerprint
             )
-            actual = after.poe_enabled if action.is_poe else after.enabled
-            same_identity = (
-                before.target,
-                before.interface,
-                before.model,
-                before.fingerprint,
-            ) == (after.target, after.interface, after.model, after.fingerprint) and (
-                _hostname_matches_for_action(before, after, action)
-            )
-            untouched = (
-                after.enabled == before.enabled
-                if action.is_poe
-                else after.poe_enabled == before.poe_enabled
-            )
-            if same_identity and untouched and actual is action.desired_enabled:
-                status = "verified"
-                message = (
-                    "PoE 사용 설정 변경을 확인했습니다. AP 통신 복구 여부는 별도 확인이 필요합니다."
-                    if action.is_poe
-                    else "포트 사용 설정 변경을 확인했습니다. 물리 링크 상태는 별도로 표시합니다."
+            can_recheck, reason = _check_readback(before, after, action)
+            if not can_recheck:
+                after = None
+        except Exception as exc:
+            if not acknowledged and isinstance(exc, PreMutationRejected):
+                self._audit(
+                    audit_path, action, before, None, "preflight_failed", message=exc.safe_message
                 )
-        except Exception:
-            # A write may already have taken effect. Never label this a
-            # pre-change failure and never retry or issue an implicit rollback.
-            pass
+                raise
+            code = _failure_code(exc)
+            stage = "변경 직후 상태 조회" if acknowledged else "포트 변경 명령 응답"
+            reason = f"{stage} 실패 ({code.value})."
+            # Never infer a successful write from an explicit rejection or a different identity.
+            can_recheck = code not in {
+                ErrorCode.HOST_KEY_CHANGED,
+                ErrorCode.HOST_KEY_REJECTED,
+                ErrorCode.MODEL_UNSUPPORTED,
+                ErrorCode.CANCELLED,
+            } and not (not acknowledged and code is ErrorCode.COMMAND_REJECTED)
+
+        recovered = False
+        if reason and can_recheck and action is PortAction.POE_ON:
+            with suppress(Exception):
+                session.close()
+            try:
+                reread = self._read_again(before, credentials, cancel)
+                consistent, disagreement = _check_readback(before, reread, action)
+                after = reread if consistent else None
+                if disagreement:
+                    reason += f" 읽기 전용 재조회 결과: {disagreement}"
+                else:
+                    reason = ""
+                    recovered = True
+            except Exception as exc:
+                reason += f" 읽기 전용 재조회 실패 ({_failure_code(exc).value})."
+        if reason:
+            status = "unverified"
+            message = f"{reason} 명령을 재전송하지 않았습니다. 현재 상태를 다시 조회하세요."
+        elif recovered:
+            status = "verified"
+            message = "읽기 전용 재조회에서 PoE ON(Power Enable: Yes)을 확인했습니다."
+        else:
+            status = "verified"
+            message = (
+                "PoE 사용 설정 변경을 확인했습니다. AP 통신 복구 여부는 별도 확인이 필요합니다."
+                if action.is_poe
+                else "포트 사용 설정 변경을 확인했습니다. 물리 링크 상태는 별도로 표시합니다."
+            )
         try:
-            self._audit(audit_path, action, before, after, status)
+            self._audit(audit_path, action, before, after, status, message=message)
         except CollectionFailure:
             message += " 작업 결과 이력 저장에 실패했습니다. 이전 실행 예정 기록과 현재 장비 상태를 확인하세요."
         return PortOperationResult(status, message, before, after, audit_path)
@@ -599,6 +693,8 @@ class PortControlService:
         before: PortSnapshot,
         after: PortSnapshot | None,
         status: str,
+        *,
+        message: str = "",
     ) -> None:
         record = {
             "time": datetime.now(UTC).isoformat(),
@@ -610,6 +706,8 @@ class PortControlService:
             "before": _state_record(before),
             "after": _state_record(after),
         }
+        if message:
+            record["message"] = message
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8", newline="\n") as handle:

@@ -232,7 +232,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     expect(page.locator("#statusText")).to_contain_text("종료했습니다.")
 
 
-def run_browser_case(case):
+def run_browser_case(case, *, switch_factory=MonitorFixture):
     root = Path(os.environ.get("ARUBA_WEB_ROOT", Path(__file__).resolve().parents[1]))
     python = os.environ.get("ARUBA_WEB_PYTHON", sys.executable)
     chrome = os.environ.get(
@@ -245,7 +245,7 @@ def run_browser_case(case):
         shots.mkdir(parents=True, exist_ok=True)
     with (
         tempfile.TemporaryDirectory() as temp,
-        MonitorFixture() as switch,
+        switch_factory() as switch,
         MonitorFixture() as second_switch,
         sync_playwright() as playwright,
     ):
