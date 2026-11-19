@@ -200,9 +200,5 @@ dialog::backdrop { background: #030c17bc; }
 
 .port-workspace-bar { margin-bottom: 12px; }
 .port-workspace-bar button[aria-pressed="true"] { border-color: var(--teal); color: var(--teal); }
-#matrixViewer { border: 1px solid var(--line); border-radius: 12px; }
-#portMonitor,#liveScope { margin-bottom: 16px; }
-#portLiveControl .panelbody { grid-template-columns: minmax(0,1fr); }
 .control-target { margin: 0; color: var(--teal); overflow-wrap: anywhere; }
-#controlHeading { scroll-margin-block-start: 16px; }
 #portMonitor:not(.has-data) .viewer { height: var(--empty-view-height, 100px); min-height: 0; }

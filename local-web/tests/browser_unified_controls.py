@@ -13,7 +13,7 @@ from browser_qa import (
 )
 from playwright.sync_api import expect
 
-WORKSPACE_SIZES = ((1366, 768), (1280, 720), (390, 844))
+WORKSPACE_SIZES = ((1366, 768), (1280, 720), (390, 844), (320, 568))
 
 
 def resize_workspace(page, width, height):
@@ -44,16 +44,17 @@ def hit_point(locator):
     return point
 
 
-def verify_viewport_controls(page, view, endpoint):
+def verify_viewport_controls(page, view, endpoint, other_endpoint):
     # Locator.click() and .check() can silently scroll both frame and outer page.
     # Use viewport hit tests and physical clicks to exercise the no-scroll workflow.
-    panel = page.locator("#controlPanel")
-    heading = page.locator("#controlHeading")
+    card = page.get_by_role("region", name="포트 상태 매트릭스", exact=True)
+    options = card.locator("#controlPanel")
+    heading = options.locator("summary")
     search = view.locator("#search")
     tiles = view.locator("#matrix [data-port-key]")
     for width, height in WORKSPACE_SIZES:
         resize_workspace(page, width, height)
-        expect(panel).not_to_have_attribute("open", "")
+        expect(options).not_to_have_attribute("open", "")
         expect(page.locator("#queryTargets")).to_be_hidden()
         for locator in (
             page.locator("#queryPorts"),
@@ -61,29 +62,40 @@ def verify_viewport_controls(page, view, endpoint):
             *tiles.all(),
         ):
             hit_point(locator)
+        selected_tile = view.locator(f'#matrix [data-port-key="{endpoint}/1"]')
+        page.mouse.click(*hit_point(selected_tile))
+        expect(card.locator("#controlTarget")).to_contain_text(endpoint)
+        expect(card.locator("#selectedCount")).to_have_text("선택 1개")
+        for selector in ("#quickOff", "#quickOn"):
+            button = card.locator(selector)
+            expect(button).to_be_enabled()
+            hit_point(button)
+        expect(view.locator("#tbody input:checked")).to_have_count(0)
+        expect(options).not_to_have_attribute("open", "")
+
         filter_toggle = view.locator("#shortFilterToggle")
         if search.is_hidden():
             page.mouse.click(*hit_point(filter_toggle))
         page.mouse.click(*hit_point(search))
-        page.keyboard.insert_text(endpoint)
+        search.fill(other_endpoint)
         expect(tiles).to_have_count(1)
+        expect(card.locator("#quickActions")).to_be_hidden()
+        expect(card.locator("#selectedCount")).to_have_text("선택 0개")
+        search.fill(endpoint)
+        expect(tiles).to_have_count(1)
+        expect(card.locator("#quickActions")).to_be_hidden()
         checkbox = view.locator("#tbody input[data-control-key]")
-        # The matrix takes precedence over the table in the initial viewport.
         page.mouse.click(*hit_point(heading))
-        expect(panel).to_have_attribute("open", "")
-        page.mouse.click(*hit_point(page.locator("#selectVisible")))
-        expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+        expect(options).to_have_attribute("open", "")
+        card.locator("#selectVisible").click()
+        expect(card.locator("#selectedCount")).to_have_text("선택 1개")
         expect(checkbox).to_be_checked()
-        for selector in ("#selectionScope", "#refreshPorts", "#quickOn", "#quickOff"):
-            hit_point(page.locator(selector))
-        page.mouse.click(*hit_point(page.locator("#clearSelection")))
-        expect(page.locator("#selectedCount")).to_have_text("선택 0개")
+        card.locator("#clearSelection").click()
+        expect(card.locator("#selectedCount")).to_have_text("선택 0개")
         page.keyboard.press("Escape")
         expect(heading).to_be_focused()
-        expect(panel).not_to_have_attribute("open", "")
-        page.mouse.click(*hit_point(search))
-        page.keyboard.press("ControlOrMeta+a")
-        page.keyboard.press("Backspace")
+        expect(options).not_to_have_attribute("open", "")
+        search.fill("")
         expect(tiles).to_have_count(2)
         if filter_toggle.is_visible():
             filter_toggle.click()
@@ -128,7 +140,10 @@ def select_measured_port(page, matrix_view, changed, available, untouched_switch
     changed_row = matrix_view.locator(f'#tbody tr[data-port-key="{changed}/1"] input')
     other_row = matrix_view.locator(f'#tbody tr[data-port-key="{available}/1"] input')
     expect(changed_row).to_be_enabled(timeout=60000)
-    changed_row.check()
+    matrix_view.locator(f'#matrix [data-port-key="{changed}/1"]').click()
+    expect(page.locator("#matrixWorkspace #controlTarget")).to_contain_text(changed)
+    expect(changed_row).not_to_be_checked()
+    expect(other_row).not_to_be_checked()
     untouched_commands = len(untouched_switch.commands)
     with click_quick_poe(page, "poe_on", [(changed, "1")]):
         result = page.locator("#controlResult tbody tr")
@@ -153,10 +168,9 @@ def select_measured_port(page, matrix_view, changed, available, untouched_switch
     expect(other_row).to_be_enabled()
 
     matrix_view.locator(f'#matrix [data-port-key="{changed}/1"]').click()
-    matrix_view.locator("#inspectObservedPort").click()
     mode = page.locator("#controlMode")
     expect(mode).to_have_value("batch")
-    expect(changed_row).to_be_checked()
+    expect(changed_row).not_to_be_checked()
     expect(other_row).not_to_be_checked()
     expect(page.locator("#controlTarget")).to_contain_text(changed)
 
@@ -206,8 +220,7 @@ def verify_rejected_draft_and_failed_read(page, view, addresses, first, second):
     expect(rows.get_by_role("checkbox")).to_be_disabled()
     expect(page.locator("#selectedCount")).to_have_text("선택 0개")
     open_port_controls(page)
-    page.locator("#quickOn").click()
-    expect(page.locator("#statusText")).to_contain_text("포트를 체크하세요")
+    expect(page.locator("#quickOn")).to_be_hidden()
     assert len(first.commands) == baseline[0]
     assert len(second.commands) > baseline[1]
     assert "configure terminal" not in second.commands[baseline[1] :]
@@ -249,8 +262,12 @@ def exercise(page, url, switch, second, shots, _backup):
     ):
         expect(workspace.locator(selector)).to_have_count(0)
     expect(page.locator("#portControlTab")).to_have_count(0)
-    panel = page.locator("#controlPanel")
-    expect(panel).to_be_visible()
+    card = workspace.get_by_role("region", name="포트 상태 매트릭스", exact=True)
+    expect(card.locator("#matrixViewer")).to_have_count(1)
+    expect(card.locator("#portActionStrip, #matrixFeedback")).to_have_count(2)
+    expect(workspace.get_by_text("포트 제어", exact=True)).to_have_count(0)
+    panel = card.locator("#controlPanel")
+    expect(panel.locator("summary")).to_have_text("제어 옵션")
     expect(page.locator("#singleIP")).to_be_hidden()
     expect(page.locator("#queryPorts")).to_be_enabled()
     for width, height in WORKSPACE_SIZES:
@@ -258,20 +275,25 @@ def exercise(page, url, switch, second, shots, _backup):
         for selector in ("#queryTargets", "#queryPorts", "#controlHeading"):
             hit_point(page.locator(selector))
     resize_workspace(page, 1440, 960)
-    panel.locator(":scope > summary").click()
-    expect(page.locator("#singleIP")).to_be_editable()
-    expect(page.locator("#singlePort")).to_be_editable()
-    panel.locator(":scope > summary").click()
-    expect(page.locator("#singleIP")).to_be_hidden()
+    addresses = [f"127.0.0.1:{fixture.port}" for fixture in (switch, second)]
     matrix_view = page.frame_locator("#matrixViewer")
     expect(matrix_view.locator("#matrix [data-port-key]")).to_have_count(0)
-    addresses = [f"127.0.0.1:{fixture.port}" for fixture in (switch, second)]
+    # Direct target entry remains usable before a matrix query has collected any ports.
+    panel.locator("summary").click()
+    panel.locator("#singleIP").fill(addresses[1])
+    panel.locator("#singlePort").fill("1")
+    panel.locator("#preview").click()
+    enter_ssh_credentials(page, switch)
+    expect(page.locator("#reviewBody tbody tr")).to_contain_text(addresses[1], timeout=60000)
+    page.locator("#review").get_by_role("button", name="닫기").click()
+    assert "configure terminal" not in second.commands and not switch.commands
+    panel.locator("summary").click()
+    expect(page.locator("#singleIP")).to_be_hidden()
     page.locator("#queryTargets").fill("\n".join(f"{address} 1" for address in addresses))
     page.get_by_role("button", name="포트 조회", exact=True).click()
-    enter_ssh_credentials(page, switch)
     tiles = matrix_view.locator("#matrix [data-port-key]")
     expect(tiles).to_have_count(2, timeout=90000)
-    verify_viewport_controls(page, matrix_view, addresses[0])
+    verify_viewport_controls(page, matrix_view, *addresses)
     expect(combined).to_have_attribute("aria-pressed", "true")
     expect(page.locator("#batchControls")).to_be_hidden()
     checkboxes = matrix_view.locator("#tbody input[data-control-key]")
@@ -288,6 +310,32 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(matrix_view.locator("#extraView")).to_be_visible()
     expect(page.locator("#queryForm")).to_be_visible()
     page.locator("#portMonitorTab").click()
+
+    # Phone-sized users can explicitly pick and unpick a batch without opening the table.
+    resize_workspace(page, 390, 844)
+    multi = matrix_view.get_by_role("button", name="여러 포트 선택", exact=True)
+    multi.click()
+    expect(multi).to_have_attribute("aria-pressed", "true")
+    first_tile = matrix_view.locator(f'#matrix [data-port-key="{addresses[0]}/1"]')
+    other_tile = matrix_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]')
+    first_tile.click()
+    other_tile.click()
+    expect(card.locator("#selectedCount")).to_have_text("선택 2개")
+    expect(matrix_view.locator("#tbody input:checked")).to_have_count(2)
+    first_tile.click()
+    multi.click()
+    expect(multi).to_have_attribute("aria-pressed", "false")
+    expect(card.locator("#controlTarget")).to_contain_text(addresses[1])
+    first_tile.click()
+    expect(card.locator("#controlTarget")).to_contain_text(addresses[1])
+    expect(card.locator("#selectedCount")).to_have_text("선택 1개")
+    open_port_controls(page)
+    card.locator("#clearSelection").click()
+    expect(card.locator("#selectedCount")).to_have_text("선택 0개")
+    expect(card.locator("#quickActions")).to_be_hidden()
+    page.keyboard.press("Escape")
+    resize_workspace(page, 1440, 960)
+    assert all("configure terminal" not in fixture.commands for fixture in (switch, second))
 
     # The device selector distinguishes two switches with the same IP and hostname.
     matrix_view.locator("#device").select_option(addresses[1])
@@ -316,11 +364,11 @@ def exercise(page, url, switch, second, shots, _backup):
 
     # The two ports have the same IP, interface, hostname and AP name; only SSH ports differ.
     matrix_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]').click()
-    matrix_view.locator("#inspectObservedPort").click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+    expect(page.locator("#controlTarget")).to_contain_text(addresses[1])
     expect(
         matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')
-    ).to_be_checked()
+    ).not_to_be_checked()
     expect(
         matrix_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"] input')
     ).not_to_be_checked()
@@ -345,6 +393,10 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(matrix_view.locator("#search")).to_have_value(addresses[0])
     matrix_view.locator("#search").fill("")
     second_checkbox = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')
+    expect(second_checkbox).not_to_be_checked()
+    # Looking at the other tile must not replace or enlarge an explicit selection.
+    matrix_view.locator(f'#matrix [data-port-key="{addresses[1]}/1"]').click()
+    expect(page.locator("#controlTarget")).to_contain_text(addresses[0])
     expect(second_checkbox).not_to_be_checked()
     second_checkbox.check()
     expect(page.locator("#selectedCount")).to_have_text("선택 2개")
@@ -469,9 +521,10 @@ def exercise(page, url, switch, second, shots, _backup):
     start = len(switch.commands)
     edit_query_targets(page).fill(addresses[0] + " 1")
     expect(tiles).to_have_count(2)
+    expect(page.locator("#controlTarget")).to_contain_text(addresses[1])
     expect(
         matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"] input')
-    ).to_be_checked()
+    ).not_to_be_checked()
     with page.expect_request(
         lambda req: req.method == "POST" and req.url.endswith("/api/jobs")
     ) as query:

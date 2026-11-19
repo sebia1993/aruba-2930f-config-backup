@@ -47,7 +47,7 @@ def enter_ssh_credentials(page, switch, *, touch=False):
 
 
 def expect_power_result(page, endpoint, before, after, *, port="1", delta=None):
-    table = page.locator("#controlResult table")
+    table = page.locator("#matrixWorkspace #controlResult table")
     row = table.locator("tbody tr").filter(has=page.get_by_text(endpoint, exact=True))
     row = row.filter(has=page.get_by_role("cell", name=port, exact=True))
     expect(row).to_have_count(1, timeout=90000)
@@ -86,7 +86,8 @@ def click_quick_poe(page, operation, targets, *, touch=False):
     try:
         name = "PoE ON 즉시 실행" if operation == "poe_on" else "PoE OFF 즉시 실행"
         with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")):
-            button = page.get_by_role("button", name=name, exact=True)
+            card = page.get_by_role("region", name="포트 상태 매트릭스", exact=True)
+            button = card.get_by_role("button", name=name, exact=True)
             if touch:
                 button.tap()
             else:

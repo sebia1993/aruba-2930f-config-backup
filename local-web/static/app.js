@@ -10,7 +10,7 @@ const jobNames = {
   'backup.run': '구성 백업', 'control.preview': '포트 제어 검토', 'control.apply': '포트 명령 실행'
 };
 const stateNames = {ok:'성공',success:'성공',failed:'실패',cancelled:'취소',unsupported:'미지원',unknown:'미등록',changed:'키 변경',trusted:'등록됨',rejected:'거부',retry_exhausted:'접속 재시도 소진',verified:'검증 완료',unchanged:'이미 요청 상태',preflight_failed:'사전 검증 실패',unverified:'검증 미완료',paused:'일시 중지',skipped:'건너뜀',blocked:'실행 차단',result_unknown:'결과 미기록'};
-const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), logs:[], chosenLog:null, logLoaded:false, liveId:null, inspectedRow:null };
+const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), tileRow:null, logs:[], chosenLog:null, logLoaded:false, liveId:null, inspectedRow:null };
 const dialog = $('review');
 const queryCredentials = $('queryCredentials');
 Object.assign(jobNames, {'targets.preview':'대상 목록 검토','targets.apply':'대상 목록 적용','control.inspect':'단일 포트 상태 조회','control.quick':'빠른 제어 검토','control.quick-execute':'빠른 PoE 제어','backup.pick-directory':'백업 폴더 선택'});
@@ -66,6 +66,7 @@ function sync() {
   $('stopJob').hidden = !ui.jobId;
   $('dismissStatus').hidden = ui.busy;
   $('shutdown').disabled = ui.busy || !ui.token;
+  updateControlTarget();
 }
 async function api(path, data) {
   const options = {credentials:'same-origin', cache:'no-store'};
@@ -222,8 +223,21 @@ function controlContextMatches(inspected) {
 }
 function controlChoice() {
   const mode=$('controlMode').value;
-  const targets=mode==='single' ? [$('singleIP').value.trim(),$('singlePort').value.trim()] : Array.from(ui.selected).sort();
+  const targets=mode==='single' ? [$('singleIP').value.trim(),$('singlePort').value.trim()] : matrixControlTargets().map(controlPortKey).sort();
   return JSON.stringify([mode,$('operation').value,targets]);
+}
+function matrixControlTargets() {
+  const viewer=monitor();
+  if (ui.liveId) {
+    const checked=viewer?.batch();
+    if (!checked || checked.liveId!==ui.liveId || checked.rows.length!==ui.selected.size ||
+        checked.rows.some(target=>!ui.selected.has(controlPortKey(target)))) return [];
+  }
+  if (ui.selected.size) return window.portTools?.checkedTargets() || [];
+  const tile=ui.tileRow;
+  if (!tile || tile!==viewer?.selected() || viewer.source().multiSelect) return [];
+  const record=tile.raw;
+  return record.status==='ok' && !record.controlUsed && !record.refreshInvalidated ? [targetFromRow(record)] : [];
 }
 function showChangedControlChoice() {
   $('controlResult').replaceChildren(elem('p','검토 중 제어 대상 또는 작업이 변경되었습니다. 현재 선택으로 다시 검토하세요.'));
@@ -286,42 +300,27 @@ $('portLiveControl').addEventListener('keydown',event=>{
     $('controlHeading').focus({preventScroll:true});
   }
 });
-function focusControls() {
-  $('controlPanel').open=true;
-  $('controlHeading').focus({preventScroll:true});
-  $('controlHeading').scrollIntoView({block:'nearest'});
-}
-function selectObservedPort(message) {
+function selectObservedPort(message,inspect) {
   if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
   const row=monitor()?.selected();
-  if (!row || row.ip!==message.ip || row.port!==message.port || row.sshPort!==message.sshPort) return;
-  if (!ui.session.active) {
-    withSshAccount(()=>{ if (row===monitor()?.selected()) selectObservedPort(message); });
-    return;
-  }
-  const source=monitor().source();
-  if (!ui.liveId || source.liveId!==ui.liveId) return;
-  const record=ui.rows.find(
-    item=>item.ip===row.ip && Number(item.ssh_port || 22)===row.sshPort && String(item.interface)===row.port
-  );
-  if (record && record.status==='ok' && !record.controlUsed && !record.refreshInvalidated) {
-    clearInspection();
-    ui.selected=new Set([portKey(record)]);
-    $('controlMode').value='batch'; $('controlMode').onchange();
-    renderPorts(); focusControls();
-    return;
-  }
+  if (!row || row.key!==message.key || !ui.liveId || message.liveId!==ui.liveId || monitor().source().liveId!==ui.liveId) return;
+  clearInspection();
+  ui.tileRow=ui.selected.size ? null : row;
+  $('controlMode').value='batch'; $('controlMode').onchange();
+  if (!inspect || ui.selected.size) return;
+  if (!ui.session.active) return withSshAccount(()=>selectObservedPort(message,true));
   const address=row.sshPort===22?row.ip:row.ip+':'+row.sshPort;
   run('control.inspect',{targets:[{ip:row.ip,sshPort:row.sshPort,port:row.port}]},(result,cancelled)=>{
-    if (cancelled || !result.snapshot || row!==monitor()?.selected() || $('portMonitor').closest('[data-page]').hidden) return;
+    if (cancelled || !result.snapshot || ui.selected.size || ui.tileRow!==row || row!==monitor()?.selected() || $('portMonitor').closest('[data-page]').hidden) return;
     ui.inspectedRow=row;
     $('controlMode').value='single'; $('controlMode').onchange();
     $('singleIP').value=address; $('singlePort').value=row.port;
     window.controlTools.showInspection(result.snapshot);
-    updatePortActions(); focusControls();
+    $('controlPanel').open=true;
+    updatePortActions();
   });
 }
-function selectObservedBatch(openControls) {
+function selectObservedBatch() {
   if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
   const batch=monitor()?.batch();
   if (!batch?.liveId || batch.liveId!==ui.liveId || !Array.isArray(batch.rows)) return;
@@ -329,10 +328,10 @@ function selectObservedBatch(openControls) {
   const keys=batch.rows.map(row=>portKey({ip:row.ip,ssh_port:row.sshPort,interface:row.port}));
   if (keys.some(key=>!available.has(key))) { syncMonitorChecks(); return; }
   clearInspection();
+  ui.tileRow=null;
   ui.selected=new Set(keys);
   $('controlMode').value='batch'; $('controlMode').onchange();
   renderPorts();
-  if (openControls && keys.length) focusControls();
 }
 function postMatrix(keepView=false) {
   const viewer=monitor(), id=ui.liveId;
@@ -343,11 +342,13 @@ window.addEventListener('message',e=>{
   if (e.source === $('logViewer').contentWindow && e.data.type === 'aruba-log-loaded' && e.data.ok === false)
     notify('로그 수집 후 분석 결과: ' + e.data.message,true);
   if (e.source === $('matrixViewer').contentWindow) {
-    if (e.data.type==='aruba-observed-port') selectObservedPort(e.data);
-    if (e.data.type==='aruba-observed-batch' || e.data.type==='aruba-port-checks')
-      selectObservedBatch(e.data.type==='aruba-observed-batch');
-    if (e.data.type==='aruba-port-context' && ui.inspectedRow && !currentInspection()) {
-      clearInspection();
+    if (e.data.type==='aruba-observed-port') selectObservedPort(e.data,false);
+    if (e.data.type==='aruba-inspect-port') selectObservedPort(e.data,true);
+    if (e.data.type==='aruba-port-checks') selectObservedBatch();
+    if (e.data.type==='aruba-port-context') {
+      if (ui.tileRow!==monitor()?.selected()) ui.tileRow=null;
+      if (!currentInspection()) clearInspection();
+      updateControlTarget();
     }
     if (e.data.type==='aruba-port-view') updatePortActions();
     if (e.data.type==='aruba-port-source') {
@@ -635,7 +636,7 @@ const portKey = row => endpoint(row) + '|' + row.interface;
 const targetFromRow = row => ({ip:row.ip,sshPort:Number(row.ssh_port || 22),port:String(row.interface)});
 const controlPortKey = target => portKey({ip:target.ip,ssh_port:target.sshPort,interface:target.port});
 function expireLiveMatrix(preserveView=false) {
-  ui.liveId=null; clearInspection();
+  ui.liveId=null; ui.tileRow=null; clearInspection();
   monitor()?.invalidateLive(preserveView);
   updatePortActions();
 }
@@ -659,10 +660,12 @@ function powerBadge(view) {
 }
 function updateControlTarget() {
   const target=$('controlTarget');
+  const batch=$('controlMode').value==='batch';
+  const targets=batch ? matrixControlTargets() : [];
   if (currentInspection()) {
     target.textContent='실시간으로 다시 조회한 대상 · '+$('singleIP').value+' / 포트 '+$('singlePort').value;
-  } else if ($('controlMode').value==='batch' && ui.selected.size) {
-    const keys=Array.from(ui.selected);
+  } else if (targets.length) {
+    const keys=targets.map(controlPortKey);
     const ports=keys.slice(0,3).map(key=>{
       const [address,port]=key.split('|');
       return address+' / 포트 '+port;
@@ -678,11 +681,10 @@ function updateControlTarget() {
     target.textContent=ports.join(' · ')+(keys.length>3?' 외 '+(keys.length-3)+'개':'');
   } else target.textContent='';
   target.hidden=!target.textContent;
-  const batch=$('controlMode').value==='batch';
   $('selectedCount').hidden=!batch;
-  const hasTargets=ui.selected.size>0 || $('controlPanel').open;
-  $('quickActions').hidden=!batch || !hasTargets;
-  $('liveScope').hidden=!hasTargets || !!currentInspection() || !(ui.liveId || displayingInventory());
+  $('selectedCount').textContent='선택 '+targets.length+'개';
+  $('quickActions').hidden=!targets.length;
+  $('liveScope').hidden=!!currentInspection() || !(ui.liveId || displayingInventory());
   $('portActionStrip').hidden=target.hidden && $('quickActions').hidden && $('liveScope').hidden;
 }
 function syncMonitorChecks() {
@@ -696,13 +698,13 @@ function syncMonitorChecks() {
   viewer.setControlSelection?.(ui.liveId,selected,excluded);
 }
 function renderPorts() {
-  $('selectedCount').textContent='선택 '+ui.selected.size+'개';
-  updatePortActions();
   syncMonitorChecks();
+  updatePortActions();
   window.portTools?.renderMatrix();
 }
 function receivePorts(result,keepView=false,refreshedKeys) {
   if (!Array.isArray(result.rows)) return;
+  ui.tileRow=null;
   ui.rows = window.portTools.reconcileRows(result.rows,refreshedKeys);
   const available = new Set(ui.rows.filter(row=>row.status === 'ok' && !row.controlUsed && !row.refreshInvalidated).map(portKey));
   ui.selected = new Set([...ui.selected].filter(key=>available.has(key)));
@@ -776,6 +778,7 @@ $('refreshSwitch').onclick = () => refreshTargets(true);
 function selectScope(eligibleOnly) {
   const keys=window.portTools.scopeKeys();
   if (!keys) return;
+  ui.tileRow=null;
   const allowed=eligibleOnly && new Set(ui.rows
     .filter(row=>!row.controlUsed && (row.eligible_operations || []).includes($('operation').value)).map(portKey));
   ui.selected=new Set(allowed ? keys.filter(key=>allowed.has(key)) : keys);
@@ -783,7 +786,7 @@ function selectScope(eligibleOnly) {
 }
 $('selectVisible').onclick=()=>selectScope(false);
 $('selectEligible').onclick=()=>selectScope(true);
-$('clearSelection').onclick = () => { ui.selected.clear(); renderPorts(); };
+$('clearSelection').onclick = () => { ui.tileRow=null; ui.selected.clear(); renderPorts(); };
 $('controlMode').onchange = () => {
   const single = $('controlMode').value === 'single';
   $('batchControls').hidden = single; $('singleControls').hidden = !single;
@@ -802,6 +805,7 @@ function controlAfterText(row) {
 }
 function markControlRowsUsed(targets) {
   const used = new Set(targets.map(controlPortKey));
+  if (ui.tileRow && used.has(controlPortKey(ui.tileRow))) ui.tileRow=null;
   for (const key of used) ui.selected.delete(key);
   for (const row of ui.rows) if (used.has(portKey(row))) {
     row.controlUsed=true;
@@ -922,8 +926,8 @@ $('preview').onclick = () => {
     if (!ip || !port) { notify('단일 제어할 스위치 주소와 포트를 입력하세요.',true); return; }
     targets = [{ip,port}];
   } else {
-    targets = window.portTools?.checkedTargets() || ui.rows.filter(row => ui.selected.has(portKey(row))).map(targetFromRow);
-    if (!targets.length) { notify('조회 결과에서 제어할 포트를 체크하세요.',true); return; }
+    targets = matrixControlTargets();
+    if (!targets.length) { notify('매트릭스에서 제어할 포트를 선택하세요.',true); return; }
   }
   window.controlTools.clearQuickResult();
   $('controlResult').replaceChildren(); $('controlResult').hidden = true;
@@ -1033,7 +1037,6 @@ async function start() {
       window.controlTools.showQuickResult(resumed.result,resumed.cancelled,true);
     } else if (resumed?.action === 'control.apply' && resumed.result.results?.length) {
       window.controlTools.finishProgress();
-      $('controlPanel').open=true;
       showControlResults(resumed.result,operationNames[resumed.result.operation] || '포트 제어');
     }
     if (resumed && (hasUncertainControl(resumed.result) || resumed.result.blocked?.length))
