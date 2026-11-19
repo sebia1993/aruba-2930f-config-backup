@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
-from contextlib import closing
+from contextlib import closing, suppress
 from http.client import HTTPConnection, HTTPSConnection
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -81,8 +81,9 @@ class LanSharingTests(unittest.TestCase):
         pem = ssl.get_server_certificate(("127.0.0.1", self.port), timeout=3)
         digest = hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest()
         self.assertEqual(digest, view["fingerprint"].replace(":", "").lower())
-        self.client_tls = ssl.create_default_context(cadata=pem)
-        self.client_tls.minimum_version = ssl.TLSVersion.TLSv1_2
+        client = ssl.create_default_context(cadata=pem)
+        client.minimum_version = ssl.TLSVersion.TLSv1_2
+        self.client_tls = client
         return urlsplit(view["invitation"]).path
 
     def sign_in(self, invite):
@@ -137,13 +138,14 @@ class LanSharingTests(unittest.TestCase):
     def test_lan_boundaries_and_host_only_operations(self):
         self.sign_in(self.enable())
         # 127.0.0.4 is still on this PC but outside the selected 127.0.0.0/30.
+        # An excluded peer must be disconnected before it sends a TLS handshake.
         with (
             socket.create_connection(
                 ("127.0.0.1", self.port), timeout=3, source_address=("127.0.0.4", 0)
             ) as peer,
-            self.assertRaises((ssl.SSLError, ConnectionError)),
+            suppress(ConnectionResetError, ConnectionAbortedError),
         ):
-            self.client_tls.wrap_socket(peer, server_hostname="127.0.0.1")
+            self.assertEqual(peer.recv(1), b"")
         for changed in (
             {"Host": "localhost:" + str(self.port)},
             {"Origin": "http://127.0.0.1:" + str(self.port)},
