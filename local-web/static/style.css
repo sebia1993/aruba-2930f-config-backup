@@ -38,6 +38,11 @@ nav .port-nav { display: grid; grid-template-columns: 19px 1fr; row-gap: 3px; }
   /* Original 16 px topology icon, using its alpha channel for both themes. */
   mask: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAAdElEQVR42pWQyxGAIAxEn46F0ZnpLFBZPBgg4KDjXjL57mbhFwTDkFU7YQiCkdYDwHjjmIbUqV5IlgT1go6Fre2eHiEDhUyOA3angaz3/P8ZgxZ92CNYV3MncaNWlGBM1C9oNW5vohJlECn+V7NHJz8+LXNcnzExJlnU2skAAAAASUVORK5CYII=") center / contain no-repeat;
 }
+/* The reference cable icon is centered in the same slot as the other menu icons. */
+.cable-nav-icon {
+  width: 19px; height: 16px; background: currentColor;
+  mask: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAAk0lEQVR42oWRQRLEEBREn5R7+U5GTvblZD2LoMxETXqhCq21J4j/OgDDAJtrRqWOSQQKAE6mAd5NdJPQkAtVSQiZJBPiwIBA4OyXtGUE4hJ7Aum3ZAQyRukNtq9otDX0aXjlsJMNPnG7XUk0EoXwTLiAwkUmA8Y3FklVyCc8bsNN0OXy5YDLNTvUzm9wnFTC23d/APweYF9eYz87AAAAAElFTkSuQmCC") center / 16px 16px no-repeat;
+}
 nav a:hover { background: var(--surface2); color: var(--ink); }
 nav a[aria-current=page] { color: var(--ink); background: var(--active); border-color: var(--line); box-shadow: inset 3px 0 var(--teal); }
 .sidefoot { margin-top: auto; padding: 17px; border-top: 1px solid var(--stroke); display: grid; gap: 5px; font-size: 11px; color: var(--muted); }
