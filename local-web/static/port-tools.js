@@ -362,7 +362,8 @@
     if (draw!=null && draw!=='') facts.push(draw+' W');
     if (row) facts.push('링크 ' + PowerMatrix.linkLabel(row.link_status));
     if (row?.link_observed_at) facts.push('링크 관측 시각 ' + dateText(row.link_observed_at));
-    if (view.neighbor?.names.length) facts.push(view.neighbor.label+' · '+view.neighbor.names.join(' / '));
+    const neighborLabel=PowerMatrix.neighborDescription(view.neighbor);
+    if (neighborLabel) facts.push(neighborLabel);
     if (row?.observed_at) facts.push('포트 관측 시각 ' + dateText(row.observed_at));
     const checkLabel = elem('label','', 'inline-check'), check = elem('input'); check.type='checkbox';
     check.dataset.matrixCheck = key; check.checked = ui.selected.has(key); check.disabled = ui.busy;
@@ -495,7 +496,9 @@
         const grid=elem('div',undefined,'matrix-tiles');group.append(grid);grids.set(addr,grid);nodes.push(group);
       }
       const tile=button('',()=>selectItem(item),'matrix-tile');
-      const face=elem('span',item.port,'tile-face');
+      const face=elem('span',undefined,'tile-face');
+      const number=elem('span',item.port,'tile-port');
+      face.append(number);
       const linkValue=item.view.phase==='observed' ? item.row?.link_status :
         item.view.phase==='stale' ? item.record?.link_status : null;
       const link=PowerMatrix.linkIndicator(linkValue);
@@ -505,16 +508,16 @@
         tile.dataset.readFailed='true';
         const mark=elem('span','!','port-failure-mark');
         mark.setAttribute('aria-hidden','true');
-        face.append(mark);
+        number.append(mark);
       }
       const neighbor=item.view.neighbor;
-      const names=neighbor?.names.join(' / ');
-      if (names) face.append(elem('span',names,neighbor.apName ? 'tile-ap-name' : 'tile-neighbor-name'));
+      const caption=PowerMatrix.tileCaption(neighbor);
+      if (caption) face.append(caption);
       tile.append(face,elem('span',link.label,'tile-link'));
       tile.setAttribute('aria-pressed',String(ui.selected.has(item.key)));
       tile.classList.toggle('focused-port',focused===item.key);
       const linkText=link.state==='unknown' ? '미조회' : PowerMatrix.linkLabel(linkValue);
-      tile.title=[addr+' / '+item.port,item.view.failure?'조회 실패':'',item.view.label,item.view.power.watts!=null ? item.view.power.watts+' W' : '',names && neighbor.label+' · '+names,'링크 '+linkText].filter(Boolean).join(' · ');
+      tile.title=[addr+' / '+item.port,item.view.failure?'조회 실패':'',item.view.label,item.view.power.watts!=null ? item.view.power.watts+' W' : '',PowerMatrix.neighborDescription(neighbor),'링크 '+linkText].filter(Boolean).join(' · ');
       tile.setAttribute('aria-label',tile.title); grids.get(addr).append(tile);
     }
     $('matrixGroups').replaceChildren(...nodes);

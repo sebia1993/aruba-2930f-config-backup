@@ -161,12 +161,10 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 .port-matrix-panel .matrix-group {padding:.6rem 0;border-bottom:1px solid var(--stroke)}
 .matrix-group-head {display:flex;align-items:center;gap:.75rem;margin-bottom:.45rem}
 .matrix-group-head small,#matrixDetails small {color:var(--muted)}
-.matrix-tiles {display:flex;flex-wrap:wrap;gap:4px}
-.matrix-tiles .matrix-tile {position:relative;display:grid;grid-template-rows:1fr auto;align-content:stretch;min-height:28px;min-width:30px;max-width:min(100%,8.5rem);padding:0;border:2px solid var(--link-color);border-radius:5px;font-size:12px;background:var(--surface2);color:var(--muted);line-height:1.2}
-.matrix-tiles .tile-face {align-self:center;min-width:0;padding:2px 6px}
-.matrix-tiles .tile-link {padding:1px 3px;border-radius:0 0 3px 3px}
-[data-zoom=small] .matrix-tile {min-height:22px;min-width:23px;font-size:11px}
-[data-zoom=large] .matrix-tile {min-height:38px;min-width:40px;font-size:14px}
+.matrix-tiles .matrix-tile {position:relative;padding:0;border:2px solid var(--link-color);border-radius:5px;font-size:12px;background:var(--surface2);color:var(--muted);line-height:1.2}
+#matrixGroups {--cell-size:52px}
+#matrixGroups[data-zoom=small] {--cell-size:49px}
+#matrixGroups[data-zoom=large] {--cell-size:65px}
 :root {--power-red:#ffacb5;--power-yellow:#f6d376;--power-green:#82e5b4}
 :root[data-theme=light] {--power-red:#a01e36;--power-yellow:#805000;--power-green:#00683c}
 .matrix-legend {display:flex;flex-wrap:wrap;gap:4px;margin-bottom:.4rem}
@@ -186,8 +184,6 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 .matrix-tile .port-failure-mark{display:inline-grid;place-items:center;vertical-align:middle;min-width:1.05rem;height:1.05rem;margin-inline-start:.2rem;border:1px solid #fff;border-radius:50%;background:#172331;color:#fff;font-size:.72rem;font-weight:800;line-height:1}
 .matrix-tile.focused-port{outline:1px dashed var(--focus);outline-offset:1px}
 .matrix-tile[aria-pressed=true]::after{content:'✓' / '';position:absolute;top:-1px;right:-1px;padding:0 2px;border-radius:0 3px;background:#143241;color:#fff;font-size:10px;line-height:1.15}
-.matrix-tiles .tile-ap-name,.matrix-tiles .tile-neighbor-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600;line-height:1.25}
-.matrix-tiles .tile-neighbor-name::before{content:"이웃 · ";font-weight:400}
 #matrixDetails>span{min-width:0;overflow-wrap:anywhere}
 #matrixDetails {display:flex;align-items:center;flex-wrap:wrap;gap:6px 18px;margin-top:.75rem;padding:.65rem .85rem;background:var(--surface2);border-radius:6px}
 #matrixDetails small {flex-basis:100%}
@@ -195,10 +191,12 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 @media(max-width:650px){.target-body{padding:0 10px 14px}.port-matrix-panel header .tools{flex-wrap:wrap}.matrix-group-head{align-items:flex-start}}
 @media(max-width:650px), (pointer:coarse) {
   #matrixCounts button,.matrix-legend button {min-height:44px}
-  #matrixGroups .matrix-tile {min-width:48px;min-height:48px}
-  #matrixGroups[data-zoom=small] .matrix-tile {min-width:44px;min-height:44px}
-  #matrixGroups[data-zoom=large] .matrix-tile {min-width:56px;min-height:56px}
   .matrix-group-head {flex-wrap:wrap;overflow-wrap:anywhere}
+}
+@media(max-width:560px), (pointer:coarse) {
+  #matrixGroups {--cell-size:56px}
+  #matrixGroups[data-zoom=small] {--cell-size:52px}
+  #matrixGroups[data-zoom=large] {--cell-size:72px}
 }
 @media(max-width:650px) {
   #targetEditor {max-height:90dvh}

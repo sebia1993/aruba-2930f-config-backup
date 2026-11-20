@@ -222,11 +222,10 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .embedded section[aria-labelledby=matrixTitle]>.metrics{order:1;flex:1 1 auto}
 .embedded section[aria-labelledby=matrixTitle]>.matrix-area{order:3;flex:1 1 100%;min-width:0}
 .embedded .matrix-area{padding:1px 8px 6px}
-.embedded #matrix{max-height:none;overflow:visible;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:8px 12px}
+.embedded #matrix{max-height:none;overflow:visible;grid-template-columns:minmax(0,1fr);gap:8px}
 .embedded #matrixStage{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;align-items:start}
 .embedded .port-tile[data-changed=true] .tile-power::before{content:"";position:absolute;inset:1px;border:1px dashed currentColor;pointer-events:none}
 .embedded .device-ports{min-width:0}
-.embedded .device-ports.dense{grid-column:1/-1}
 .embedded #matrix .device-heading{display:flex;justify-content:flex-start;flex-wrap:wrap;gap:2px 8px;margin:0 0 3px}
 .embedded #matrix .port-tile.selected{outline:none}
 .embedded #matrix .port-tile.selected .tile-port{text-decoration:underline;text-underline-offset:1px}
@@ -248,19 +247,15 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 }
 .embedded .device-heading{margin:0 0 4px}
 .embedded .device-heading span{white-space:nowrap}
-.embedded .port-grid{display:flex;align-items:start;flex-wrap:wrap;gap:3px}
-.embedded{--cell-size:27px}
-.embedded .port-tile[data-link]{display:inline-grid;grid-template-rows:1fr auto;width:auto;min-width:var(--cell-size);max-width:min(100%,8.5rem);height:auto;min-height:calc(var(--cell-size) + 12px);padding:0;border:2px solid var(--link-color);border-radius:5px;box-shadow:none;font-size:12px;font-weight:700;line-height:1;color:#0c1c22}
-.embedded .tile-power{position:relative;display:grid;align-content:center;justify-items:center;min-width:0;padding:1px 4px;border:1px solid var(--surface);border-radius:3px 3px 0 0}
-.embedded .tile-port{display:inline-flex;gap:2px;align-items:center;justify-content:center;padding:0 5px}
+.embedded{--cell-size:52px}
+.embedded .port-tile[data-link]{padding:0;border:2px solid var(--link-color);border-radius:5px;box-shadow:none;font-size:12px;font-weight:700;line-height:1;color:#0c1c22}
+.embedded .tile-power{position:relative;border:1px solid var(--surface);border-radius:3px 3px 0 0}
 .embedded[data-theme=light] .port-tile.unpowered{color:#000}
 .embedded[data-theme=light] .port-tile.normal{color:#fff}
 .embedded .port-tile.unclassified{color:var(--ink)}
-.embedded .tile-ap-name,.embedded .tile-neighbor-name{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600;line-height:1.25}
-.tile-neighbor-name::before{content:"이웃 · ";font-weight:400}
 .embedded .port-tile[data-link]:hover{transform:none}
 .port-failure-mark{display:inline-grid;place-items:center;width:1.05rem;height:1.05rem;flex:none;border-radius:50%;background:#172331;color:#fff;border:1px solid #fff;font:bold 12px/1 sans-serif}
-.port-tile[data-read-failed=true]{display:inline-flex;align-items:center;justify-content:center;gap:3px}
+:root:not(.embedded) .port-tile[data-read-failed=true]{display:inline-flex;align-items:center;justify-content:center;gap:3px}
 #mReadFailed{display:inline-flex;align-items:center;gap:4px;min-height:32px;white-space:nowrap;color:var(--ink)}
 #mReadFailed[aria-pressed=true]{border-color:var(--teal);color:var(--teal);box-shadow:inset 0 -2px var(--teal)}
 .embedded #overviewRoot>#mReadFailed{margin-left:4px;vertical-align:top}
@@ -276,7 +271,6 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   .embedded .content{padding:3px 1px}
   .embedded .matrix-area{padding:1px 2px 4px}
   .embedded #matrix{padding:1px;row-gap:6px}
-  .embedded #matrix .port-grid{gap:2px 1px}
   .embedded .device-heading{line-height:1.3}
 }
 .embedded .panel-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
@@ -339,8 +333,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 /* The host and its iframe each respond to the space actually available. */
 @media(max-width:560px), (pointer:coarse){
   .embedded #overviewRoot>#shortFilterToggle,.embedded .power-filter{min-height:44px}
-  .embedded .port-grid{gap:5px}
-  .embedded .port-tile[data-link]{min-width:max(44px,var(--cell-size));min-height:max(44px,var(--cell-size));font-size:14px}
+  .embedded .port-tile[data-link]{font-size:14px}
   .embedded .port-tile:hover{transform:none}
   .embedded .device-heading b,.embedded .port-identity{min-width:0;overflow-wrap:anywhere}
   .embedded #overviewRoot .filterbar :is(.search,select,.btn),
@@ -533,22 +526,17 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   }
   function labelTile(tile,row) {
     const identity=needsRefresh(row) ? null : row.neighbor;
-    const names=identity?.names.join(' / ');
     const parts=[row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status]];
-    if (names) parts.push(identity.label+' · '+names);
+    parts.push(window.PowerMatrix.neighborDescription(identity));
     if (embedded) {
       const value=excludedPorts.get(row.key) ?? row.link;
       const link=window.PowerMatrix.linkIndicator(value);
       tile.dataset.link=link.state;
       tile.querySelector('.tile-link').textContent=link.label;
       parts.push('링크 '+(link.state==='unknown' ? '미조회' : window.PowerMatrix.linkLabel(value)));
-      const caption=tile.querySelector('.tile-ap-name,.tile-neighbor-name');
-      if (names) {
-        const item=caption || node('span');
-        item.className=identity.apName ? 'tile-ap-name' : 'tile-neighbor-name';
-        item.textContent=names;
-        if (!caption) tile.querySelector('.tile-power').append(item);
-      } else caption?.remove();
+      tile.querySelector('.tile-caption')?.remove();
+      const caption=window.PowerMatrix.tileCaption(identity);
+      if (caption) tile.querySelector('.tile-power').append(caption);
     }
     if (row.readFailure) parts.push('조회 실패');
     if (row.comparison?.changed) parts.push('직전 조회에서 변화');
@@ -669,7 +657,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
         grid.setAttribute('aria-label',caption+' 지정 포트');
         section.append(heading, grid);
         fragment.append(section);
-        group = {section,grid,count,ports:0};
+        group = {grid,count,ports:0};
         groups.set(groupKey,group);
       }
       group.ports++;
@@ -700,7 +688,6 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       tiles.set(row.key,tile);
     }
     for (const group of groups.values()) {
-      if (embedded) group.section.classList.toggle('dense',group.ports>8);
       group.count.textContent = group.ports+'개 포트';
     }
     if (!state.found.length) fragment.append(node('div',emptyResultsText(),'empty'));
@@ -1307,10 +1294,10 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     document.querySelector('.rightcol').hidden=true;
 
     const touchLayout=window.matchMedia('(max-width:560px), (pointer:coarse)');
-    const sizes={compact:44,wide:27};
+    const sizes={compact:56,wide:52};
     const sizeMode=()=>touchLayout.matches?'compact':'wide';
     function configureZoom(){
-      Object.assign(el('zoom'),touchLayout.matches?{min:44,max:60}:{min:24,max:40});
+      Object.assign(el('zoom'),touchLayout.matches?{min:56,max:72}:{min:49,max:65});
       el('zoom').value=sizes[sizeMode()];
       applyZoom();
     }
