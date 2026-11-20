@@ -20,7 +20,7 @@ from urllib.request import urlopen
 from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.27.0"
+VERSION = "1.28.0"
 PYTHON = "3.14.3"
 EMBED_SHA256 = "ad4961a479dedbeb7c7d113253f8db1b1935586b73c27488712beec4f2c894e6"
 CACHE = Path(os.environ["LOCALAPPDATA"]) / "Aruba2930FBuild" / PYTHON

@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs
 
 from aruba2930f_backup.models import DeviceTarget
-from aruba2930f_backup.port_control import validate_interface
+from aruba2930f_backup.port_control import validate_query_interface
 
 RETENTION = timedelta(days=7)
 POINT_LIMIT = 12_000
@@ -45,7 +45,7 @@ def parse_history_request(query):
     if not (ssh_port.isascii() and ssh_port.isdigit() and len(ssh_port) <= 5):
         raise ValueError
     target = DeviceTarget(fields["ip"][0], int(ssh_port))
-    interface = validate_interface(fields["interface"][0])
+    interface = validate_query_interface(fields["interface"][0])
     if fields["hours"][0] not in {"1", "24", "168"}:
         raise ValueError
     return target.ip, target.port, interface, int(fields["hours"][0])

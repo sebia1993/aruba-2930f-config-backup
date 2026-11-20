@@ -33,7 +33,13 @@ from .poe_power import (
     parse_lldp_neighbors,
     parse_power_evidence,
 )
-from .poe_query_models import PoEQueryResult, PoETarget, QueryStatus
+from .poe_query_models import (
+    MAX_INTERFACES_PER_TARGET,
+    MAX_TOTAL_INTERFACES,
+    PoEQueryResult,
+    PoETarget,
+    QueryStatus,
+)
 from .poe_targets import merge_targets
 from .port_control import (
     UNKNOWN_LINK,
@@ -41,6 +47,7 @@ from .port_control import (
     PoEState,
     PortSession,
     PortSnapshot,
+    parse_interface_inventory,
     parse_interface_links,
     parse_interface_status,
     parse_poe_status,
@@ -172,16 +179,39 @@ class PoEQueryService:
         *,
         approve_host_key: Callable[[HostKeyCheck], bool],
         on_result: Callable[[PoEQueryResult], None] | None = None,
+        on_discovered: Callable[[PoETarget], None] | None = None,
+        on_discovery_error: Callable[[PoETarget, CollectionFailure], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> tuple[PoEQueryResult, ...]:
         normalized = merge_targets(groups)
         cancel = cancel_event if cancel_event is not None else threading.Event()
+        port_count = sum(len(g.interfaces) for g in normalized)
+        count_lock = threading.Lock()
+
+        def reserve_ports(group: PoETarget) -> None:
+            nonlocal port_count
+            with count_lock:
+                if port_count + len(group.interfaces) > MAX_TOTAL_INTERFACES:
+                    raise CollectionFailure(
+                        ErrorCode.COMMAND_REJECTED, "조회할 전체 포트가 14,400개를 초과합니다."
+                    )
+                port_count += len(group.interfaces)
+            if on_discovered is not None:
+                on_discovered(group)
+
         with ThreadPoolExecutor(
             max_workers=self._max_workers, thread_name_prefix="poe-query"
         ) as pool:
             futures = [
                 pool.submit(
-                    self._collect_group, group, credentials, approve_host_key, on_result, cancel
+                    self._collect_group,
+                    group,
+                    credentials,
+                    approve_host_key,
+                    on_result,
+                    cancel,
+                    reserve_ports,
+                    on_discovery_error,
                 )
                 for group in normalized
             ]
@@ -250,11 +280,15 @@ class PoEQueryService:
         approve: Callable[[HostKeyCheck], bool],
         on_result: Callable[[PoEQueryResult], None] | None,
         cancel: threading.Event,
+        on_discovered: Callable[[PoETarget], None],
+        on_discovery_error: Callable[[PoETarget, CollectionFailure], None] | None,
     ) -> tuple[PoEQueryResult, ...]:
         session: QuerySession | None = None
         rows: list[PoEQueryResult] = []
         fatal: CollectionFailure | None = None
         identity: DeviceIdentity | None = None
+        links: dict[str, str] = {}
+        link_time = ""
         try:
             observation = self._trusted_key(group.target, approve, cancel)
             _check_cancel(cancel)
@@ -278,6 +312,23 @@ class PoEQueryService:
                 ),
                 hostname_source=resolved.source,
             )
+            if group.all_ports:
+                output = _bounded(cancel, session.read_interface_status)
+                link_time = datetime.now(UTC).isoformat()
+                links = parse_interface_inventory(output)
+                if not links:
+                    raise CollectionFailure(
+                        ErrorCode.COMMAND_REJECTED,
+                        "show interfaces status에서 물리 포트 목록을 확인하지 못했습니다.",
+                    )
+                if len(links) > MAX_INTERFACES_PER_TARGET:
+                    raise CollectionFailure(
+                        ErrorCode.COMMAND_REJECTED,
+                        "스위치에서 조회한 물리 포트가 384개를 초과합니다.",
+                    )
+                resolved_group = replace(group, interfaces=tuple(links), all_ports=False)
+                on_discovered(resolved_group)
+                group = resolved_group
             # AOS-S show interfaces brief reports all local interfaces.
             # Reading it once per switch prevents hundreds of duplicate SSH
             # commands when an operator selects many AP ports.
@@ -355,21 +406,10 @@ class PoEQueryService:
 
             # Obtain the independent link table once per switch. A failed status
             # command cannot erase PoE measurements or already collected LLDP.
-            if fatal is None:
+            if fatal is None and not link_time:
                 output = _bounded(cancel, session.read_interface_status)
-                received_at = datetime.now(UTC).isoformat()
+                link_time = datetime.now(UTC).isoformat()
                 links = parse_interface_links(output)
-                for index, row in enumerate(rows):
-                    if row.interface in links:
-                        link = links[row.interface]
-                        rows[index] = replace(
-                            row,
-                            link_status=link,
-                            link_observed_at=received_at,
-                            snapshot=replace(row.snapshot, link_status=link)
-                            if row.snapshot
-                            else None,
-                        )
         except CollectionFailure as exc:
             fatal = exc
         except Exception:
@@ -381,9 +421,22 @@ class PoEQueryService:
         failure = fatal or _unexpected_failure()
         if cancel.is_set():
             failure = CollectionFailure(ErrorCode.CANCELLED, "포트 전력 조회를 중지했습니다.")
+        if group.all_ports:
+            if on_discovery_error is None:
+                raise failure
+            on_discovery_error(group, failure)
+            return ()
         for interface in group.interfaces[len(rows) :]:
             rows.append(_terminal(group, interface, failure, identity))
         for index, row in enumerate(rows):
+            link = links.get(row.interface, UNKNOWN_LINK)
+            if link != UNKNOWN_LINK:
+                row = replace(
+                    row,
+                    link_status=link,
+                    link_observed_at=link_time,
+                    snapshot=replace(row.snapshot, link_status=link) if row.snapshot else None,
+                )
             lldp = row.lldp
             if lldp is None or lldp.status is LLDPStatus.PENDING:
                 lldp = _lldp_failure(failure)

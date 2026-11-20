@@ -36,6 +36,7 @@ from .storage import default_output_directory
 from .validation import SUPPORTED_MODELS, identify_connected_device
 
 _PORT_RE = re.compile(r"[1-9][0-9]*(?:/[1-9][0-9]*)?")
+_QUERY_PORT_RE = re.compile(r"(?:[1-9][0-9]*/)?[A-Z]?[1-9][0-9]*")
 
 
 class PreMutationRejected(CollectionFailure):
@@ -115,10 +116,17 @@ def _invalid_status(message: str) -> CollectionFailure:
     return CollectionFailure(ErrorCode.COMMAND_REJECTED, message)
 
 
+def validate_query_interface(value: str) -> str:
+    """Accept one physical AOS-S interface, including a modular uplink, for reads."""
+    if not isinstance(value, str) or len(value) > 12 or not _QUERY_PORT_RE.fullmatch(value):
+        raise ValueError("조회할 물리 포트 번호를 확인하세요.")
+    return value
+
+
 def parse_interface_status(output: str, interface: str) -> InterfaceState:
     """Read only Type and administrative Enabled from the brief table."""
 
-    validate_interface(interface)
+    validate_query_interface(interface)
     if not re.search(r"\bPort\s+Type\s*\|\s*Alert\s+Enabled\s+Status\b", output):
         raise _invalid_status("포트 상태 표의 열을 확인하지 못했습니다. 변경을 중단합니다.")
     port = re.escape(interface) + r"(?:-Trk[1-9][0-9]*)?"
@@ -156,8 +164,8 @@ def _terminal_cells(line: str) -> str:
     return "".join(cells)
 
 
-def parse_interface_links(output: str) -> dict[str, str]:
-    """Read only the Port and Status cells of an unambiguous AOS-S status table."""
+def parse_interface_inventory(output: str) -> dict[str, str]:
+    """Index physical ports independently of whether their link can be classified."""
     lines = output.expandtabs().splitlines()
     headers = [i for i, line in enumerate(lines) if line.lower().split() == _STATUS_COLUMNS]
     if len(headers) != 1 or headers[0] + 1 >= len(lines):
@@ -177,18 +185,14 @@ def parse_interface_links(output: str) -> dict[str, str]:
     gaps = [slice(left.end(), right.start()) for left, right in pairwise(spans)]
     config = slice(spans[3].start(), spans[3].end())
     status_cell = slice(status_span.start(), status_span.end())
-    seen: set[str] = set()
     links: dict[str, str] = {}
     for line in lines[header + 2 :]:
+        if line[: port_span.start()].strip() or line[gaps[0]].strip():
+            continue
         port = line[port_span.start() : port_span.end()].strip()
-        match = re.fullmatch(r"([1-9][0-9]*(?:/[1-9][0-9]*)?)(?:-Trk[1-9][0-9]*)?", port, re.I)
-        if not match or line[: port_span.start()].strip():
+        interface = re.sub(r"-Trk[1-9][0-9]*$", "", port, flags=re.I)
+        if len(interface) > 12 or not _QUERY_PORT_RE.fullmatch(interface):
             continue
-        interface = match[1]
-        if interface in seen:
-            links.pop(interface, None)
-            continue
-        seen.add(interface)
         # Firmware can pad a name by character count or by terminal cell width.
         # Only accept an aligned interpretation; conflicting readings are unknown.
         layouts = (line,) if line.isascii() else (line, _terminal_cells(line))
@@ -197,17 +201,32 @@ def parse_interface_links(output: str) -> dict[str, str]:
             for layout in layouts
             if layout[config].strip() and not any(layout[gap].strip() for gap in gaps)
         }
-        if readings == {"up"}:
+        if not readings and not line[status_span.start() :].strip():
+            continue
+        if interface in links:
+            links[interface] = UNKNOWN_LINK
+        elif readings == {"up"}:
             links[interface] = "Up"
         elif readings == {"down"}:
             links[interface] = "Down"
+        else:
+            links[interface] = UNKNOWN_LINK
     return links
+
+
+def parse_interface_links(output: str) -> dict[str, str]:
+    """Return confirmed links only for existing explicit-port callers."""
+    return {
+        port: link
+        for port, link in parse_interface_inventory(output).items()
+        if link != UNKNOWN_LINK
+    }
 
 
 def parse_poe_status(output: str, interface: str) -> PoEState:
     """Require a port-bound Power Enable value, distinct from power delivery."""
 
-    validate_interface(interface)
+    validate_query_interface(interface)
     headers = re.findall(
         r"(Port Power Status|Status and Configuration Information)"
         r"[ \t]+for port[ \t]+([^\r\n]+)",

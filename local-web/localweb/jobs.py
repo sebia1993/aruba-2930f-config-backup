@@ -156,7 +156,7 @@ class Jobs:
                 "suspended": bool(plan and plan.suspended),
                 "monitorId": plan.id if plan else None,
                 "intervalMinutes": plan.minutes if plan else DEFAULT_MONITOR_MINUTES,
-                "portCount": sum(len(g.interfaces) for g in plan.groups) if plan else 0,
+                "portCount": plan.port_count if plan else 0,
                 "nextAt": plan.next_at if plan else None,
                 "jobId": plan.job if plan else None,
                 "lastJobId": plan.last_job if plan else None,
@@ -350,6 +350,8 @@ class Jobs:
                     row.update(controlUsed=True, link_status="", link_observed_at="")
                 rows.append(row)
             workspace["query"] = {"rows": rows}
+            if any(g.all_ports for g in self.operations.query_scope):
+                workspace["query"]["discoveryErrors"] = self.operations.discovery_errors()
             return workspace
 
     def _store_port_view(self, result, *, monitored=False):
@@ -599,7 +601,7 @@ class Jobs:
                     or (
                         action == "ports.query"
                         and self.operations.query_started
-                        and self.operations.inventory_view() != group_targets(plan.groups)
+                        and self.operations.query_scope != plan.groups
                     )
                 ):
                     self.monitor = None

@@ -50,6 +50,14 @@
   let draftVersion = 0, rowsSource = null, rowsEdited = false;
 
   function targetCount(items) { return items.reduce((n,g)=>n+g.interfaces.length,0); }
+  function targetSummary(items,unit='포트') {
+    const count=targetCount(items);
+    const pending=items.filter(g=>g.all_ports && !g.interfaces.length).length;
+    const parts=[items.length+'대'];
+    if (count || !pending) parts.push(count+unit);
+    if (pending) parts.push('전체 포트 조회 '+pending+'대');
+    return parts.join(' · ');
+  }
   function stableGroups(items) { return items.map(g=>({...g,interfaces:[...g.interfaces].sort(cmp)})).sort((a,b)=>cmp(a.ip,b.ip)||Number(a.ssh_port)-Number(b.ssh_port)); }
   function editorDirty() {
     draftVersion++;
@@ -61,7 +69,7 @@
   function addRow(group) {
     if ($('editTargetRows').children.length >= 300) { $('targetMessage').textContent = '최대 300개 스위치 행을 추가할 수 있습니다.'; return; }
     const row = $('editTargetRows').insertRow();
-    for (const [field,value,label] of [['ip',group?.ip || '','스위치 IPv4'],['interfaces',group?.interfaces.join(',') || '','인터페이스 목록'],['ssh_port',group?.ssh_port || 22,'SSH 포트'],['label',group?.label || '','별칭']]) {
+    for (const [field,value,label] of [['ip',group?.ip || '','스위치 IPv4'],['interfaces',group?.all_ports ? '' : group?.interfaces.join(',') || '','인터페이스 목록'],['ssh_port',group?.ssh_port || 22,'SSH 포트'],['label',group?.label || '','별칭']]) {
       const cell = row.insertCell();
       cell.dataset.label=label;
       if (['ssh_port','label'].includes(field)) cell.className = 'advanced';
@@ -69,6 +77,7 @@
       input.value = value;
       input.dataset.field=field;
       input.setAttribute('aria-label',label);
+      if (field === 'interfaces') input.placeholder = '비워 두면 전체 포트';
       if (field === 'label') input.maxLength = 80;
       if (field === 'ssh_port') { input.type='number'; input.min=1; input.max=65535; }
       cell.append(input);
@@ -94,8 +103,8 @@
   }
   function showPreview(result) {
     preview = result;
-    $('targetMessage').textContent = result.groups.length + '대 · ' + result.port_count + '개 포트';
-    $('targetPreview').replaceChildren(simpleTable([['스위치 IPv4','ip'],['SSH 포트','ssh_port'],['포트',g=>g.interfaces.join(', ')],['별칭','label']],result.groups,'등록 목록을 비웁니다.'));
+    $('targetMessage').textContent = targetSummary(result.groups,'개 포트');
+    $('targetPreview').replaceChildren(simpleTable([['스위치 IPv4','ip'],['SSH 포트','ssh_port'],['포트',g=>g.all_ports ? '전체 포트' : g.interfaces.join(', ')],['별칭','label']],result.groups,'등록 목록을 비웁니다.'));
     $('acceptTargets').disabled = false;
   }
   function targetDraftVersion() {
@@ -178,7 +187,7 @@
   };
   function updateTargetCount() {
     const dirty=raw.value!==registeredText;
-    const count=groups.length ? groups.length+'대 · '+targetCount(groups)+'포트 등록' : '';
+    const count=groups.length ? targetSummary(groups)+' 등록' : '';
     const draft=dirty ? '입력한 목록은 검증하여 적용하거나 포트를 조회하면 반영됩니다.' : '';
     $('targetCount').textContent=[count,draft].filter(Boolean).join(' · ');
   }
@@ -217,25 +226,30 @@
     const blocked=restricted && !live ? invalidatedKeys() : null;
     for (const g of inventory()) for (const port of g.interfaces) {
       const key=address(g)+'|'+port;
-      if ((!fresh || fresh.has(key)) && !blocked?.has(key)) targets.push({ip:g.ip,sshPort:Number(g.ssh_port || 22),port});
+      if (controlPortSupported(port) && (!fresh || fresh.has(key)) && !blocked?.has(key)) targets.push({ip:g.ip,sshPort:Number(g.ssh_port || 22),port});
     }
     return targets;
   }
   function cableScope() {
     if (directCableTarget && $('controlMode').value==='single') {
       const ip=$('singleIP').value.trim(), port=$('singlePort').value.trim();
-      const complete=ip && !/\s/.test(ip) && /^\d+(?:\/\d+)*$/.test(port);
+      const complete=ip && !/\s/.test(ip) && controlPortSupported(port);
       return {label:'포트·PoE 관리에서 직접 지정한 단일 포트',targets:complete ? ip+' '+port : ''};
     }
     // An edited or cleared query supersedes selections from the previous inventory.
     if (raw.value !== registeredText) {
+      if (raw.value.split(/\r?\n/).some(line=>/^\s*\d+(?:\.\d+){3}(?::\d+)?\s*$/.test(line))) {
+        return {label:'스위치를 조회한 뒤 진단할 포트를 선택하세요.',targets:''};
+      }
       return {label:'포트·PoE 관리에 입력한 조회 대상', targets:raw.value.trim()};
     }
     const items=inventory();
     const tile=ui.liveId ? ui.tileRow : null;
     const focusKey=ui.liveId ? (tile && tile===monitor()?.selected() ? controlPortKey(tile) : '') : focused;
     const keys=ui.selected.size ? ui.selected : focusKey ? new Set([focusKey]) : null;
+    if (!keys && items.some(g=>g.all_ports)) return {label:'포트·PoE 관리에서 진단할 포트를 선택하세요.',targets:''};
     const chosen=keys ? items.map(g=>({...g,interfaces:g.interfaces.filter(p=>keys.has(address(g)+'|'+p))})).filter(g=>g.interfaces.length) : items;
+    if (chosen.some(g=>g.interfaces.some(port=>!controlPortSupported(port)))) return {label:'케이블 진단이 가능한 숫자 포트를 선택하세요.',targets:''};
     const count=targetCount(chosen);
     const label=keys ? '포트·PoE 관리에서 선택한 대상' : '포트·PoE 관리의 전체 조회 대상';
     if (keys && count!==keys.size) return {label:'포트·PoE 관리에서 포트를 다시 선택하세요.', targets:''};
@@ -467,6 +481,9 @@
     if (!visible.length) {
       message=failureView ? '현재 조건에서 조회에 실패한 포트가 없습니다.' : '현재 조건에 맞는 포트가 없습니다.';
       if (!failureView && !inventory().length) message='검증한 스위치 목록을 적용하거나 포트를 조회하세요.';
+      else if (!failureView && !matches.length && !targetCount(groups) && groups.some(g=>g.all_ports)) {
+        message=matrixJob || ui.busy ? '스위치에서 물리 포트 목록을 확인하고 있습니다.' : '조회하면 스위치에서 확인한 물리 포트가 표시됩니다.';
+      }
     }
     countText.textContent=message;
     failureToggle.hidden=!failedCount && !failureView;
@@ -531,7 +548,7 @@
   $('matrixNext').onclick=()=>{page++;renderMatrix();};
   function inventoryText(items) {
     const quote=value=>'"'+String(value ?? '').replaceAll('"','""')+'"';
-    const lines=[['IP','ssh_port','interfaces','label'],...items.map(g=>[g.ip,g.ssh_port,g.interfaces.join(','),g.label])];
+    const lines=[['IP','ssh_port','interfaces','label'],...items.map(g=>[g.ip,g.ssh_port,g.all_ports ? '' : g.interfaces.join(','),g.label])];
     return lines.map(row=>row.map(quote).join('\t')).join('\n');
   }
   function replaceQueryInventory(items,text,preserveView=false) {
@@ -548,7 +565,14 @@
     setQueryWorkspace(true);
   }
   function acceptQuery(items) {
-    if (!fullQuery || fullQuery.accepted || !items?.length) return;
+    if (!fullQuery || !items?.length) return;
+    if (fullQuery.accepted) {
+      if (!matchesInventory(items)) {
+        groups=stableGroups(items);
+        updateTargetCount();
+      }
+      return;
+    }
     fullQuery.accepted=true;
     showStartingMatrix(items,fullQuery.text);
   }
@@ -562,13 +586,13 @@
     }
     const query=workspace.query;
     const items=stableGroups(workspace.groups);
-    const same=inventoryText(items)===inventoryText(groups);
+    const same=matchesInventory(items);
     if (same && !query && !ui.rows.length && !ui.liveId) return;
     if (same && ui.liveId && query && !fullQuery.accepted) {
       receivePorts(query,true);
       return;
     }
-    const text=same ? registeredText : items.length ? inventoryText(items) : '';
+    const text=workspace.targetText ?? (same ? registeredText : items.length ? inventoryText(items) : '');
     replaceQueryInventory(items,text);
     if (query) receivePorts(query);
   }
@@ -612,6 +636,7 @@
       if (action==='ports.query') acceptQuery(requested);
       loading=new Set(requested.flatMap(g=>g.interfaces.map(p=>address(g)+'|'+p)));
     }
+    showDiscoveryErrors(progress.discoveryErrors);
     for(const row of progress.observations || []) live.set(portKey(row),row);
     renderPorts();
   }
@@ -635,8 +660,13 @@
     updateTargetCount();
     updatePortActions(); renderMatrix();
   }
-  function matchesInventory(items) {
-    return Array.isArray(items) && inventoryText(stableGroups(items))===inventoryText(groups);
+  function matchesInventory(items,scopeOnly=false) {
+    if (!Array.isArray(items) || items.length!==groups.length) return false;
+    return stableGroups(items).every((item,i)=>{
+      const group=groups[i];
+      return address(item)===address(group) && item.label===group.label && !!item.all_ports===!!group.all_ports &&
+        ((scopeOnly && item.all_ports) || item.interfaces.join(',')===group.interfaces.join(','));
+    });
   }
   function reconcileRows(rows,refreshed=loading) {
     // A partial refresh also contains earlier observations from other ports.
@@ -647,9 +677,17 @@
       invalid.delete(key);
       return previous && !refreshed.has(key) && row.status==='ok' ? previous : row;
     });
-    return reconciled.concat([...invalid.values()]);
+    // A monitoring cycle can discover that a previously invalidated port no longer exists.
+    if (invalid.size) {
+      for (const group of inventory()) for (const port of group.interfaces) {
+        const retained=invalid.get(address(group)+'|'+port);
+        if (retained) reconciled.push(retained);
+      }
+    }
+    return reconciled;
   }
   window.portTools={showStartingMatrix,resumeQuery,endResumedQuery,targetDraftVersion,openTargetEditor,reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,availableControlTargets,scopeKeys,hiddenSelectedCount,unobservedTargets,cableScope,
-    hasInventory:()=>groups.length>0 || ui.rows.length>0,selectedRefreshCount:()=>targetCount(selectedRefreshGroups()),restoreInventory,matchesInventory};
+    hasInventory:()=>groups.length>0 || ui.rows.length>0,awaitingDiscovery:()=>groups.some(g=>g.all_ports && !g.interfaces.length),
+    selectedRefreshCount:()=>targetCount(selectedRefreshGroups()),restoreInventory,matchesInventory};
   updatePortActions();sync();
 })();

@@ -19,7 +19,7 @@ from .poe_query_models import (
     MAX_TOTAL_INTERFACES,
     PoETarget,
 )
-from .port_control import validate_interface
+from .port_control import validate_query_interface
 
 MAX_PASTE_CHARACTERS = 100_000
 MAX_PROFILE_BYTES = 1024 * 1024
@@ -30,13 +30,15 @@ def parse_interfaces(text: str) -> tuple[str, ...]:
     """Accept explicit single ports only, retaining first occurrence order."""
     if not isinstance(text, str) or len(text) > MAX_PASTE_CHARACTERS:
         raise ValueError("인터페이스 입력이 올바르지 않거나 너무 큽니다.")
-    ports = tuple(dict.fromkeys(validate_interface(part.strip()) for part in text.split(",")))
+    ports = tuple(dict.fromkeys(validate_query_interface(part.strip()) for part in text.split(",")))
     if len(ports) > MAX_INTERFACES_PER_TARGET:
         raise ValueError("스위치당 인터페이스는 최대 384개입니다.")
     return ports
 
 
-def make_target(ip: str, ssh_port: str | int, interfaces: str, label: str = "") -> PoETarget:
+def make_target(
+    ip: str, ssh_port: str | int, interfaces: str, label: str = "", *, allow_all_ports: bool = False
+) -> PoETarget:
     if isinstance(ssh_port, str):
         if not re.fullmatch(r"[0-9]{1,5}", ssh_port.strip()):
             raise ValueError("SSH 포트는 1~65535 사이의 정수로 입력하세요.")
@@ -45,6 +47,8 @@ def make_target(ip: str, ssh_port: str | int, interfaces: str, label: str = "") 
         port = ssh_port
     else:
         raise ValueError("SSH 포트는 정수로 입력하세요.")
+    if allow_all_ports and isinstance(interfaces, str) and not interfaces.strip():
+        return PoETarget(DeviceTarget(ip, port), (), label, all_ports=True)
     return PoETarget(DeviceTarget(ip, port), parse_interfaces(interfaces), label)
 
 
@@ -59,9 +63,14 @@ def merge_targets(targets: Sequence[PoETarget]) -> tuple[PoETarget, ...]:
         if previous is not None:
             if previous.label and group.label and previous.label != group.label:
                 raise ValueError("같은 접속 대상의 이름이 서로 다릅니다.")
-            merged_interfaces = tuple(dict.fromkeys((*previous.interfaces, *group.interfaces)))
+            all_ports = previous.all_ports or group.all_ports
+            merged_interfaces = (
+                () if all_ports else tuple(dict.fromkeys((*previous.interfaces, *group.interfaces)))
+            )
             total_interfaces += len(merged_interfaces) - len(previous.interfaces)
-            group = PoETarget(group.target, merged_interfaces, previous.label or group.label)
+            group = PoETarget(
+                group.target, merged_interfaces, previous.label or group.label, all_ports
+            )
         else:
             total_interfaces += len(group.interfaces)
         merged[group.target] = group
@@ -121,7 +130,7 @@ def _is_header(row: list[str]) -> bool:
     return all(cell.strip().casefold() in names for cell, names in zip(row, selected, strict=True))
 
 
-def parse_pasted_targets(text: str) -> tuple[PoETarget, ...]:
+def parse_pasted_targets(text: str, *, allow_all_ports: bool = False) -> tuple[PoETarget, ...]:
     """Parse tab-separated cells copied directly from a spreadsheet."""
     if not isinstance(text, str) or len(text) > MAX_PASTE_CHARACTERS:
         raise ValueError("붙여넣기는 최대 100,000자입니다.")
@@ -156,9 +165,15 @@ def parse_pasted_targets(text: str) -> tuple[PoETarget, ...]:
     for line_number, row in enumerate(rows, start=2 if has_header else 1):
         try:
             target = (
-                make_target(row[0], 22, row[1])
+                make_target(row[0], 22, row[1], allow_all_ports=allow_all_ports)
                 if basic_schema
-                else make_target(row[0], row[1], row[2], row[3] if len(row) == 4 else "")
+                else make_target(
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[3] if len(row) == 4 else "",
+                    allow_all_ports=allow_all_ports,
+                )
             )
         except ValueError as exc:
             raise ValueError(f"{line_number}행: {exc}") from exc
@@ -186,13 +201,14 @@ def save_target_profile(path: Path, targets: Sequence[PoETarget]) -> None:
     groups = merge_targets(targets)
     document = {
         "format": _PROFILE_FORMAT,
-        "version": 1,
+        "version": 2 if any(group.all_ports for group in groups) else 1,
         "targets": [
             {
                 "ip": group.target.ip,
                 "ssh_port": group.target.port,
                 "interfaces": list(group.interfaces),
                 "label": group.label,
+                **({"all_ports": True} if group.all_ports else {}),
             }
             for group in groups
         ],
@@ -226,7 +242,7 @@ def load_target_profile(path: Path) -> tuple[PoETarget, ...]:
     if (
         document["format"] != _PROFILE_FORMAT
         or type(document["version"]) is not int
-        or document["version"] != 1
+        or document["version"] not in (1, 2)
     ):
         raise ValueError("지원하지 않는 대상 목록 형식 또는 버전입니다.")
     entries = document["targets"]
@@ -234,7 +250,12 @@ def load_target_profile(path: Path) -> tuple[PoETarget, ...]:
         raise ValueError("대상 목록의 접속 대상 배열을 확인하세요.")
     groups = []
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != {"ip", "ssh_port", "interfaces", "label"}:
+        if not isinstance(entry, dict):
+            raise ValueError("대상 목록의 대상 항목이 올바르지 않습니다.")
+        fields = {"ip", "ssh_port", "interfaces", "label"}
+        if document["version"] == 2 and "all_ports" in entry:
+            fields.add("all_ports")
+        if set(entry) != fields:
             raise ValueError("대상 목록의 대상 항목이 올바르지 않습니다.")
         if (
             not isinstance(entry["ip"], str)
@@ -249,7 +270,10 @@ def load_target_profile(path: Path) -> tuple[PoETarget, ...]:
             raise ValueError("대상 목록의 인터페이스 문자열 배열을 확인하세요.")
         groups.append(
             PoETarget(
-                DeviceTarget(entry["ip"], entry["ssh_port"]), tuple(interfaces), entry["label"]
+                DeviceTarget(entry["ip"], entry["ssh_port"]),
+                tuple(interfaces),
+                entry["label"],
+                all_ports=entry.get("all_ports", False),
             )
         )
     return merge_targets(groups)

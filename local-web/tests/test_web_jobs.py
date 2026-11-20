@@ -16,7 +16,7 @@ from localweb.jobs import Busy, Jobs
 from localweb.monitoring import PortMonitoring
 
 from aruba2930f_backup.models import CollectionFailure, Credentials, ErrorCode
-from aruba2930f_backup.poe_query_models import PoEQueryResult, QueryStatus
+from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from aruba2930f_backup.port_control import PortControlService, PortOperationResult, PortSnapshot
 
 
@@ -286,6 +286,53 @@ class JobTests(unittest.TestCase):
                     self.jobs.start_monitor({"targets": invalid})
             collect.assert_not_called()
         self.assertFalse(self.jobs.monitor_status()["active"])
+
+    def test_monitor_rediscovers_ip_only_and_expires_removed_ports_and_permissions(self):
+        ops = self.jobs.operations
+        ops.credentials = Credentials("reader", "test")
+        body = {"targets": "192.0.2.5"}
+        inventories = iter([("1", "24"), ("24", "A1"), ()])
+
+        def read(groups, credentials, **kwargs):
+            (scope,) = groups
+            self.assertTrue(scope.all_ports)
+            self.assertEqual(scope.interfaces, ())
+            ports = next(inventories)
+            if not ports:
+                failure = CollectionFailure(ErrorCode.AUTH_FAILED, "SSH 인증 실패")
+                kwargs["on_discovery_error"](scope, failure)
+                return ()
+            group = PoETarget(scope.target, ports)
+            kwargs["on_discovered"](group)
+            return tuple(PoEQueryResult(group, p, QueryStatus.UNSUPPORTED) for p in ports)
+
+        with patch.object(ops.query_service, "collect", read):
+            started = self.jobs.start_monitor(body)
+            self.assertIsNone(started["portCount"])
+            self.assertEqual(self.finished(started["jobId"])["state"], "done")
+            self.assertEqual(self.jobs.monitor_status()["portCount"], 2)
+            for expected in [("24", "A1"), ()]:
+                self.jobs.monitor.due = time.monotonic() - 1
+                self.jobs.tick_monitor()
+                self.assertEqual(
+                    self.finished(self.jobs.monitor.job or self.jobs.monitor.last_job)["state"],
+                    "done",
+                )
+                workspace = self.jobs.workspace()
+                self.assertEqual(workspace["targetText"], body["targets"])
+                self.assertTrue(workspace["groups"][0]["all_ports"])
+                self.assertEqual(tuple(workspace["groups"][0]["interfaces"]), expected)
+                rows = workspace["query"]["rows"]
+                self.assertEqual(tuple(row["interface"] for row in rows), expected)
+                self.assertNotIn("1", {port for _, port in self.jobs.controls._registered_ports()})
+                if rows:
+                    self.assertEqual(rows[-1]["eligible_operations"], [])
+                else:
+                    self.assertEqual(
+                        workspace["query"]["discoveryErrors"][0]["error_code"], "AUTH_FAILED"
+                    )
+                    self.assertTrue(self.jobs.monitor_status()["suspended"])
+                    self.assertIsNone(self.jobs.monitor_status()["portCount"])
 
     def test_monitor_schedule_is_anchored_to_start_and_skips_overruns(self):
         with patch("localweb.monitoring.time.monotonic", return_value=100.0) as clock:

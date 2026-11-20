@@ -134,7 +134,7 @@ async function poll(id,resuming=false,responseKey=null) {
     if (job.progress?.message && !$('stopJob').disabled) {
       setJobProgress(job.progress);
       const {message,completed,total} = job.progress;
-      const counts=Number.isSafeInteger(job.progress.powerRead)
+      const counts=total>0 && Number.isSafeInteger(job.progress.powerRead)
         ? ' · PoE 수집 '+job.progress.powerRead+'/'+total+' · 포트 완료 '+completed+' / '+total
         : total>0 ? ' ('+completed+' / '+total+')' : '';
       const prefix=job.action==='ports.query' ? '' : (jobNames[job.action] || '작업')+' · ';
@@ -192,7 +192,7 @@ async function run(action, body, receive, retryKeys=null) {
       if ((action==='ports.query' || retryKeys) && !cancelled && Array.isArray(readings)) {
         const failed=readings.filter(portReadFailed);
         if (failed.length || !readings.some(portObserved)) {
-          const reason=failed.length ? PowerMatrix.readFailure(failed[0]) : readings.find(row=>row.message)?.message;
+          const reason=failed.length ? PowerMatrix.readFailure(failed[0]) : readings.find(row=>row.message)?.message || result.discoveryErrors?.[0]?.message;
           const summary=failed.length ? '조회 실패 '+failed.length+'포트' : '조회에 성공한 포트가 없습니다.';
           const partial=result.rows.some(portObserved);
           notify(label+' 완료 · '+summary+(reason?' · '+reason:''),!partial,partial);
@@ -688,6 +688,7 @@ form('backupForm', () => {
 });
 
 const endpoint = row => Number(row.ssh_port || 22) === 22 ? row.ip : row.ip + ':' + row.ssh_port;
+const controlPortSupported = port => typeof port==='string' && port.length<=12 && /^[1-9]\d*(?:\/[1-9]\d*)?$/.test(port);
 const portKey = row => endpoint(row) + '|' + row.interface;
 const targetFromRow = row => ({ip:row.ip,sshPort:Number(row.ssh_port || 22),port:String(row.interface)});
 const controlPortKey = target => portKey({ip:target.ip,ssh_port:target.sshPort,interface:target.port});
@@ -699,6 +700,7 @@ function expireLiveMatrix(preserveView=false) {
 function clearPorts(preserveView=false) {
   window.controlTools?.clearQuickResult();
   ui.rows = []; ui.selected.clear();
+  showDiscoveryErrors([]);
   $('controlResult').hidden = true;
   expireLiveMatrix(preserveView);
   $('controlPanel').open=false;
@@ -716,7 +718,8 @@ function observedInspectionTarget() {
   const viewer=monitor();
   if (ui.selected.size || !ui.liveId || viewer?.source().liveId!==ui.liveId) return null;
   if (currentInspection()) return ui.inspectedRow;
-  return $('controlMode').value==='batch' ? viewer.inspectionTarget() : null;
+  const row=$('controlMode').value==='batch' ? viewer.inspectionTarget() : null;
+  return row && controlPortSupported(row.port) ? row : null;
 }
 function updateHiddenSelectedCount(targets=[]) {
   // The result list can offer its focused port as the only control target.
@@ -787,11 +790,18 @@ function renderPorts() {
   updatePortActions();
   window.portTools?.renderMatrix();
 }
+function showDiscoveryErrors(errors) {
+  if (!Array.isArray(errors)) return;
+  const list=$('discoveryErrors');
+  list.replaceChildren(...errors.map(error=>elem('li',endpoint(error)+' · 포트 목록 조회 실패 · '+error.message)));
+  list.hidden=!errors.length;
+}
 function receivePorts(result,keepView=false,refreshedKeys,periodic=false) {
   if (!Array.isArray(result.rows)) return;
   const selectedKey=periodic && ui.tileRow?.key;
   ui.tileRow=null;
   ui.rows = window.portTools.reconcileRows(result.rows,refreshedKeys);
+  showDiscoveryErrors(result.discoveryErrors);
   updateQuerySummary();
   const available = new Set(window.portTools.availableControlTargets($('operation').value,true).map(controlPortKey));
   ui.selected = new Set([...ui.selected].filter(key=>available.has(key)));

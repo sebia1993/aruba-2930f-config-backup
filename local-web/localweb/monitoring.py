@@ -20,11 +20,17 @@ class PortMonitoring:
     error: str = ""
     suspended: bool = False
     slot: int = 0
+    port_count: int | None = field(init=False)
     due: float = field(init=False)
     next_at: str | None = None
 
     def __post_init__(self):
         self.due = time.monotonic() + self.minutes * 60
+        self.port_count = (
+            None
+            if any(g.all_ports for g in self.groups)
+            else sum(len(g.interfaces) for g in self.groups)
+        )
 
     def advance_to_next_slot(self):
         current = time.monotonic()
@@ -44,10 +50,15 @@ class PortMonitoring:
         self.last_finished = finished
         self.error = error
         rows = (result or {}).get("rows", [])
+        discovery_errors = (result or {}).get("discoveryErrors", [])
+        if result is not None and "groups" in result:
+            groups = result["groups"]
+            unresolved = any(g.get("all_ports") and not g["interfaces"] for g in groups)
+            self.port_count = None if unresolved else sum(len(g["interfaces"]) for g in groups)
         rejected = list(
             dict.fromkeys(
                 f"{row['ip']}:{row['ssh_port']}"
-                for row in rows
+                for row in [*rows, *discovery_errors]
                 if row.get("error_code") == ErrorCode.AUTH_FAILED
             )
         )
@@ -68,7 +79,9 @@ class PortMonitoring:
                 or (row.get("status") == "ok" and row.get("watts") is None)
                 for row in rows
             )
-            if not rows:
+            if discovery_errors:
+                self.error = f"스위치 {len(discovery_errors)}대의 포트 목록을 확인하지 못했습니다."
+            elif not rows:
                 self.error = "이번 조회 결과를 받지 못했습니다."
             elif failed:
                 self.error = f"{failed}개 포트의 전력 조회가 지연됐습니다."

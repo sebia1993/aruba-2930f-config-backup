@@ -13,13 +13,14 @@ from aruba2930f_backup.poe_targets import merge_targets
 from aruba2930f_backup.port_power_diagnosis import diagnose_port_power
 
 
-def group_targets(groups):
+def group_targets(groups, all_endpoints=()):
     return [
         {
             "ip": group.target.ip,
             "ssh_port": group.target.port,
             "interfaces": list(group.interfaces),
             "label": group.label,
+            **({"all_ports": True} if group.all_ports or group.target in all_endpoints else {}),
         }
         for group in groups
     ]
@@ -35,7 +36,7 @@ def _editor_groups(rows, parse):
                 raise ValueError("스위치 행을 확인하세요.")
             ip = row.get("ip")
             port = row.get("ssh_port", 22)
-            interfaces = row.get("interfaces")
+            interfaces = row.get("interfaces", "")
             if not isinstance(ip, str) or not isinstance(interfaces, str) or not ip.strip():
                 raise ValueError("스위치 주소와 포트 목록을 입력하세요.")
             if (
@@ -52,7 +53,11 @@ def _editor_groups(rows, parse):
             ):
                 raise ValueError("SSH 포트를 확인하세요.")
             (group,) = parse({"targets": f"{ip.strip()}:{port} {interfaces.strip()}"})
-            groups.append(PoETarget(group.target, group.interfaces, row.get("label", "")))
+            groups.append(
+                PoETarget(
+                    group.target, group.interfaces, row.get("label", ""), all_ports=group.all_ports
+                )
+            )
         except ValueError as exc:
             raise ValueError(f"{index}행 · {exc}") from exc
     return merge_targets(groups)
@@ -69,7 +74,9 @@ def preview_targets(body, parse):
     return {
         "targets": target_table(incoming),
         "groups": group_targets(incoming),
-        "port_count": sum(len(g.interfaces) for g in incoming),
+        "port_count": None
+        if any(g.all_ports for g in incoming)
+        else sum(len(g.interfaces) for g in incoming),
     }
 
 

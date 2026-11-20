@@ -185,6 +185,10 @@
     // Use the same range/TSV parser as monitoring before showing the exact affected ports.
     if (!groups) await run('targets.preview',{targets:scope.targets},result=>{ groups=result.groups; });
     if (!groups?.length || !current(scope)) return;
+    if (groups.some(group=>!group.interfaces.length || group.interfaces.some(port=>!controlPortSupported(port)))) {
+      resetResults('포트·PoE 관리에서 진단할 숫자 포트를 지정하거나 조회 결과에서 선택하세요.');
+      return;
+    }
     const count=groups.reduce((sum,g)=>sum+g.interfaces.length,0);
     const targets=groups.map(g=>endpoint(g)+' '+g.interfaces.join(',')).join('\n');
     const confirm=button('확인 후 진단 실행',()=>{

@@ -8,7 +8,7 @@ from decimal import Decimal, DecimalException
 from enum import StrEnum
 
 from .models import CollectionFailure, ErrorCode
-from .port_control import PoEState, validate_interface
+from .port_control import PoEState, validate_query_interface
 
 AP535_REFERENCE_ID = "HPE-530-QuickSpecs-V22-2026-08-17"
 AP535_REFERENCE_URL = "https://www.hpe.com/au/en/collaterals/collateral.a00060238enw.html"
@@ -163,7 +163,7 @@ def _failure(message: str) -> CollectionFailure:
 
 
 def _validate_output(output: str, interface: str) -> None:
-    validate_interface(interface)
+    validate_query_interface(interface)
     if (
         len(output) > _MAX_OUTPUT_BYTES
         or len(output.encode("utf-8")) > _MAX_OUTPUT_BYTES

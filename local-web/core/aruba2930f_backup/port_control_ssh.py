@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 from .models import CollectionFailure, ErrorCode
-from .port_control import PreMutationRejected
+from .port_control import PreMutationRejected, validate_query_interface
 from .ssh import NetmikoSSHSession, _mapped_failure, _strip_command_and_prompt
 from .validation import validate_cli_response
 
@@ -49,11 +49,11 @@ class PortControlSSHSession(NetmikoSSHSession):
         return self._read_port_command("show interfaces status")
 
     def read_poe(self, interface: str) -> str:
-        port = validate_port_identifier(interface)
+        port = validate_query_interface(interface)
         return self._read_port_command(f"show power-over-ethernet {port}")
 
     def read_lldp(self, interface: str) -> str:
-        port = validate_port_identifier(interface)
+        port = validate_query_interface(interface)
         return self._read_port_command(f"show lldp info remote-device {port}")
 
     def change_port(self, interface: str, action: str) -> None:

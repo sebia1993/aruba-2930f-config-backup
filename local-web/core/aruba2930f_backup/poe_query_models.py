@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from .models import DeviceIdentity, DeviceTarget, ErrorCode
-from .port_control import PortSnapshot, validate_interface
+from .port_control import PortSnapshot, validate_query_interface
 
 if TYPE_CHECKING:
     from .poe_power import LLDPObservation, PowerAssessment, PowerEvidence
@@ -30,13 +30,18 @@ class PoETarget:
     target: DeviceTarget
     interfaces: tuple[str, ...]
     label: str = ""
+    all_ports: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.target, DeviceTarget) or type(self.target.port) is not int:
             raise ValueError("올바른 IPv4/SSH 포트 대상을 입력하세요.")
-        if not isinstance(self.interfaces, tuple) or not self.interfaces:
+        if (
+            not isinstance(self.interfaces, tuple)
+            or type(self.all_ports) is not bool
+            or bool(self.interfaces) == self.all_ports
+        ):
             raise ValueError("조회할 인터페이스를 입력하세요.")
-        ports = tuple(dict.fromkeys(validate_interface(port) for port in self.interfaces))
+        ports = tuple(dict.fromkeys(validate_query_interface(port) for port in self.interfaces))
         if len(ports) > MAX_INTERFACES_PER_TARGET:
             raise ValueError("스위치당 인터페이스는 최대 384개입니다.")
         if not isinstance(self.label, str) or len(self.label) > MAX_LABEL_LENGTH:
