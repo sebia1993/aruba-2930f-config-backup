@@ -3,7 +3,7 @@
 import sys
 
 from browser_power_matrix import PowerMatrixSwitch
-from browser_qa import enter_ssh_credentials, power_filter, run_browser_case
+from browser_qa import edit_query_targets, enter_ssh_credentials, power_filter, run_browser_case
 from browser_unified_controls import hit_point, resize_workspace
 from playwright.sync_api import expect
 
@@ -16,10 +16,7 @@ def exercise(page, url, switch, _second, shots, _backup):
     toggle = page.locator("#monitorToggle")
     interval = page.locator("#monitorInterval")
     monitor_status = page.locator("#monitorStatus")
-    expect(interval).to_have_value("5")
-    for minutes, valid in (("0", False), ("61", False), ("1.5", False), ("60", True), ("1", True)):
-        interval.fill(minutes)
-        assert interval.evaluate("input => input.checkValidity()") is valid
+    expect(interval).to_have_value("1")
 
     toggle.click()
     enter_ssh_credentials(page, switch)
@@ -108,6 +105,20 @@ def exercise(page, url, switch, _second, shots, _backup):
     expect(history_panel.locator("#powerHistoryLatest")).to_have_text("7 W")
     if shots:
         history_panel.screenshot(path=shots / "monitoring-power-history.png")
+    edit_query_targets(page)
+    for minutes, valid in (("0", False), ("61", False), ("1.5", False), ("1", True), ("60", True)):
+        interval.fill(minutes)
+        assert interval.evaluate("input => input.checkValidity()") is valid
+
+    toggle.click()
+    expect(toggle).to_have_attribute("aria-pressed", "true")
+    expect(monitor_status).to_contain_text("60분 간격")
+    expect(monitor_status).to_contain_text("다음", timeout=90000)
+    override = page.evaluate("() => api('/api/monitor')")
+    assert override["intervalMinutes"] == 60 and override["lastSuccess"] and not override["jobId"]
+    toggle.click()
+    expect(toggle).to_have_attribute("aria-pressed", "false")
+    expect(interval).to_have_value("60")
     assert "configure terminal" not in switch.commands
     page.locator("#shutdown").click()
     page.locator("#reviewBody").get_by_role("button", name="서버 종료").click()

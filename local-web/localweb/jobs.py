@@ -59,6 +59,7 @@ PERSIST = {
 }
 EXTENSIONS = {".jsonl", ".json", ".txt", ".xlsx"}
 MAX_RESULTS = 8
+DEFAULT_MONITOR_MINUTES = 1
 DUPLICATE_POE_REQUEST = "이미 접수한 빠른 PoE 요청입니다. 해당 포트의 현재 상태를 다시 조회하세요."
 POWER_HISTORY_WARNING = (
     "일부 측정값을 저장하지 못했습니다. 로컬 데이터 폴더와 남은 용량을 확인하세요."
@@ -143,7 +144,7 @@ class Jobs:
                 "active": plan is not None,
                 "suspended": bool(plan and plan.suspended),
                 "monitorId": plan.id if plan else None,
-                "intervalMinutes": plan.minutes if plan else 5,
+                "intervalMinutes": plan.minutes if plan else DEFAULT_MONITOR_MINUTES,
                 "portCount": sum(len(g.interfaces) for g in plan.groups) if plan else 0,
                 "nextAt": plan.next_at if plan else None,
                 "jobId": plan.job if plan else None,
@@ -155,7 +156,7 @@ class Jobs:
             }
 
     def start_monitor(self, body):
-        minutes = body.get("intervalMinutes", 5)
+        minutes = body.get("intervalMinutes", DEFAULT_MONITOR_MINUTES)
         if type(minutes) is not int or not 1 <= minutes <= 60:
             raise ValueError("조회 간격은 1~60분 사이의 정수로 입력하세요.")
         groups = _groups(body)
