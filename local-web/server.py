@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.23.0"
+VERSION = "1.24.0"
 STATIC = {
     "/": "index.html",
     "/matrix": "matrix.html",
@@ -40,6 +40,7 @@ STATIC = {
             "embed.js",
             "port-tools.js",
             "power-matrix.js",
+            "power-history.js",
             "port-tools.css",
             "backup-tools.js",
             "backup-tools.css",
@@ -199,6 +200,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(app.sharing.status(interfaces=True))
             elif path == "/api/history":
                 self._json({"items": app.jobs.history()})
+            elif path == "/api/power-history":
+                from sqlite3 import Error as DatabaseError
+
+                from localweb.power_history import parse_history_request
+
+                try:
+                    target = parse_history_request(urlsplit(self.path).query)
+                except ValueError:
+                    return self._fail(
+                        400, "스위치 주소, SSH 포트, 포트 번호와 조회 기간을 확인하세요."
+                    )
+                try:
+                    self._json(app.jobs.read_power_history(*target))
+                except DatabaseError:
+                    self._fail(503, "전력 추이를 읽지 못했습니다. 데이터 폴더를 확인하세요.")
             elif path == "/api/workspace":
                 self._json(app.jobs.workspace())
             elif path == "/api/monitor":

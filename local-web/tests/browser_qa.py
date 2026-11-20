@@ -359,7 +359,9 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
         expect(page.locator("#quickResult")).to_contain_text("사전 조회 전력")
         expect(page.locator("#quickResult tbody tr")).to_contain_text("8.1 W")
     assert switch.poe_enabled and "interface 1 power-over-ethernet" not in switch.commands
+    history_url = f"/api/power-history?ip=127.0.0.1&ssh_port={switch.port}&interface=1&hours=1"
     for operation, expected in (("poe_off", False), ("poe_on", True)):
+        previous_sample = page.evaluate("url => api(url)", history_url)["points"][-1]
         page.locator("#operation").select_option(operation)
         page.locator("#selectEligible").click()
         expect(page.locator("#selectedCount")).to_have_text("선택 1개")
@@ -373,6 +375,10 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
             page, address, "미측정" if expected else "8.1 W", "8.1 W" if expected else "미측정"
         )
         assert switch.poe_enabled is expected
+        sample = page.evaluate("url => api(url)", history_url)["points"][-1]
+        assert sample["at"] > previous_sample["at"]
+        assert sample["watts"] == (8.1 if expected else None)
+        assert not sample["connected"]
         expect(page.locator("#matrixViewer")).to_be_visible()
     page.locator("#operation").select_option("poe_off")
     page.locator("#selectEligible").click()

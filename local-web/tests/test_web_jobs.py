@@ -8,6 +8,7 @@ import time
 import unittest
 from contextlib import closing
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -216,6 +217,51 @@ class JobTests(unittest.TestCase):
         self.assertEqual(job["state"], "done")
         self.assertEqual(job["result"]["groups"], self.jobs.workspace()["groups"])
         return self.jobs.workspace()["query"]
+
+    def test_actual_power_history_partial_manual_and_skipped_monitor_slot(self):
+        ops = self.jobs.operations
+        ops.credentials = Credentials("reader", "test")
+        targets = "192.0.2.5:2222 1-2"
+
+        def collect(*args, **kwargs):
+            return [
+                replace(
+                    row, snapshot=replace(row.snapshot, observed_at=datetime.now(UTC).isoformat())
+                )
+                for row in self.collect_ports(*args, **kwargs)
+            ]
+
+        def history(port):
+            return self.jobs.read_power_history("192.0.2.5", 2222, port, 1)["points"]
+
+        with patch.object(ops.query_service, "collect", collect):
+            self.finished(self.jobs.submit("ports.query", {"targets": targets}))
+            self.finished(self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2222 2"}))
+            self.assertEqual([len(history(p)) for p in ("1", "2")], [1, 2])
+            started = self.jobs.start_monitor({"targets": targets, "intervalMinutes": 1})
+            self.finished(started["jobId"])
+            self.jobs.monitor.due = time.monotonic() - 0.1
+            self.jobs.tick_monitor()
+            self.finished(self.jobs.monitor.job or self.jobs.monitor.last_job)
+            self.assertTrue(history("2")[-1]["connected"])
+            with patch.object(self.jobs.controls, "awaiting_confirmation", return_value=True):
+                self.jobs.monitor.due = time.monotonic() - 0.1
+                self.jobs.tick_monitor()
+            self.jobs.monitor.due = time.monotonic() - 0.1
+            self.jobs.tick_monitor()
+            self.finished(self.jobs.monitor.job or self.jobs.monitor.last_job)
+            self.assertFalse(history("2")[-1]["connected"])
+            self.assertEqual([len(history(p)) for p in ("1", "2")], [4, 5])
+            with patch.object(
+                self.jobs.power_history, "record", side_effect=sqlite3.OperationalError
+            ):
+                failed_write = self.finished(
+                    self.jobs.submit("ports.refresh", {"targets": "192.0.2.5:2222 2"})
+                )
+            self.assertEqual(failed_write["state"], "done")
+            self.assertIn("powerHistoryWarning", failed_write["result"])
+            self.assertIn("warning", self.jobs.read_power_history("192.0.2.5", 2222, "2", 1))
+            self.assertNotIn("warning", self.jobs.read_power_history("192.0.2.5", 2222, "1", 1))
 
     def test_monitor_interval_and_targets_checked_before_first_ssh_read(self):
         body = {"targets": "192.0.2.5:2222 1-3"}
@@ -602,7 +648,17 @@ class JobTests(unittest.TestCase):
 
             def read_power(groups, creds, **kwargs):
                 (row,) = self.collect_ports(groups, creds, **kwargs)
-                return [replace(row, snapshot=replace(row.snapshot, watts=0.0, poe_enabled=False))]
+                return [
+                    replace(
+                        row,
+                        snapshot=replace(
+                            row.snapshot,
+                            watts=0.0,
+                            poe_enabled=False,
+                            observed_at=datetime.now(UTC).isoformat(),
+                        ),
+                    )
+                ]
 
             with (
                 patch.object(ops.query_service, "collect", read_power),
@@ -618,6 +674,12 @@ class JobTests(unittest.TestCase):
         result = job["result"]
         self.assertEqual(result["results"][0]["status"], "verified")
         self.assertEqual(result["powerRefresh"]["readings"][0]["watts"], 0.0)
+        points = self.jobs.read_power_history(snap.target.ip, snap.target.port, snap.interface, 1)[
+            "points"
+        ]
+        self.assertEqual([p["watts"] for p in points], [0])
+        self.assertEqual(points[0]["at"], result["powerRefresh"]["readings"][0]["observed"])
+        self.assertNotIn("_powerHistoryRows", result)
         register.assert_not_called()
         self.assertNotIn("files", result)
         restored = self.jobs.workspace()["query"]

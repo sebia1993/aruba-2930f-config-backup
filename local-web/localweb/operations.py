@@ -538,6 +538,8 @@ class Operations:
                 PoETarget(t, tuple(items), labels.get(t, "")) for t, items in ports.items()
             )
 
+        history_rows = []
+
         def collect(selected, message):
             try:
                 rows = self._collect_ports(
@@ -545,7 +547,7 @@ class Operations:
                 )
             except Exception:
                 # Preserve the independent control result if SSH collection cannot complete.
-                return {}
+                rows = ()
             selected_keys = set(selected)
             received = {}
             for row in rows:
@@ -555,6 +557,23 @@ class Operations:
                 if row.snapshot and (row.snapshot.target, row.snapshot.interface) != key:
                     continue
                 received[key] = row
+            finished = datetime.now(UTC).isoformat()
+            for target, port in selected:
+                row = received.get((target, port))
+                snap = row.snapshot if row else None
+                history_rows.append(
+                    dict(
+                        ip=target.ip,
+                        ssh_port=target.port,
+                        interface=port,
+                        status=row.status.value if row else "failed",
+                        complete=bool(row and row.complete),
+                        watts=snap.watts if snap else None,
+                        observed_at=snap.observed_at if snap else "",
+                        poe_finished_at=row.poe_finished_at if row else "",
+                        finished_at=(row.finished_at if row else "") or finished,
+                    )
+                )
             return received
 
         observed = collect(keys, "PoE 제어 후 전력 조회 중") if keys else {}
@@ -614,7 +633,7 @@ class Operations:
                     message=message,
                 )
             )
-        result = {"powerRefresh": {"readings": readings}}
+        result = {"powerRefresh": {"readings": readings}, "_powerHistoryRows": history_rows}
         registered = [key for key in keys if key in inventory] + failed
         if registered:
             # Never add a manually inspected, unregistered port to the inventory.

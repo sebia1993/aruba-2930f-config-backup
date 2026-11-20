@@ -19,6 +19,7 @@ class PortMonitoring:
     last_success: str | None = None
     error: str = ""
     suspended: bool = False
+    slot: int = 0
     due: float = field(init=False)
     next_at: str | None = None
 
@@ -30,7 +31,9 @@ class PortMonitoring:
         period = self.minutes * 60
         if self.due <= current:
             # Advance from the original cadence even if a long read or sleep missed several slots.
-            self.due += ((current - self.due) // period + 1) * period
+            elapsed_slots = int((current - self.due) // period) + 1
+            self.slot += elapsed_slots
+            self.due += elapsed_slots * period
         self.next_at = (datetime.now(UTC) + timedelta(seconds=self.due - current)).isoformat(
             timespec="milliseconds"
         )

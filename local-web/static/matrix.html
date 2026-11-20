@@ -448,7 +448,34 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
      </section>
     </div>
     <div class="rightcol">
-     <section class="panel" aria-labelledby="detailTitle"><div class="panel-head"><div><h2 id="detailTitle">선택 포트 상세</h2><div class="panel-sub">스위치 식별과 포트별 상태를 별도 확인</div></div></div><div class="detail" id="detail"></div></section>
+     <section class="panel" aria-labelledby="detailTitle"><div class="panel-head"><div><h2 id="detailTitle">선택 포트 상세</h2><div class="panel-sub">스위치 식별과 포트별 상태를 별도 확인</div></div></div><div class="detail" id="detail"></div>
+       <details id="powerHistory" hidden>
+         <summary>전력 추이</summary>
+         <div class="history-body">
+           <div class="history-period" role="group" aria-label="전력 추이 기간">
+             <button type="button" class="btn ghost" data-hours="1" aria-pressed="true">최근 1시간</button>
+             <button type="button" class="btn ghost" data-hours="24" aria-pressed="false">24시간</button>
+             <button type="button" class="btn ghost" data-hours="168" aria-pressed="false">7일</button>
+           </div>
+           <p id="powerHistoryStatus" role="status" hidden></p>
+           <button type="button" class="btn ghost" id="powerHistoryRetry" hidden>다시 불러오기</button>
+           <div id="powerHistoryChart" hidden>
+             <dl class="history-metrics">
+               <div><dt>최근 실측</dt><dd id="powerHistoryLatest"></dd></div>
+               <div><dt>직전 대비</dt><dd id="powerHistoryDelta"></dd></div>
+               <div><dt>마지막 측정</dt><dd id="powerHistoryTime"></dd></div>
+             </dl>
+             <svg id="powerHistoryPlot" role="slider" tabindex="0" aria-label="측정 시각별 실측 전력" aria-orientation="horizontal" aria-describedby="powerHistoryHint"></svg>
+             <div class="history-inspect">
+               <button id="powerHistoryPrev" type="button" class="btn ghost" aria-label="이전 측정">‹</button>
+               <output id="powerHistoryReading" aria-live="off"></output>
+               <button id="powerHistoryNext" type="button" class="btn ghost" aria-label="다음 측정">›</button>
+             </div>
+             <p id="powerHistoryHint">점은 측정값이고 선은 연속 모니터링 구간입니다. 점을 누르거나 좌우 화살표로 시각과 전력을 확인하세요.</p>
+           </div>
+         </div>
+       </details>
+     </section>
     </div>
    </div>
 </div>
@@ -456,6 +483,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
  </div>
 </div>
 <script src="power-matrix.js"></script>
+<script src="/static/power-history.js"></script>
 <script>
 (() => {
   'use strict';
@@ -684,6 +712,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   }
   function renderDetail() {
     const row = visibleSelectedRow();
+    if (embedded) window.PortPowerHistory.setPort(row);
     const box = el('detail');
     const factsOpen=box.querySelector('.port-facts')?.open;
     if (embedded) {
