@@ -132,7 +132,10 @@
     const tail = document.createElement('span');
     tail.className = 'tile-name-tail';
     tail.textContent = characters.slice(split).join('');
-    caption.append(head, tail);
+    const parts = document.createElement('span');
+    parts.className = 'tile-name-parts';
+    parts.append(head, tail);
+    caption.append(parts);
     return caption;
   }
 

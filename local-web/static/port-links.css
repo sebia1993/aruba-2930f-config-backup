@@ -69,6 +69,7 @@
   line-height:1.25;
 }
 .tile-neighbor-name::before {content:"이웃 · " / "";flex:none;white-space:pre;font-weight:400}
+.tile-name-parts {display:flex;min-width:0;max-width:100%;overflow:hidden}
 .tile-name-head {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:pre}
 .tile-name-tail {
   display:flex;
@@ -78,9 +79,6 @@
   overflow:hidden;
   white-space:pre;
 }
-.tile-name-head:not(:empty) + .tile-name-tail {max-width:calc(100% - 1.3em)}
-.tile-neighbor-name .tile-name-tail {max-width:calc(100% - 2.6em)}
-.tile-neighbor-name .tile-name-head:not(:empty) + .tile-name-tail {max-width:calc(100% - 3.9em)}
 .tile-link {
   display:block;background:var(--surface);color:var(--link-color);white-space:nowrap;
   border-radius:0 0 3px 3px;font-size:11px;font-weight:650;line-height:15px;text-align:center;

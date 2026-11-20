@@ -25,6 +25,7 @@ class GridSwitch(NeighborSwitch):
         self.draws.update({str(port): 8 for port in range(15, 20)})
         self.neighbors.update({str(port): [] for port in range(15, 20)})
         self.neighbors["7"] = [(LONG_NAME, "Aruba AP-535", "")]
+        self.neighbors["8"] = [("i-WW", "ArubaOS", "bridge")]
         self.release_read = Event()
         self.release_read.set()
 
@@ -94,8 +95,21 @@ def check_name(tile, caption_class, name, *, truncated=False):
                 suffix.right <= Math.min(face.right, end.right) + 1;
         }""")
     else:
-        assert caption.evaluate("""el => [...el.children].every(
-            part => part.scrollWidth <= part.clientWidth + 1)""")
+        # A flex-end suffix can clip at its left edge even if scrollWidth == clientWidth.
+        clipped = caption.evaluate("""el => {
+            const range = document.createRange();
+            return [...el.querySelectorAll('.tile-name-head,.tile-name-tail')].flatMap(part => {
+                range.selectNodeContents(part);
+                const text = range.getBoundingClientRect();
+                for (let node = part; node && el.contains(node); node = node.parentElement) {
+                    const box = node.getBoundingClientRect();
+                    if (text.left < box.left - 1 || text.right > box.right + 1)
+                        return [{part:part.textContent, text:text.width, container:box.width}];
+                }
+                return [];
+            });
+        }""")
+        assert not clipped, (name, clipped)
 
 
 def exercise(page, url, switch, second, shots, _backup):
@@ -124,7 +138,9 @@ def exercise(page, url, switch, second, shots, _backup):
 
     tile7, multi, blank = tile(7), tile(10), tile(13)
     layouts = (
-        [(width, height, 4), (320, 568, 4)] if mobile else [(width, height, 12), (768, 800, 8)]
+        [(width, height, 4), (320, 568, 4)]
+        if mobile
+        else [(width, height, 12), (1154, 900, 12), (768, 800, 8)]
     )
     for target_width, target_height, columns in layouts:
         resize_workspace(page, target_width, target_height)
@@ -138,7 +154,7 @@ def exercise(page, url, switch, second, shots, _backup):
         ).to_have_count(0)
         check_name(tile7, "tile-ap-name", LONG_NAME, truncated=True)
         check_name(tile(6), "tile-ap-name", "AP-SW-07")
-        expect(tile(8).locator(".tile-neighbor-name")).to_have_text("AP-01")
+        check_name(tile(8), "tile-neighbor-name", "i-WW")
         expect(multi.locator(".tile-neighbor-count")).to_have_text("이웃 2대")
         expect(tile(14).locator(".port-failure-mark")).to_be_visible()
         expect(tile(12)).to_have_attribute("data-state", "unpowered")
@@ -203,6 +219,7 @@ def exercise(page, url, switch, second, shots, _backup):
         pending = page.locator(".matrix-tiles").filter(has=outer)
         outer_size = grid_geometry(pending.locator("button"), columns=columns, touch=mobile)
         check_name(pending.locator('[data-key$="|7"]'), "tile-ap-name", LONG_NAME, truncated=True)
+        check_name(pending.locator('[data-key$="|8"]'), "tile-neighbor-name", "i-WW")
         expect(pending.locator('[data-key$="|10"] .tile-neighbor-count')).to_have_text("이웃 2대")
         expect(
             outer.locator(".tile-ap-name,.tile-neighbor-name,.tile-neighbor-count")
