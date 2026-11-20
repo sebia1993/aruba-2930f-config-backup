@@ -260,6 +260,27 @@ def check_paged_select_all(page, frame, switch, second, addresses, shots):
             )
             page.screenshot(path=shots / f"port-ap-name-48-{width}.png")
     resize_workspace(page, 1366, 768)
+    # Inspecting a row offers it as the sole control target even with no checkboxes checked.
+    page.locator("#listView").click()
+    rows = frame.locator("#tbody tr[data-port-key]")
+    inspected = rows.first
+    inspected_key = inspected.get_attribute("data-port-key")
+    inspected.locator(".row-select").click()
+    expect(inspected.get_by_role("checkbox")).not_to_be_checked()
+    expect(count).to_have_text("선택 1개")
+    expect_hidden_selection(page, 0)
+    frame.locator("#nextPage").click()
+    expect(frame.locator(f'#tbody tr[data-port-key="{inspected_key}"]')).to_have_count(0)
+    expect(count).to_have_text("선택 1개")
+    expect_hidden_selection(page, 1)
+    frame.locator("#prevPage").click()
+    expect_hidden_selection(page, 0)
+    inspected.get_by_role("checkbox").check()
+    inspected.get_by_role("checkbox").uncheck()
+    expect(count).to_have_text("선택 0개")
+    expect_hidden_selection(page, 0)
+    page.locator("#matrixView").click()
+
     # Port 1 on the second endpoint must survive an all/none round trip on the first.
     other.click()
     device.select_option(addresses[0])
@@ -268,7 +289,6 @@ def check_paged_select_all(page, frame, switch, second, addresses, shots):
     expect(count).to_have_text("선택 2개")
     expect(toggle).to_have_accessible_name("전체 선택")
     page.locator("#listView").click()
-    rows = frame.locator("#tbody tr[data-port-key]")
     expect(rows).to_have_count(18)
     eligible = frame.locator("#matrix [data-port-key][aria-pressed=true]")
     if page.context.browser.browser_type.name == "webkit":

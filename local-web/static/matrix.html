@@ -148,6 +148,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 [data-theme="light"] .target-samples span{background:#edf7f8;border-color:#c8e0e5;color:#315d70}
 
 [hidden]{display:none!important}
+.compact-power-label{display:none}
 .power-filter{font:inherit;color:var(--ink);text-align:left;cursor:pointer}
 .power-filter [data-power-label]{font-size:12px}
 .power-filter[aria-pressed=true]{border-color:var(--teal);box-shadow:inset 0 -2px var(--teal)}
@@ -347,6 +348,17 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   .embedded .tablewrap{max-height:none;overflow:visible}
 }
 
+@media(max-width:380px) and (max-height:420px){
+  .embedded section[aria-labelledby=matrixTitle]>.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));flex-basis:100%;gap:3px;padding:2px}
+  .embedded .metrics :is(.metric:not(.power-filter),#mUnobserved){display:none}
+  .embedded .power-filter{justify-content:center;min-width:44px;min-height:44px;padding:2px;gap:3px}
+  .embedded .power-filter:before{width:6px;height:6px}
+  .embedded .power-filter [data-power-label],.embedded .full-power-prefix{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .embedded .compact-power-label{display:inline;font-size:11px;white-space:nowrap}
+  .embedded #mUnclassified{white-space:nowrap}
+  .embedded section[aria-labelledby=matrixTitle]>.panel-head{order:4}
+}
+
 </style>
 <link rel=stylesheet href=/static/embed.css><script src=/static/embed.js defer></script></head>
 <body>
@@ -391,10 +403,10 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
    <div class="metrics">
     <div class="metric"><label>등록된 스위치</label><div class="value" id="mSwitch">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-server"/></svg></div>
     <div class="metric"><label>조회 포트</label><div class="value" id="mPorts">—</div><svg class="metric-icon" fill="none" stroke="currentColor"><use href="#i-grid"/></svg></div>
-    <button type="button" class="metric power-filter red" data-power-filter="unpowered" aria-pressed="false" aria-controls="matrix tbody"><span data-power-label="unpowered"></span> <b class="value" id="mUnpowered">—</b></button>
-    <button type="button" class="metric power-filter amber" data-power-filter="limited" aria-pressed="false" aria-controls="matrix tbody"><span data-power-label="limited"></span> <b class="value" id="mLimited">—</b></button>
-    <button type="button" class="metric power-filter green" data-power-filter="normal" aria-pressed="false" aria-controls="matrix tbody"><span data-power-label="normal"></span> <b class="value" id="mNormal">—</b></button>
-    <button type="button" class="metric power-filter" data-power-filter="unclassified" aria-pressed="false" aria-controls="matrix tbody"><span id="mUnclassified">전력 미측정</span></button>
+    <button type="button" class="metric power-filter red" data-power-filter="unpowered" aria-pressed="false" aria-controls="matrix tbody"><span data-power-label="unpowered"></span><span class="compact-power-label" aria-hidden="true">미공급</span> <b class="value" id="mUnpowered">—</b></button>
+    <button type="button" class="metric power-filter amber" data-power-filter="limited" aria-pressed="false" aria-controls="matrix tbody"><span data-power-label="limited"></span><span class="compact-power-label" aria-hidden="true">점검</span> <b class="value" id="mLimited">—</b></button>
+    <button type="button" class="metric power-filter green" data-power-filter="normal" aria-pressed="false" aria-controls="matrix tbody"><span data-power-label="normal"></span><span class="compact-power-label" aria-hidden="true">정상</span> <b class="value" id="mNormal">—</b></button>
+    <button type="button" class="metric power-filter" data-power-filter="unclassified" aria-pressed="false" aria-controls="matrix tbody"><span id="mUnclassified"><span class="full-power-prefix">전력 </span>미측정 <b id="mMissing" class="value">—</b>개</span></button>
     <small id="mUnobserved" hidden></small>
     <button id="mReadFailed" type="button" class="btn" aria-pressed="false" aria-controls="matrix tbody" title="조회 실패 포트만 보기" hidden><span class="port-failure-mark" aria-hidden="true">!</span><span id="readFailedCount"></span></button>
    </div>
@@ -565,7 +577,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     count('mUnpowered',counts.unpowered);
     count('mLimited',counts.limited);
     count('mNormal',counts.normal);
-    el('mUnclassified').textContent='전력 미측정 '+counts.unclassified.toLocaleString('ko-KR')+'개';
+    el('mMissing').textContent=counts.unclassified.toLocaleString('ko-KR');
     el('mUnobserved').textContent='재조회 필요 '+unobserved.toLocaleString('ko-KR')+'개';
     el('mUnobserved').hidden=!unobserved;
     for (const control of powerButtons) {

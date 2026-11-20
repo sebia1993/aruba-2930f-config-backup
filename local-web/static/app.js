@@ -705,8 +705,11 @@ function observedInspectionTarget() {
   if (currentInspection()) return ui.inspectedRow;
   return $('controlMode').value==='batch' ? viewer.inspectionTarget() : null;
 }
-function updateHiddenSelectedCount() {
-  const count=$('controlMode').value==='batch' && ui.selected.size ? window.portTools?.hiddenSelectedCount() || 0 : 0;
+function updateHiddenSelectedCount(targets=[]) {
+  // The result list can offer its focused port as the only control target.
+  const selected=ui.selected.size ? ui.selected : targets.map(controlPortKey);
+  const count=$('controlMode').value==='batch' && (ui.selected.size || targets.length)
+    ? window.portTools.hiddenSelectedCount(selected) : 0;
   const label=$('hiddenSelectedCount');
   label.hidden=!count;
   label.textContent='화면 밖 '+count+'개';
@@ -742,7 +745,7 @@ function updateControlTarget() {
   const selectedCount=ui.selected.size || targets.length;
   $('selectionSummary').hidden=!batch || !selectedCount;
   $('selectedCount').textContent='선택 '+selectedCount+'개';
-  updateHiddenSelectedCount();
+  updateHiddenSelectedCount(targets);
   $('quickActions').hidden=!targets.length || ($('operation').value==='disable' && !matrixControlTargets('poe_off').length);
   $('liveScope').hidden=!!currentInspection() || !(ui.liveId || displayingInventory());
   const inspect=$('inspectSingle');

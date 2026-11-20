@@ -10,6 +10,7 @@ from browser_qa import (
     power_filter,
     run_browser_case,
 )
+from browser_unified_controls import hit_point, resize_workspace
 from playwright.sync_api import expect
 from verify_http_ssh import MonitorFixture, interface_status_table
 
@@ -114,7 +115,7 @@ def check_power_filters(page, frame, shots):
 
     def activate(button):
         if mobile:
-            button.tap()
+            page.touchscreen.tap(*hit_point(button))
         else:
             button.focus()
             button.press("Enter")
@@ -125,7 +126,7 @@ def check_power_filters(page, frame, shots):
         green_port.click()
         expect(selected).to_have_text("선택 2개")
         for width, height in ((390, 844), (320, 568)) if mobile else ((1366, 768),):
-            page.set_viewport_size({"width": width, "height": height})
+            resize_workspace(page, width, height)
             for button in buttons.values():
                 expect(button).to_have_attribute("aria-pressed", "false")
                 expect(button).to_be_visible()
@@ -150,6 +151,9 @@ def check_power_filters(page, frame, shots):
             expect_hidden_selection(page, 1)
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             assert frame.locator("html").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+            hit_point(tiles.first)
+            for button in buttons.values():
+                hit_point(button)
             if shots:
                 page.screenshot(path=shots / f"power-states-{width}.png")
             activate(changes)

@@ -271,11 +271,11 @@
     }
     return device ? available.filter(key=>key.split('|')[0]===device) : available;
   }
-  function hiddenSelectedCount() {
+  function hiddenSelectedCount(selected) {
     const scope=currentScope();
     const visible=scope ? new Set(scope.visibleRows.map(controlPortKey)) : shownKeys;
     let hidden=0;
-    for (const key of ui.selected) if (!visible.has(key)) hidden++;
+    for (const key of selected) if (!visible.has(key)) hidden++;
     return hidden;
   }
   function refreshTargets(bySwitch) {
@@ -433,7 +433,8 @@
     }
     if (failureView && focused && !visible.some(item=>item.key===focused)) focused='';
     let unobserved=0;
-    for (const item of matches) {
+    const candidates=failureView ? visible : matches;
+    for (const item of candidates) {
       if (item.view.phase!=='observed') unobserved++;
       else counts[item.state]=(counts[item.state] || 0)+1;
     }
