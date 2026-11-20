@@ -265,7 +265,7 @@ def run_range(page, url, switch, second, shots, output):
     open_port_controls(page)
     page.get_by_role("button", name="전체 선택", exact=True).click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
-    page.get_by_role("button", name="PoE OFF 즉시 실행").click()
+    page.get_by_role("button", name="Power OFF 즉시 실행", exact=True).click()
     expect(page.locator("#queryCredentials")).to_be_visible()
     assert not switch.auth_attempts
     with page.expect_request(

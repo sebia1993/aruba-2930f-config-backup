@@ -106,7 +106,7 @@ def click_quick_poe(page, operation, targets, *, touch=False):
     }""")
     page.on("request", record)
     try:
-        name = "PoE ON 즉시 실행" if operation == "poe_on" else "PoE OFF 즉시 실행"
+        name = "Power ON 즉시 실행" if operation == "poe_on" else "Power OFF 즉시 실행"
         with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")):
             card = page.locator("#matrixWorkspace")
             button = card.get_by_role("button", name=name, exact=True)

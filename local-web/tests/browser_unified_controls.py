@@ -47,6 +47,31 @@ def hit_point(locator):
     return point
 
 
+def verify_quick_power_buttons(page):
+    label = "선택 포트 PoE 전원"
+    actions = page.get_by_role("group", name=label, exact=True)
+    expect(actions.get_by_text(label, exact=True)).to_be_visible()
+    off, on = actions.get_by_role("button").all()
+    icons, boxes = [], []
+    for button, text in ((off, "Power OFF"), (on, "Power ON")):
+        expect(button).to_have_text(text)
+        expect(button).to_be_enabled()
+        icon = button.locator('svg[aria-hidden="true"]')
+        expect(icon).to_be_visible()
+        icons.append(icon.inner_html())
+        hit_point(button)
+        boxes.append(button.bounding_box())
+    assert icons[0] != icons[1], "Power ON and OFF should have distinguishable symbols"
+    fills = actions.get_by_role("button").evaluate_all(
+        "buttons => buttons.map(button => getComputedStyle(button).backgroundColor)"
+    )
+    assert fills[0] != fills[1], "Distinguish outlined Power OFF from filled Power ON"
+    left, right = boxes
+    assert left["x"] + left["width"] < right["x"], "Power OFF and ON need separate targets"
+    assert abs(left["y"] - right["y"]) < 2, "Keep both quick power actions on the same row"
+    assert min(left["height"], right["height"]) >= 44
+
+
 def verify_viewport_controls(page, view, endpoint, other_endpoint):
     # Locator.click() and .check() can silently scroll both frame and outer page.
     # Use viewport hit tests and physical clicks to exercise the no-scroll workflow.
@@ -69,10 +94,7 @@ def verify_viewport_controls(page, view, endpoint, other_endpoint):
         page.mouse.click(*hit_point(selected_tile))
         expect(card.locator("#controlTarget")).to_contain_text(endpoint)
         expect(card.locator("#selectedCount")).to_have_text("선택 1개")
-        for selector in ("#quickOff", "#quickOn"):
-            button = card.locator(selector)
-            expect(button).to_be_enabled()
-            hit_point(button)
+        verify_quick_power_buttons(page)
         expect(view.locator("#tbody input:checked")).to_have_count(1)
         expect(options).not_to_have_attribute("open", "")
 
