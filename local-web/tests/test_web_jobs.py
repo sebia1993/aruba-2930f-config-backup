@@ -264,6 +264,7 @@ class JobTests(unittest.TestCase):
             self.assertNotIn("warning", self.jobs.read_power_history("192.0.2.5", 2222, "1", 1))
 
     def test_monitor_interval_and_targets_checked_before_first_ssh_read(self):
+        self.assertEqual(self.jobs.monitor_status()["intervalMinutes"], 1)
         body = {"targets": "192.0.2.5:2222 1-3"}
         with self.assertRaises(ValueError):
             self.jobs.start_monitor(body)
@@ -357,7 +358,7 @@ class JobTests(unittest.TestCase):
         with patch.object(self.jobs.operations.query_service, "collect", self.collect_ports):
             status = self.jobs.start_monitor(body)
             self.finished(status["jobId"])
-        self.assertEqual(self.jobs.monitor_status()["intervalMinutes"], 5)
+        self.assertEqual(self.jobs.monitor_status()["intervalMinutes"], 1)
         for collect in (lambda *a, **k: (), lambda *a, **k: (), self.collect_ports):
             with patch.object(self.jobs.operations.query_service, "collect", collect):
                 self.jobs.monitor.due = 0
