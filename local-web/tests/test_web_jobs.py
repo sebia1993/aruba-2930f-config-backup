@@ -16,7 +16,7 @@ from localweb.jobs import Busy, Jobs
 from localweb.monitoring import PortMonitoring
 
 from aruba2930f_backup.models import CollectionFailure, Credentials, ErrorCode
-from aruba2930f_backup.poe_query_models import PoEQueryResult, QueryStatus
+from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from aruba2930f_backup.port_control import PortControlService, PortOperationResult, PortSnapshot
 
 
@@ -286,6 +286,130 @@ class JobTests(unittest.TestCase):
                     self.jobs.start_monitor({"targets": invalid})
             collect.assert_not_called()
         self.assertFalse(self.jobs.monitor_status()["active"])
+
+    def test_monitor_rediscovers_ip_only_and_expires_removed_ports_and_permissions(self):
+        ops = self.jobs.operations
+        ops.credentials = Credentials("reader", "test")
+        body = {"targets": "192.0.2.5"}
+        inventories = iter([("1", "24"), ("24", "A1"), ()])
+
+        def read(groups, credentials, **kwargs):
+            (scope,) = groups
+            self.assertTrue(scope.all_ports)
+            self.assertEqual(scope.interfaces, ())
+            ports = next(inventories)
+            if not ports:
+                failure = CollectionFailure(ErrorCode.AUTH_FAILED, "SSH 인증 실패")
+                kwargs["on_discovery_error"](scope, failure)
+                return ()
+            group = PoETarget(scope.target, ports)
+            kwargs["on_discovered"](group)
+            return tuple(PoEQueryResult(group, p, QueryStatus.UNSUPPORTED) for p in ports)
+
+        with patch.object(ops.query_service, "collect", read):
+            started = self.jobs.start_monitor(body)
+            self.assertIsNone(started["portCount"])
+            self.assertEqual(self.finished(started["jobId"])["state"], "done")
+            self.assertEqual(self.jobs.monitor_status()["portCount"], 2)
+            for expected in [("24", "A1"), ()]:
+                self.jobs.monitor.due = time.monotonic() - 1
+                self.jobs.tick_monitor()
+                self.assertEqual(
+                    self.finished(self.jobs.monitor.job or self.jobs.monitor.last_job)["state"],
+                    "done",
+                )
+                workspace = self.jobs.workspace()
+                self.assertEqual(workspace["targetText"], body["targets"])
+                self.assertTrue(workspace["groups"][0]["all_ports"])
+                self.assertEqual(tuple(workspace["groups"][0]["interfaces"]), expected)
+                rows = workspace["query"]["rows"]
+                self.assertEqual(tuple(row["interface"] for row in rows), expected)
+                self.assertNotIn("1", {port for _, port in self.jobs.controls._registered_ports()})
+                if rows:
+                    self.assertEqual(rows[-1]["eligible_operations"], [])
+                else:
+                    self.assertEqual(
+                        workspace["query"]["discoveryErrors"][0]["error_code"], "AUTH_FAILED"
+                    )
+                    self.assertTrue(self.jobs.monitor_status()["suspended"])
+                    self.assertIsNone(self.jobs.monitor_status()["portCount"])
+
+    def test_interrupted_discovery_drops_only_that_switch_from_the_restored_matrix(self):
+        ops = self.jobs.operations
+        ops.credentials = Credentials("reader", "test")
+        scope = {"targets": "192.0.2.5\n192.0.2.6 3"}
+
+        def initial(groups, credentials, **kwargs):
+            auto, explicit = groups
+            resolved = PoETarget(auto.target, ("1", "2"))
+            kwargs["on_discovered"](resolved)
+            return [
+                PoEQueryResult(g, p, QueryStatus.UNSUPPORTED)
+                for g in (resolved, explicit)
+                for p in g.interfaces
+            ]
+
+        with patch.object(ops.query_service, "collect", initial):
+            self.assertEqual(self.finished(self.jobs.submit("ports.query", scope))["state"], "done")
+        with patch.object(ops.query_service, "collect", side_effect=RuntimeError):
+            result = self.finished(self.jobs.submit("ports.refresh", {"targets": "192.0.2.5"}))
+        self.assertEqual(result["state"], "failed")
+        restored = self.jobs.workspace()
+        self.assertEqual([g["interfaces"] for g in restored["groups"]], [[], ["3"]])
+        self.assertEqual([r["interface"] for r in restored["query"]["rows"]], ["3"])
+        self.assertEqual(restored["query"]["discoveryErrors"][0]["ip"], "192.0.2.5")
+
+    def test_forgetting_host_keys_resets_only_matching_discovered_port_registrations(self):
+        ops = self.jobs.operations
+        ops.credentials = Credentials("reader", "test")
+        body = {"targets": "192.0.2.5\n192.0.2.5:2222\n192.0.2.6 4"}
+
+        def discover(groups, credentials, **kwargs):
+            first, second, explicit = groups
+            first = PoETarget(first.target, ("1", "2"))
+            second = PoETarget(second.target, ("3",))
+            for group in (first, second):
+                kwargs["on_discovered"](group)
+            return [
+                PoEQueryResult(g, p, QueryStatus.UNSUPPORTED)
+                for g in (first, second, explicit)
+                for p in g.interfaces
+            ]
+
+        with patch.object(ops.query_service, "collect", discover):
+            self.assertEqual(self.finished(self.jobs.submit("ports.query", body))["state"], "done")
+        first, second, explicit = (g.target for g in ops.query_scope)
+        key_request = {
+            "checks": [
+                {"endpoint": t.endpoint, "fingerprint": "switch-key"} for t in (first, explicit)
+            ]
+        }
+        registered = self.jobs.controls._registered_ports
+        initial = {(first, "1"), (first, "2"), (second, "3"), (explicit, "4")}
+        self.assertEqual(registered(), initial)
+        with (
+            patch.object(ops.host_key_store, "initialize_from"),
+            patch.object(ops.host_key_store, "remove_reviewed", side_effect=ValueError),
+        ):
+            self.assertEqual(
+                self.finished(self.jobs.submit("hostkey.forget", dict(key_request)))["state"],
+                "failed",
+            )
+            self.assertEqual(registered(), initial)
+        with (
+            patch.object(ops.host_key_store, "initialize_from"),
+            patch.object(ops.host_key_store, "remove_reviewed"),
+        ):
+            self.assertEqual(
+                self.finished(self.jobs.submit("hostkey.forget", dict(key_request)))["state"],
+                "done",
+            )
+        self.assertEqual(registered(), {(second, "3"), (explicit, "4")})
+        self.assertEqual(
+            [g["interfaces"] for g in self.jobs.workspace()["groups"]], [[], ["3"], ["4"]]
+        )
+        self.assertEqual(self.finished(self.jobs.submit("session.close", {}))["state"], "done")
+        self.assertEqual(registered(), {(explicit, "4")})
 
     def test_monitor_schedule_is_anchored_to_start_and_skips_overruns(self):
         with patch("localweb.monitoring.time.monotonic", return_value=100.0) as clock:

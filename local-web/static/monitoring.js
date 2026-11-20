@@ -23,7 +23,8 @@
     if (active) interval.value=state.intervalMinutes;
     const info=[];
     if (active) {
-      info.push('전체 '+state.portCount+'포트 · '+state.intervalMinutes+'분 간격');
+      const scope=Number.isInteger(state.portCount) ? '전체 '+state.portCount+'포트' : (state.jobId ? '전체 포트 수 확인 중' : '전체 포트 수 미확인');
+      info.push(scope+' · '+state.intervalMinutes+'분 간격');
       if (state.jobId) info.push('조회 중');
       if (state.lastSuccess) info.push('마지막 성공 '+time(state.lastSuccess));
       if (!state.jobId && state.nextAt) info.push('다음 '+time(state.nextAt));
@@ -53,11 +54,12 @@
     const query=workspace.query, groups=workspace.groups;
     if (!Array.isArray(query?.rows) || !Array.isArray(groups) || !groups.length) return false;
     const same=window.portTools.matchesInventory(groups);
+    const sameScope=same || window.portTools.matchesInventory(groups,true);
     if (!same) {
-      clearPorts();
+      if (!sameScope) clearPorts();
       window.portTools.restoreInventory(groups,workspace.targetText ?? (startText || undefined),true);
     }
-    const preserve=!!ui.liveId && same;
+    const preserve=!!ui.liveId && sameScope;
     receivePorts(query,preserve,new Set(query.rows.map(portKey)),preserve);
     const success=query.rows.some(portObserved);
     const first=firstView;
@@ -79,16 +81,21 @@
       if (next.session && (ui.session.active!==next.session.active || ui.session.username!==next.session.username)) {
         const changedAccount=ui.session.active && ui.session.username!==next.session.username;
         ui.session=next.session;
-        if (!ui.session.active || changedAccount) clearPorts();
+        if (!ui.session.active || changedAccount) window.portTools.clearSshObservations();
         sync();
       }
-      if (next.active && firstView && next.jobId && !next.lastJobId && next.jobId!==stagedJob) {
+      if (next.active && firstView && next.jobId && !next.lastJobId &&
+          (next.jobId!==stagedJob || window.portTools.awaitingDiscovery())) {
         const job=await api('/api/jobs/'+encodeURIComponent(next.jobId));
         if (ticket!==generation || ui.busy) return;
         if (job.progress?.targets?.length) {
           const text=job.progress.targetText || startText;
           if (text && !$('queryTargets').value) $('queryTargets').value=text;
-          window.portTools.showStartingMatrix(job.progress.targets,text);
+          if (next.jobId!==stagedJob) window.portTools.showStartingMatrix(job.progress.targets,text);
+          else if (!window.portTools.matchesInventory(job.progress.targets)) {
+            window.portTools.restoreInventory(job.progress.targets,text,true);
+          }
+          showDiscoveryErrors(job.progress.discoveryErrors);
           stagedJob=next.jobId;
         }
       }

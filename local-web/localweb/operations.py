@@ -32,6 +32,7 @@ from aruba2930f_backup.models import (
 from aruba2930f_backup.poe_query import PoEQueryService
 from aruba2930f_backup.poe_query_models import (
     MAX_INTERFACES_PER_TARGET,
+    MAX_TOTAL_INTERFACES,
     PoEQueryResult,
     PoETarget,
     QueryStatus,
@@ -45,7 +46,7 @@ from aruba2930f_backup.poe_targets import (
     parse_pasted_targets,
     save_target_profile,
 )
-from aruba2930f_backup.port_control import PortAction, validate_interface
+from aruba2930f_backup.port_control import PortAction, validate_interface, validate_query_interface
 from aruba2930f_backup.reporting import ReportSummary, SanitizedJsonlLogger, write_result_workbook
 from aruba2930f_backup.ssh_legacy import session_legacy_ssh
 from aruba2930f_backup.storage import (
@@ -69,9 +70,12 @@ POWER_SETTLE_SECONDS = 3
 
 def _target_text(body: dict, field: str = "targets") -> str:
     text = body.get(field)
-    if not isinstance(text, str) or not text.strip() or len(text) > MAX_PASTE_CHARACTERS:
+    if not isinstance(text, str) or len(text) > MAX_PASTE_CHARACTERS:
         raise ValueError("대상 목록을 1~100,000자로 입력하세요.")
-    return text.strip().removeprefix("\ufeff")
+    text = text.strip(" \r\n").removeprefix("\ufeff")
+    if not text.strip():
+        raise ValueError("대상 목록을 1~100,000자로 입력하세요.")
+    return text
 
 
 def _endpoint(text: str) -> DeviceTarget:
@@ -129,7 +133,7 @@ def _expand_interfaces(text: str) -> str:
     for part in text.split(","):
         part = part.strip()
         if "-" not in part:
-            interfaces.append(validate_interface(part))
+            interfaces.append(validate_query_interface(part))
         else:
             first, _, last = part.partition("-")
             first = validate_interface(first.strip())
@@ -148,25 +152,28 @@ def _expand_interfaces(text: str) -> str:
     return ",".join(interfaces)
 
 
-def _groups(body: dict) -> tuple[PoETarget, ...]:
+def _groups(body: dict, *, allow_all_ports: bool = True) -> tuple[PoETarget, ...]:
     text = _target_text(body)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if "\t" in text:
         # Try the original quoted Excel TSV grammar first. A simple two-column
         # table can alternatively use the web's combined endpoint or port range.
         try:
-            return parse_pasted_targets(text)
+            return parse_pasted_targets(text, allow_all_ports=allow_all_ports)
         except ValueError:
-            if any(line.count("\t") != 1 for line in lines):
+            if any(line.count("\t") > 1 for line in lines):
                 raise
-    if not re.match(r"^[0-9.]+(?::[0-9]+)?\s+", lines[0]):
-        return parse_pasted_targets(text)
+    if not re.match(r"^[0-9.]+(?::[0-9]+)?(?:\s|$)", lines[0]):
+        return parse_pasted_targets(text, allow_all_ports=allow_all_ports)
     groups = []
     for number, line in enumerate(lines, 1):
         try:
-            address, ports = line.split(maxsplit=1)
-            target = _endpoint(address)
-            groups.append(make_target(target.ip, target.port, _expand_interfaces(ports)))
+            fields = line.split(maxsplit=1)
+            target = _endpoint(fields[0])
+            ports = _expand_interfaces(fields[1]) if len(fields) == 2 else ""
+            groups.append(
+                make_target(target.ip, target.port, ports, allow_all_ports=allow_all_ports)
+            )
         except ValueError as exc:
             raise ValueError(f"{number}행의 스위치 주소 또는 포트 목록을 확인하세요.") from exc
     return merge_targets(groups)
@@ -191,7 +198,13 @@ def _bounded_integer(body: dict, name: str, default: int, upper: int) -> int:
     return value
 
 
-def _eligible(row: PoEQueryResult) -> list[str]:
+def _eligible(row: PoEQueryResult, *, disable_only=False) -> list[str]:
+    try:
+        validate_interface(row.interface)
+    except ValueError:
+        return []  # Expansion-module port identifiers are supported for reads only.
+    if disable_only:
+        return [PortAction.DISABLE.value]
     actions = []
     for action in PortAction:
         try:
@@ -221,6 +234,8 @@ class Operations:
         self._unreported_ports: set[tuple[DeviceTarget, str]] = set()
         self.unverified_controls: set[tuple[DeviceTarget, str]] = set()
         self._inventory: tuple[PoETarget, ...] = ()
+        self.query_scope: tuple[PoETarget, ...] = ()
+        self._discovery_errors: dict[DeviceTarget, dict] = {}
         self.query_target_text: str | None = None
         self._review: dict[str, HostKeyCheck] = {}
         self._progress_lock = threading.Lock()
@@ -228,6 +243,8 @@ class Operations:
         self._backup_progress = None
         self._query_events = []
         self._query_targets = ()
+        self._query_all = set()
+        self._last_discovery_cursor = -1
         self._cable_events = []
 
     def progress_snapshot(self):
@@ -245,8 +262,10 @@ class Operations:
         with self._progress_lock:
             batch = self._query_events[after : after + 512]
             changes = {"observations": batch, "cursor": after + len(batch)}
-            if after == 0 and self.query_started:
-                changes["targets"] = group_targets(self._query_targets)
+            if self.query_started and (after == 0 or after <= self._last_discovery_cursor):
+                changes["targets"] = group_targets(self._query_targets, self._query_all)
+                if self._query_all:
+                    changes["discoveryErrors"] = self.discovery_errors()
             return changes
 
     def cable_progress(self, after):
@@ -259,6 +278,8 @@ class Operations:
             self.progress = {}
             self._query_events = []
             self._query_targets = ()
+            self._query_all = set()
+            self._last_discovery_cursor = -1
             self._cable_events = []
 
     def session_summary(self) -> dict:
@@ -269,7 +290,25 @@ class Operations:
         }
 
     def inventory_view(self):
-        return group_targets(self._inventory)
+        return group_targets(self._inventory, {g.target for g in self.query_scope if g.all_ports})
+
+    def _reset_discovered_ports(self, targets: set[DeviceTarget] | None = None) -> None:
+        scopes = {
+            g.target: g
+            for g in self.query_scope
+            if g.all_ports and (targets is None or g.target in targets)
+        }
+        if scopes:
+            self._inventory = tuple(scopes.get(g.target, g) for g in self._inventory)
+            for target in scopes:
+                self._discovery_errors.pop(target, None)
+
+    def discovery_errors(self):
+        return [
+            self._discovery_errors[g.target]
+            for g in self.query_scope
+            if g.target in self._discovery_errors
+        ]
 
     def _start_progress(self, message: str, total: int, completed: int = 0) -> None:
         self._backup_progress = None
@@ -293,6 +332,8 @@ class Operations:
             view = preview_targets(body, _groups)
             if action == "targets.apply":
                 self._inventory = _groups({"targets": view["targets"]}) if view["groups"] else ()
+                self.query_scope = self._inventory
+                self._discovery_errors.clear()
                 self.last_results = ()
                 self.query_target_text = None
                 self.unverified_controls.clear()
@@ -319,6 +360,7 @@ class Operations:
             self.unverified_controls.clear()
             self.credentials = credentials
             self.query_target_text = None
+            self._reset_discovered_ports()
             session_legacy_ssh.clear()
             return {"connected": credentials is not None}
         if action == "hostkey.inspect":
@@ -393,8 +435,10 @@ class Operations:
             self._review.clear()
             self.last_results = ()
             self.unverified_controls.clear()
-            for endpoint in selected:
-                session_legacy_ssh.revoke(_endpoint(endpoint))
+            forgotten = {_endpoint(endpoint) for endpoint in selected}
+            self._reset_discovered_ports(forgotten)
+            for target in forgotten:
+                session_legacy_ssh.revoke(target)
             return {"removed": True}
         if action == "backup.history":
             extra = selected_directory(body.get("output_directory"))
@@ -426,7 +470,10 @@ class Operations:
         if action == "cable.test":
             if body.get("confirmed") is not True:
                 raise ValueError("선택 포트의 링크 단절 가능성을 확인한 뒤 테스트를 실행하세요.")
-            groups = _groups(body)
+            groups = _groups(body, allow_all_ports=False)
+            for group in groups:
+                for port in group.interfaces:
+                    validate_interface(port)
             total = sum(len(group.interfaces) for group in groups)
             self._start_progress("케이블 진단 중", total)
             options = CollectionOptions(
@@ -443,39 +490,52 @@ class Operations:
         raise ValueError("지원하지 않는 작업입니다.")
 
     def _query(self, groups, credentials, cancel, *, refresh: bool, target_text=None) -> dict:
+        discovering = {g.target for g in groups if g.all_ports}
         if refresh:
             current = {g.target: g for g in self._inventory}
+            allowed_all = {g.target for g in self.query_scope if g.all_ports}
             for group in groups:
                 original = current.get(group.target)
-                if original is None or not set(group.interfaces).issubset(original.interfaces):
+                if (
+                    original is None
+                    or (group.all_ports and group.target not in allowed_all)
+                    or not set(group.interfaces).issubset(original.interfaces)
+                ):
                     raise ValueError("이 세션에서 조회했던 스위치와 포트만 재조회할 수 있습니다.")
-            groups = tuple(
-                PoETarget(g.target, g.interfaces, current[g.target].label) for g in groups
-            )
+            groups = tuple(replace(g, label=current[g.target].label) for g in groups)
         else:
             self._inventory = groups
+            self.query_scope = groups
             self.query_target_text = target_text
             self.last_results = ()
             self._unreported_ports.clear()
             self.unverified_controls.clear()
+            self._discovery_errors.clear()
+        # Until a new inventory arrives, a previous all-port reading confers no current targets.
+        if discovering:
+            self._reset_discovered_ports(discovering)
         requested = {(g.target, port) for g in groups for port in g.interfaces}
         # A failed refresh must not authorize actions on stale snapshots of those ports.
         retained = {
             (r.group.target, r.interface): r
             for r in self.last_results
-            if (r.group.target, r.interface) not in requested
+            if r.group.target not in discovering and (r.group.target, r.interface) not in requested
         }
         self.last_results = tuple(retained.values())
         observed = self._collect_ports(
             groups, credentials, cancel, "스위치 포트 조회 중", first_use_host_key_policy(cancel)
         )
-        self._merge_query_results(groups, observed, cancel.is_set())
+        resolved = self._query_targets if discovering else groups
+        self._merge_query_results(resolved, observed, cancel.is_set())
+        requested = {(g.target, port) for g in resolved for port in g.interfaces}
         for row in observed:
             if row.complete and row.status is QueryStatus.OK and row.snapshot:
                 self.unverified_controls.discard((row.group.target, row.interface))
         result = self._port_view(requested)
-        if not refresh:
+        if not refresh or discovering:
             result["groups"] = self.inventory_view()
+        if any(g.all_ports for g in self.query_scope):
+            result["discoveryErrors"] = self.discovery_errors()
         return result
 
     def _collect_ports(self, groups, credentials, cancel, message, approve_host_key):
@@ -484,10 +544,47 @@ class Operations:
         with self._progress_lock:
             self._query_events = []
             self._query_targets = groups
-        _abort_if_cancelled(cancel)
+            self._query_all = {g.target for g in groups if g.all_ports}
+            self._last_discovery_cursor = -1
+        # Discovery reports cancellation per switch, including switches whose
+        # physical port list could not yet be read.
+        if not self._query_all:
+            _abort_if_cancelled(cancel)
 
         power_reads = set()
         completed_ports = set()
+
+        def discovered(group):
+            nonlocal total
+            with self._progress_lock:
+                # A partial refresh must also fit alongside the other registered switches.
+                if (
+                    len(group.interfaces)
+                    + sum(len(g.interfaces) for g in self._inventory if g.target != group.target)
+                    > MAX_TOTAL_INTERFACES
+                ):
+                    raise CollectionFailure(
+                        ErrorCode.COMMAND_REJECTED, "등록된 전체 포트가 14,400개를 초과합니다."
+                    )
+                self._query_targets = tuple(
+                    group if g.target == group.target else g for g in self._query_targets
+                )
+                self._inventory = tuple(
+                    group if g.target == group.target else g for g in self._inventory
+                )
+                total += len(group.interfaces)
+                self.progress = {**self.progress, "total": total}
+                self._last_discovery_cursor = len(self._query_events)
+
+        def discovery_failed(group, failure):
+            with self._progress_lock:
+                self._discovery_errors[group.target] = dict(
+                    ip=group.target.ip,
+                    ssh_port=group.target.port,
+                    error_code=failure.code.value,
+                    message=failure.safe_message,
+                )
+                self._last_discovery_cursor = len(self._query_events)
 
         def on_row(row):
             observation = matrix_observation(row)
@@ -511,6 +608,11 @@ class Operations:
             approve_host_key=approve_host_key,
             cancel_event=cancel,
             on_result=on_row,
+            **(
+                {"on_discovered": discovered, "on_discovery_error": discovery_failed}
+                if self._query_all
+                else {}
+            ),
         )
 
     def refresh_control_power(self, action, outcomes, credentials, cancel):
@@ -682,11 +784,23 @@ class Operations:
         """Drop measurements for the accepted request if no publishable result exists."""
         if not self._query_targets:
             return []
+        for group in self._query_targets:
+            if group.all_ports and group.target not in self._discovery_errors:
+                self._discovery_errors[group.target] = dict(
+                    ip=group.target.ip,
+                    ssh_port=group.target.port,
+                    error_code=ErrorCode.CANCELLED.value
+                    if cancelled
+                    else ErrorCode.UNEXPECTED_ERROR.value,
+                    message="포트 목록 조회가 취소됐습니다."
+                    if cancelled
+                    else "포트 목록을 확인하지 못했습니다.",
+                )
         absent = self._merge_query_results(self._query_targets, (), cancelled)
         return [
             dict(
                 matrix_observation(row),
-                eligible_operations=[PortAction.DISABLE.value],
+                eligible_operations=_eligible(row, disable_only=True),
                 controlUsed=True,
                 refreshInvalidated=True,
             )
@@ -735,11 +849,7 @@ class Operations:
         for native in self.last_results:
             key = native.group.target, native.interface
             locked = key in self.unverified_controls
-            allowed = (
-                [PortAction.DISABLE.value]
-                if locked or key in self._unreported_ports
-                else _eligible(native)
-            )
+            allowed = _eligible(native, disable_only=locked or key in self._unreported_ports)
             values = matrix_observation(native)
             values.update(
                 eligible_operations=allowed, eligibleOff=PortAction.POE_OFF.value in allowed

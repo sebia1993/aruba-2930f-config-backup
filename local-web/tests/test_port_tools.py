@@ -67,6 +67,24 @@ class TargetToolTests(unittest.TestCase):
             self.assertEqual(self.ops._inventory, seeded)
         self.assertEqual(original["groups"][0]["interfaces"], ["1", "2"])
 
+    def test_ip_only_mixed_scopes_round_trip_and_cannot_broaden_other_operations(self):
+        raw = "192.0.2.1\n192.0.2.2:2222\t2,4-5\n192.0.2.1 8"
+        parsed = self.run_action("targets.preview", targets=raw)
+        self.assertIsNone(parsed["port_count"])
+        self.assertEqual(parsed["groups"][0]["interfaces"], [])
+        self.assertTrue(parsed["groups"][0]["all_ports"])
+        self.assertEqual(parsed["groups"][1]["interfaces"], ["2", "4", "5"])
+        applied = self.run_action("targets.apply", targets=parsed["targets"])
+        self.assertEqual(parsed["groups"], applied["groups"])
+        self.run_action("session.open", username="reader", password="test")
+        for action, target in [
+            ("ports.refresh", "192.0.2.2:2222"),
+            ("cable.test", "192.0.2.1"),
+            ("cable.test", "192.0.2.1 A1"),
+        ]:
+            with self.subTest(action=action, target=target), self.assertRaises(ValueError):
+                self.run_action(action, targets=target, confirmed=True)
+
     def test_live_observation_uses_native_state(self):
         group = PoETarget(DeviceTarget("192.0.2.5", 2222), ("1/1",), "창고")
         for complete, expected in [(True, "unknown"), (False, "loading")]:

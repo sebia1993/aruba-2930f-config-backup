@@ -134,7 +134,7 @@ async function poll(id,resuming=false,responseKey=null) {
     if (job.progress?.message && !$('stopJob').disabled) {
       setJobProgress(job.progress);
       const {message,completed,total} = job.progress;
-      const counts=Number.isSafeInteger(job.progress.powerRead)
+      const counts=total>0 && Number.isSafeInteger(job.progress.powerRead)
         ? ' · PoE 수집 '+job.progress.powerRead+'/'+total+' · 포트 완료 '+completed+' / '+total
         : total>0 ? ' ('+completed+' / '+total+')' : '';
       const prefix=job.action==='ports.query' ? '' : (jobNames[job.action] || '작업')+' · ';
@@ -192,7 +192,7 @@ async function run(action, body, receive, retryKeys=null) {
       if ((action==='ports.query' || retryKeys) && !cancelled && Array.isArray(readings)) {
         const failed=readings.filter(portReadFailed);
         if (failed.length || !readings.some(portObserved)) {
-          const reason=failed.length ? PowerMatrix.readFailure(failed[0]) : readings.find(row=>row.message)?.message;
+          const reason=failed.length ? PowerMatrix.readFailure(failed[0]) : readings.find(row=>row.message)?.message || result.discoveryErrors?.[0]?.message;
           const summary=failed.length ? '조회 실패 '+failed.length+'포트' : '조회에 성공한 포트가 없습니다.';
           const partial=result.rows.some(portObserved);
           notify(label+' 완료 · '+summary+(reason?' · '+reason:''),!partial,partial);
@@ -552,7 +552,9 @@ async function applySshAccount(username, password, enableSecret) {
   let applied = false;
   await run('session.open',credentials,(result,cancelled) => {
     if (!result.connected) return;
-    if (ui.session.active || ui.rows.length || ui.liveId || ui.inspectedRow) clearPorts();
+    if (ui.session.active || ui.rows.length || ui.liveId || ui.inspectedRow) {
+      window.portTools.clearSshObservations();
+    }
     ui.session = {active:true, username:user};
     applied = !cancelled;
   });
@@ -561,7 +563,8 @@ async function applySshAccount(username, password, enableSecret) {
 form('loginForm', () => applySshAccount($('username'), $('password'), $('enableSecret')));
 $('logout').onclick = () => run('session.close',{},r => {
   if (r.connected !== false) return;
-  ui.session = {active:false}; clearPorts();
+  ui.session = {active:false};
+  window.portTools.clearSshObservations();
   $('password').value = ''; $('enableSecret').value = '';
 });
 form('inspectForm', () => {
@@ -621,7 +624,8 @@ function showStoredKeys(keys) {
       ],'이 키 삭제',()=>run('hostkey.forget',{endpoint:x.endpoint,fingerprint:x.fingerprint},r=>{
         if (r.removed) {
           showStoredKeys(keys.filter(key=>key!==x));
-          $('trustResult').replaceChildren(); $('trustResult').hidden = true; clearPorts();
+          $('trustResult').replaceChildren(); $('trustResult').hidden = true;
+          window.portTools.clearSshObservations(new Set([x.endpoint]));
         }
       })));
       forget.dataset.job = '';
@@ -638,7 +642,8 @@ function showStoredKeys(keys) {
           if (r.removed) {
             const removed = new Set(checks.map(c=>c.endpoint));
             showStoredKeys(keys.filter(k=>!removed.has(k.endpoint)));
-            $('trustResult').replaceChildren(); $('trustResult').hidden = true; clearPorts();
+            $('trustResult').replaceChildren(); $('trustResult').hidden = true;
+            window.portTools.clearSshObservations(removed);
           }
         });
       });
@@ -688,6 +693,7 @@ form('backupForm', () => {
 });
 
 const endpoint = row => Number(row.ssh_port || 22) === 22 ? row.ip : row.ip + ':' + row.ssh_port;
+const controlPortSupported = port => typeof port==='string' && port.length<=12 && /^[1-9]\d*(?:\/[1-9]\d*)?$/.test(port);
 const portKey = row => endpoint(row) + '|' + row.interface;
 const targetFromRow = row => ({ip:row.ip,sshPort:Number(row.ssh_port || 22),port:String(row.interface)});
 const controlPortKey = target => portKey({ip:target.ip,ssh_port:target.sshPort,interface:target.port});
@@ -699,6 +705,7 @@ function expireLiveMatrix(preserveView=false) {
 function clearPorts(preserveView=false) {
   window.controlTools?.clearQuickResult();
   ui.rows = []; ui.selected.clear();
+  showDiscoveryErrors([]);
   $('controlResult').hidden = true;
   expireLiveMatrix(preserveView);
   $('controlPanel').open=false;
@@ -716,7 +723,8 @@ function observedInspectionTarget() {
   const viewer=monitor();
   if (ui.selected.size || !ui.liveId || viewer?.source().liveId!==ui.liveId) return null;
   if (currentInspection()) return ui.inspectedRow;
-  return $('controlMode').value==='batch' ? viewer.inspectionTarget() : null;
+  const row=$('controlMode').value==='batch' ? viewer.inspectionTarget() : null;
+  return row && controlPortSupported(row.port) ? row : null;
 }
 function updateHiddenSelectedCount(targets=[]) {
   // The result list can offer its focused port as the only control target.
@@ -787,11 +795,18 @@ function renderPorts() {
   updatePortActions();
   window.portTools?.renderMatrix();
 }
+function showDiscoveryErrors(errors) {
+  if (!Array.isArray(errors)) return;
+  const list=$('discoveryErrors');
+  list.replaceChildren(...errors.map(error=>elem('li',endpoint(error)+' · 포트 목록 조회 실패 · '+error.message)));
+  list.hidden=!errors.length;
+}
 function receivePorts(result,keepView=false,refreshedKeys,periodic=false) {
   if (!Array.isArray(result.rows)) return;
   const selectedKey=periodic && ui.tileRow?.key;
   ui.tileRow=null;
   ui.rows = window.portTools.reconcileRows(result.rows,refreshedKeys);
+  showDiscoveryErrors(result.discoveryErrors);
   updateQuerySummary();
   const available = new Set(window.portTools.availableControlTargets($('operation').value,true).map(controlPortKey));
   ui.selected = new Set([...ui.selected].filter(key=>available.has(key)));
@@ -1144,7 +1159,8 @@ $('shutdown').onclick = () => confirmDialog('로컬 웹 서버 종료',[elem('p'
   try {
     await api('/api/shutdown',{});
     window.dispatchEvent(new Event('aruba-server-stopped'));
-    ui.token = ''; ui.session = {active:false}; clearPorts(); sync();
+    ui.token = ''; ui.session = {active:false};
+    window.portTools.clearSshObservations(); sync();
     notify('로컬 웹 서버를 종료했습니다. 다시 사용하려면 Start-Local-Web.cmd를 여세요.');
   } catch (e) { notify(e.message,true); }
 });

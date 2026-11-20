@@ -36,6 +36,7 @@ from .storage import default_output_directory
 from .validation import SUPPORTED_MODELS, identify_connected_device
 
 _PORT_RE = re.compile(r"[1-9][0-9]*(?:/[1-9][0-9]*)?")
+_QUERY_PORT_RE = re.compile(r"(?:[A-Z][1-9][0-9]*+|[1-9][0-9]*+(?:/[A-Z]?[1-9][0-9]*+)?)")
 
 
 class PreMutationRejected(CollectionFailure):
@@ -115,10 +116,17 @@ def _invalid_status(message: str) -> CollectionFailure:
     return CollectionFailure(ErrorCode.COMMAND_REJECTED, message)
 
 
+def validate_query_interface(value: str) -> str:
+    """Accept one physical AOS-S interface, including a modular uplink, for reads."""
+    if not isinstance(value, str) or len(value) > 12 or not _QUERY_PORT_RE.fullmatch(value):
+        raise ValueError("조회할 물리 포트 번호를 확인하세요.")
+    return value
+
+
 def parse_interface_status(output: str, interface: str) -> InterfaceState:
     """Read only Type and administrative Enabled from the brief table."""
 
-    validate_interface(interface)
+    validate_query_interface(interface)
     if not re.search(r"\bPort\s+Type\s*\|\s*Alert\s+Enabled\s+Status\b", output):
         raise _invalid_status("포트 상태 표의 열을 확인하지 못했습니다. 변경을 중단합니다.")
     port = re.escape(interface) + r"(?:-Trk[1-9][0-9]*)?"
@@ -140,6 +148,7 @@ def parse_interface_status(output: str, interface: str) -> InterfaceState:
 
 UNKNOWN_LINK = "확인 불가"
 _STATUS_COLUMNS = ["port", "name", "status", "config-mode", "speed", "type", "tagged", "untagged"]
+_STATUS_TRUNK = re.compile(rf"({_QUERY_PORT_RE.pattern})-(?i:Trk)([1-9][0-9]*)")
 
 
 def _terminal_cells(line: str) -> str:
@@ -156,8 +165,7 @@ def _terminal_cells(line: str) -> str:
     return "".join(cells)
 
 
-def parse_interface_links(output: str) -> dict[str, str]:
-    """Read only the Port and Status cells of an unambiguous AOS-S status table."""
+def _status_table_ports(output: str, *, require_complete: bool) -> dict[str, str]:
     lines = output.expandtabs().splitlines()
     headers = [i for i, line in enumerate(lines) if line.lower().split() == _STATUS_COLUMNS]
     if len(headers) != 1 or headers[0] + 1 >= len(lines):
@@ -177,37 +185,87 @@ def parse_interface_links(output: str) -> dict[str, str]:
     gaps = [slice(left.end(), right.start()) for left, right in pairwise(spans)]
     config = slice(spans[3].start(), spans[3].end())
     status_cell = slice(status_span.start(), status_span.end())
-    seen: set[str] = set()
     links: dict[str, str] = {}
+    between_sections = False
     for line in lines[header + 2 :]:
-        port = line[port_span.start() : port_span.end()].strip()
-        match = re.fullmatch(r"([1-9][0-9]*(?:/[1-9][0-9]*)?)(?:-Trk[1-9][0-9]*)?", port, re.I)
-        if not match or line[: port_span.start()].strip():
+        if not line.strip():
+            between_sections = bool(links)
             continue
-        interface = match[1]
-        if interface in seen:
-            links.pop(interface, None)
-            continue
-        seen.add(interface)
+        token = re.search(r"\S+", line)
+        if token is None or not port_span.start() <= token.start() < port_span.end():
+            continue  # A continuation in the Name column does not identify another port.
+        interface = token[0]
+        ends = range(token.end(), token.end() + 1)
+        trunk = _STATUS_TRUNK.match(line, token.start())
+        if trunk:
+            interface = trunk[1]
+            # An overflowing trunk can touch a name that itself begins with digits.
+            # Try each split within the Name column width and verify its other cells.
+            name_start = spans[1].start()
+            name_width = status_span.start() - name_start
+            first = max(name_start, trunk.start(2) + 1, trunk.end() - name_width)
+            if trunk.end() >= name_start or trunk.end() != token.end():
+                ends = range(first, trunk.end() + 1)
+        physical = len(interface) <= 12 and _QUERY_PORT_RE.fullmatch(interface) is not None
+        candidates = (
+            " " * start + line[end:]
+            for end in ends
+            for start in {min(end, port_span.end()), min(end, spans[1].start())}
+        )
         # Firmware can pad a name by character count or by terminal cell width.
         # Only accept an aligned interpretation; conflicting readings are unknown.
-        layouts = (line,) if line.isascii() else (line, _terminal_cells(line))
         readings = {
             layout[status_cell].strip().lower()
-            for layout in layouts
-            if layout[config].strip() and not any(layout[gap].strip() for gap in gaps)
+            for candidate in candidates
+            for layout in (
+                (candidate,) if candidate.isascii() else (candidate, _terminal_cells(candidate))
+            )
+            if layout[config].strip()
+            and layout[spans[4].start() :].strip()
+            and not layout[: port_span.start()].strip()
+            and not any(layout[gap].strip() for gap in gaps)
         }
-        if readings == {"up"}:
+        if not readings:
+            if physical:
+                if require_complete:
+                    return {}  # A partial inventory cannot stand for the whole switch.
+                links[interface] = UNKNOWN_LINK
+                continue
+            if between_sections:
+                break
+            continue
+        between_sections = False
+        if not physical:
+            continue
+        if interface in links:
+            links[interface] = UNKNOWN_LINK
+        elif readings == {"up"}:
             links[interface] = "Up"
         elif readings == {"down"}:
             links[interface] = "Down"
+        else:
+            links[interface] = UNKNOWN_LINK
     return links
+
+
+def parse_interface_inventory(output: str) -> dict[str, str]:
+    """Require a complete set of physical rows; their link states can be unknown."""
+    return _status_table_ports(output, require_complete=True)
+
+
+def parse_interface_links(output: str) -> dict[str, str]:
+    """Return confirmed links only for existing explicit-port callers."""
+    return {
+        port: link
+        for port, link in _status_table_ports(output, require_complete=False).items()
+        if link != UNKNOWN_LINK
+    }
 
 
 def parse_poe_status(output: str, interface: str) -> PoEState:
     """Require a port-bound Power Enable value, distinct from power delivery."""
 
-    validate_interface(interface)
+    validate_query_interface(interface)
     headers = re.findall(
         r"(Port Power Status|Status and Configuration Information)"
         r"[ \t]+for port[ \t]+([^\r\n]+)",

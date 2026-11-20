@@ -156,7 +156,7 @@ class Jobs:
                 "suspended": bool(plan and plan.suspended),
                 "monitorId": plan.id if plan else None,
                 "intervalMinutes": plan.minutes if plan else DEFAULT_MONITOR_MINUTES,
-                "portCount": sum(len(g.interfaces) for g in plan.groups) if plan else 0,
+                "portCount": plan.port_count if plan else 0,
                 "nextAt": plan.next_at if plan else None,
                 "jobId": plan.job if plan else None,
                 "lastJobId": plan.last_job if plan else None,
@@ -350,6 +350,8 @@ class Jobs:
                     row.update(controlUsed=True, link_status="", link_observed_at="")
                 rows.append(row)
             workspace["query"] = {"rows": rows}
+            if any(g.all_ports for g in self.operations.query_scope):
+                workspace["query"]["discoveryErrors"] = self.operations.discovery_errors()
             return workspace
 
     def _store_port_view(self, result, *, monitored=False):
@@ -566,15 +568,21 @@ class Jobs:
                         self._store_port_view(result, monitored=monitored)
                     elif state != "done":
                         invalid = self.operations.invalidate_failed_refresh(cancel.is_set())
-                        if invalid:
+                        if invalid or (action == "ports.refresh" and self.operations.query_started):
                             self._record_power(invalid, plan, result)
                             previous = self.port_view["rows"] if self.port_view else []
+                            registered = {
+                                (group["ip"], group["ssh_port"], port)
+                                for group in self.operations.inventory_view()
+                                for port in group["interfaces"]
+                            }
                             rows = {
                                 (r["ip"], int(r["ssh_port"]), r["interface"]): r
                                 for r in [*previous, *invalid]
                             }
                             self._store_port_view(
-                                {"rows": list(rows.values())}, monitored=monitored
+                                {"rows": [row for key, row in rows.items() if key in registered]},
+                                monitored=monitored,
                             )
                 elif (
                     action in {"session.open", "session.close", "targets.apply", "hostkey.forget"}
@@ -599,7 +607,7 @@ class Jobs:
                     or (
                         action == "ports.query"
                         and self.operations.query_started
-                        and self.operations.inventory_view() != group_targets(plan.groups)
+                        and self.operations.query_scope != plan.groups
                     )
                 ):
                     self.monitor = None
