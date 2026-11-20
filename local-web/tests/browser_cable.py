@@ -2,6 +2,7 @@
 
 import re
 import sys
+import time
 from threading import Event
 
 from browser_power_matrix import PowerMatrixSwitch
@@ -96,6 +97,12 @@ class CableSwitch(PowerMatrixSwitch):
                     channel.sendall(b"Y")
             channel.sendall(b"\r\n" + self.prompt.encode())
         else:
+            if self.test_reply == "disconnect-show":
+                # Interrupt an actual read with a partial reply on the discarded channel.
+                self.test_reply = "confirm"
+                channel.sendall((command + "\r\n" + port + " 1-2 Short 82m\r\n").encode())
+                channel.get_transport().close()
+                return False
             if self.pending_reads:
                 self.pending_reads -= 1
                 channel.sendall("\r\n".join([command, "Test in progress", self.prompt]).encode())
@@ -136,7 +143,15 @@ def exercise(page, url, switch, other, shots, _backup):
     touch = page.context.browser.browser_type.name == "webkit"
     if touch:
         resize_workspace(page, 390, 844)
+
+    def load_feature_script(route):
+        # Keep a deferred feature behind the small bootstrap response on a cold load.
+        time.sleep(0.3)
+        route.continue_()
+
+    page.route("**/static/cable-tools.js", load_feature_script, times=1)
     page.goto(url)
+    page.wait_for_function("() => ui.appReady")
     nav = page.get_by_role("navigation", name="주 메뉴")
     cable = nav.get_by_role("link", name="케이블 진단", exact=True)
     ports = nav.locator('a[href="#ports"]')
@@ -212,6 +227,7 @@ def exercise(page, url, switch, other, shots, _backup):
     expect(results).to_contain_text(re.compile(r"17\s*m"), timeout=60000)
     expect(results).not_to_contain_text(re.compile(r"11\s*m"))
     expect(workspace.locator("#cableResultTitle")).to_have_text("이번 진단 결과")
+    expect(page.locator("#statusText")).to_contain_text("측정 완료 1포트")
     assert commands(0) == sequence(1)
     assert "9" not in switch.readings
     for pair in ("1-2", "3-6", "4-5", "7-8"):
@@ -225,6 +241,7 @@ def exercise(page, url, switch, other, shots, _backup):
         failure = results.locator('[data-stage="clear"][data-status="failed"]')
         expect(failure).to_contain_text("초기화", timeout=60000)
         expect(results.locator("table")).to_have_count(0)
+        expect(page.locator("#statusText")).to_contain_text("실패 1포트")
         assert switch.readings["1"] == "17m"
         assert "clear cable-diagnostics" in commands(before)
         assert not any(cmd.startswith(("test cable-", "show cable-")) for cmd in commands(before))
@@ -233,7 +250,12 @@ def exercise(page, url, switch, other, shots, _backup):
 
     # A test may start and affect the link even if the completion prompt never
     # arrives. Recover only with show, without repeating clear, test or confirmation.
-    for mode, length in (("disconnect", "31m"), ("echo-uppercase", "17m"), ("reject", None)):
+    for mode, length in (
+        ("disconnect", "31m"),
+        ("disconnect-show", "17m"),
+        ("echo-uppercase", "17m"),
+        ("reject", None),
+    ):
         switch.test_reply = mode
         before = len(switch.commands)
         confirmations = len(switch.confirmations)
@@ -249,9 +271,10 @@ def exercise(page, url, switch, other, shots, _backup):
                 card = results.locator('[data-stage="show"][data-status="measured"]')
                 expect(card).to_contain_text(length, timeout=60000)
                 sent = sequence(1)
-                if mode == "disconnect":
+                if mode in {"disconnect", "disconnect-show"}:
                     sent.append("show cable-diagnostics 1")
-                    if shots:
+                    expect(card).not_to_contain_text("82m")
+                    if shots and mode == "disconnect":
                         card.screenshot(path=shots / "cable-confirmation-recovery.png")
                 assert commands(before) == sent
                 assert switch.confirmations[confirmations:] == [b"y"]
@@ -442,11 +465,47 @@ def exercise(page, url, switch, other, shots, _backup):
         assert poll["action"] == "cable.test" and poll["state"] == "running"
         page.reload()
         expect(page.locator("#statusText")).to_contain_text(endpoint)
+
+        # Reload a second time, completing the original job between navigation and
+        # bootstrap. The tab must recover the job even though the server is now idle.
+        run_url = job_url.rsplit("/", 1)[0] + "/" + poll["id"]
+
+        def finish_before_bootstrap(route):
+            switch.release_result.set()
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                saved = page.context.request.get(run_url).json()
+                if saved["state"] == "done":
+                    assert saved["result"]["rows"][0]["status"] == "measured"
+                    break
+                time.sleep(0.1)
+            else:
+                raise AssertionError("The original cable measurement did not finish")
+            route.continue_()
+
+        page.route("**/api/bootstrap", finish_before_bootstrap, times=1)
+        page.reload()
     finally:
         switch.release_result.set()
     expect(workspace.locator("#cableResultTitle")).to_contain_text("재연결한 작업", timeout=60000)
     expect(results).to_contain_text("측정 완료")
     expect(results).to_contain_text(re.compile(r"17\s*m"))
+    assert commands(before) == sequence(1)
+    page.reload()
+    page.wait_for_function("() => ui.appReady")
+    expect(results.locator("table")).to_have_count(0)
+
+    # An older retained job, an expired reload and an evicted ID must not revive a card.
+    stale = job_url.rsplit("/", 1)[1]
+    for candidate, age in ((stale, 0), (poll["id"], 300_000), ("f" * 32, 0)):
+        page.evaluate(
+            "([id,age]) => sessionStorage.setItem('aruba2930f.cable.pendingReload', "
+            "JSON.stringify({id,at:Date.now()-age}))",
+            [candidate, age],
+        )
+        page.reload()
+        page.wait_for_function("() => ui.appReady")
+        expect(results.locator("table")).to_have_count(0)
     assert commands(before) == sequence(1)
     assert not other.commands and not other.auth_attempts
     assert not errors, errors

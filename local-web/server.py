@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.24.2"
+VERSION = "1.24.3"
 STATIC = {
     "/": "index.html",
     "/matrix": "matrix.html",
@@ -193,6 +193,7 @@ class Handler(BaseHTTPRequestHandler):
                         lanClient=app.is_lan,
                         session=app.jobs.operations.session_summary(),
                         busyJob=app.jobs.active,
+                        lastCableJob=app.jobs.latest_cable_job(),
                         monitor=app.jobs.monitor_status(),
                     )
                 )

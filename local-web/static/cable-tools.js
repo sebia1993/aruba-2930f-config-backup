@@ -2,18 +2,40 @@
 (() => {
   const page = document.querySelector('[data-page="cable"]');
   const results = $('cableResult');
-  const labels = {
-    measured:'측정 완료', partial:'부분 측정', empty:'측정값 없음',
-    pending:'테스트 진행 중', unsupported:'미지원', failed:'실패', uncertain:'측정 결과 미확인', cancelled:'취소됨', skipped:'건너뜀'
-  };
   const pairLabels = {ok:'정상', open:'단선·미연결', short:'단락', 'inter-short':'페어 간 단락', impedance:'임피던스 이상'};
   jobNames['cable.test']='케이블 진단';
   const stages={clear:'결과 초기화',test:'테스트 실행',show:'결과 조회'};
   const pairOrder=['1-2','3-6','4-5','7-8'];
   const cards=new Map();
-  let displayedScope, activeRun;
+  let displayedScope, activeRun, resumedRun;
+  const reloadKey='aruba2930f.cable.pendingReload';
   const portKey=row=>endpoint(row)+'|'+row.interface;
   const groupKeys=groups=>new Set(groups.flatMap(group=>group.interfaces.map(port=>endpoint(group)+'|'+port)));
+
+  // Carry only a pending job ID across this tab's reload. The server keeps the
+  // actual measurements and can tell whether a later inspection superseded it.
+  window.addEventListener('pagehide',()=>{
+    const run=activeRun || (ui.jobId===resumedRun?.id ? resumedRun : null);
+    if (!run || !ui.busy || (ui.jobId && ui.jobId!==run.id) ||
+        run.scope!==window.portTools.cableScope().targets) return;
+    try { sessionStorage.setItem(reloadKey,JSON.stringify({id:run.id,at:Date.now()})); } catch {}
+  });
+  function jobOnOpen(bootstrap) {
+    let id=bootstrap.busyJob;
+    try {
+      const saved=sessionStorage.getItem(reloadKey);
+      sessionStorage.removeItem(reloadKey);
+      if (!id && saved && performance.getEntriesByType('navigation')[0]?.type==='reload') {
+        const pending=JSON.parse(saved);
+        const age=Date.now()-pending.at;
+        if (age>=0 && age<120000 && pending.id===bootstrap.lastCableJob) id=pending.id;
+      }
+    } catch {}
+    if (id && id===bootstrap.lastCableJob) {
+      resumedRun={id,scope:window.portTools.cableScope().targets};
+    }
+    return id;
+  }
 
   function describe(groups) {
     return groups.map(group=>endpoint(group)+' · 포트 '+group.interfaces.join(', ')).join('\n');
@@ -69,7 +91,7 @@
     card.dataset.status=row.status;
     const pairs=new Map((row.pairs || []).map(item=>[item.pair,item]));
     const header=elem('header');
-    const label=labels[row.status] || '측정 결과 미확인';
+    const label=cableStatusLabels[row.status] || '측정 결과 미확인';
     const showPairs=pairs.size>0 || (row.stage==='show' && ['partial','failed'].includes(row.status));
     const count=showPairs && row.status!=='measured' ? ' · '+pairs.size+'/4페어 확인' : '';
     header.append(elem('strong',endpoint(row)+' / 포트 '+row.interface),elem('span',label+count));
@@ -176,6 +198,6 @@
       elem('pre',describe(groups),'cable-targets'),confirm
     ]);
   };
-  window.cableTools={sync:syncCable,showProgress,showResult};
+  window.cableTools={sync:syncCable,showProgress,showResult,jobOnOpen};
   syncCable();
 })();
