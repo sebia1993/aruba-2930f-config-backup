@@ -186,7 +186,8 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 .matrix-tile .port-failure-mark{display:inline-grid;place-items:center;vertical-align:middle;min-width:1.05rem;height:1.05rem;margin-inline-start:.2rem;border:1px solid #fff;border-radius:50%;background:#172331;color:#fff;font-size:.72rem;font-weight:800;line-height:1}
 .matrix-tile.focused-port{outline:1px dashed var(--focus);outline-offset:1px}
 .matrix-tile[aria-pressed=true]::after{content:'✓' / '';position:absolute;top:-1px;right:-1px;padding:0 2px;border-radius:0 3px;background:#143241;color:#fff;font-size:10px;line-height:1.15}
-.matrix-tiles .tile-ap-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600;line-height:1.25}
+.matrix-tiles .tile-ap-name,.matrix-tiles .tile-neighbor-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600;line-height:1.25}
+.matrix-tiles .tile-neighbor-name::before{content:"이웃 · ";font-weight:400}
 #matrixDetails>span{min-width:0;overflow-wrap:anywhere}
 #matrixDetails {display:flex;align-items:center;flex-wrap:wrap;gap:6px 18px;margin-top:.75rem;padding:.65rem .85rem;background:var(--surface2);border-radius:6px}
 #matrixDetails small {flex-basis:100%}
