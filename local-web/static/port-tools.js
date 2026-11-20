@@ -36,7 +36,11 @@
     entry.dataset.powerFilter=entry.dataset.state=state;
     entry.setAttribute('aria-controls','matrixGroups');
     entry.append(elem('b','0'));
-    legend.append(entry);
+    if (state==='unclassified') {
+      const context=elem('div',undefined,'unmeasured-actions');
+      context.append(entry);
+      legend.append(context);
+    } else legend.append(entry);
   }
   $('matrixCounts').before(legend);
   const countText=elem('span');

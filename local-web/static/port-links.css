@@ -16,6 +16,10 @@
   --power-on-ink: #fff;
 }
 
+.unmeasured-actions {display:contents}
+.unmeasured-actions:has(>#quickActions:not([hidden])) {
+  display:inline-flex;align-items:center;gap:6px;min-width:0;grid-column:1/-1;
+}
 #quickActions {display:inline-flex;align-items:center;gap:4px;min-width:0}
 #quickActions button {
   display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:44px;min-height:44px;
@@ -37,7 +41,10 @@
     display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;
   }
   .embedded .metrics:has(#quickActions:not([hidden]))>.metric:nth-child(2) {grid-column:span 2}
-  .embedded .metrics:has(#quickActions:not([hidden]))>.power-filter {justify-content:center;min-width:0}
+  .embedded .metrics:has(#quickActions:not([hidden])) .power-filter {justify-content:center;min-width:0}
+  .unmeasured-actions:has(>#quickActions:not([hidden])) {
+    display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;
+  }
   #quickActions {grid-column:span 2}
   #quickActions button {flex:1;min-width:0;padding-inline:3px}
 }

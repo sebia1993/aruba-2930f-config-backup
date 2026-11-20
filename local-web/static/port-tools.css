@@ -151,7 +151,7 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 :root {--power-red:#ffacb5;--power-yellow:#f6d376;--power-green:#82e5b4}
 :root[data-theme=light] {--power-red:#a01e36;--power-yellow:#805000;--power-green:#00683c}
 .matrix-legend {display:flex;flex-wrap:wrap;gap:4px;margin-bottom:.4rem}
-.matrix-legend > .power-badge {padding:4px 8px;border:1px solid var(--stroke);font-size:12px}
+.matrix-legend .power-badge {padding:4px 8px;border:1px solid var(--stroke);font-size:12px}
 .matrix-legend button[aria-pressed=true] {background:var(--active);border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
 .matrix-legend button[aria-pressed=true]::after {content:"✓" / ""}
 #matrixCounts {display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px}

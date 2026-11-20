@@ -50,6 +50,13 @@ def exercise(page, url, switch, second, shots, _backup):
         else:
             element.click()
 
+    def verify_tablet_widths(other_document):
+        if not mobile:
+            for tablet_width in (768, 850):
+                resize_workspace(page, tablet_width, 940)
+                verify_placement(page, other_document)
+            resize_workspace(page, width, height)
+
     first, other = [f"{device.ip}:{device.port}" for device in (switch, second)]
     switch.off_watts = 0
     page.goto(url)
@@ -69,6 +76,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(actions).to_be_visible()
     actions.scroll_into_view_if_needed()
     verify_placement(page, frame)
+    verify_tablet_widths(frame)
     activate(pending)
     expect_no_quick_power(page)
     assert not switch.commands and not second.commands
@@ -95,6 +103,7 @@ def exercise(page, url, switch, second, shots, _backup):
     verify_placement(page, page)
     if shots:
         page.screenshot(path=shots / "selected-port-power.png")
+    verify_tablet_widths(page)
     if mobile:
         resize_workspace(page, 320, 568)
         verify_placement(page, page)
