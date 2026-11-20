@@ -295,7 +295,18 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .embedded .detail-actions .btn{padding:4px 9px;min-height:32px}
 .embedded #portListPane{order:3;flex:1 1 100%;min-width:0}
 .embedded #tableTitle{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-.embedded #portListPane>.panel-head{justify-content:flex-end}
+.embedded #portListPane>.panel-head{gap:0}
+.embedded #portListPane .table-head-tools{width:100%;justify-content:space-between}
+.list-scope{display:inline-flex;gap:2px;align-items:center}
+.list-scope button{padding:3px 7px;min-height:30px;white-space:nowrap}
+.list-scope button[aria-pressed=true]{color:var(--teal);border-color:var(--teal);box-shadow:inset 0 -2px var(--teal)}
+.previous-reading{color:var(--sub)}
+.resulttable td[data-change]{font-weight:600}
+.resulttable td[data-change] .previous-reading{font-weight:400}
+@media(max-width:560px), (pointer:coarse){
+  .list-scope button{min-height:44px}
+  .embedded #portListPane .table-head-tools select{min-width:0;max-width:110px}
+}
 .resulttable{min-width:0;table-layout:fixed}
 .reading-delay{display:block;color:var(--muted)}
 .port-tile[data-stale=true]{border:1px dashed currentColor}
@@ -426,7 +437,12 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       <div class="matrix-area" id="portMatrixPane"><div class="matrix-top"><strong>포트별 PoE 전력</strong><span class="hint">기본 정렬 · 스위치 IP → SSH 포트 → 포트 번호</span></div><div id="matrix" class="matrix-sections" aria-label="지정 포트 상태 매트릭스"></div></div>
       <div class="matrix-footer"><div class="legend" aria-label="PoE 전력 범례"><span><i class="swatch unpowered"></i><b data-power-label="unpowered"></b></span><span><i class="swatch limited"></i><b data-power-label="limited"></b></span><span><i class="swatch normal"></i><b data-power-label="normal"></b></span></div><span class="matrix-note">점선 테두리는 전력 미측정</span></div>
      </section>
-     <section class="panel" id="portListPane" aria-labelledby="tableTitle"><div class="panel-head"><div><h2 id="tableTitle">포트별 조회 결과</h2><div class="panel-sub">포트를 선택하면 해당 장비의 조회 결과를 확인할 수 있습니다</div></div><div class="table-head-tools"><select id="sort" aria-label="결과 정렬"><option value="natural">IP·포트 순</option><option value="issues">전력 점검 우선</option><option value="power">전력 높은 순</option></select></div></div>
+     <section class="panel" id="portListPane" aria-labelledby="tableTitle"><div class="panel-head"><div><h2 id="tableTitle">포트별 조회 결과</h2><div class="panel-sub">포트를 선택하면 해당 장비의 조회 결과를 확인할 수 있습니다</div></div><div class="table-head-tools">
+        <div id="listScope" class="list-scope" role="group" aria-label="결과 목록 표시 범위">
+          <button type="button" id="listAll" class="btn ghost" aria-controls="tbody" aria-pressed="true">전체 포트</button>
+          <button type="button" id="listChanges" class="btn ghost" aria-controls="tbody" aria-pressed="false" title="포트별 직전 측정과 비교">변화 포트 0개</button>
+        </div>
+        <select id="sort" aria-label="결과 정렬"><option value="natural">IP·포트 순</option><option value="issues">전력 점검 우선</option><option value="power">전력 높은 순</option></select></div></div>
       <div class="tablewrap"><table class="resulttable" aria-labelledby="tableTitle"><colgroup><col class="port-col"><col class="power-state-col"><col class="watts-col"><col></colgroup><thead><tr><th scope="col">포트 번호</th><th scope="col">전력 판정</th><th scope="col">실측 W</th><th scope="col">LLDP AP 이름</th></tr></thead><tbody id="tbody"></tbody></table></div>
       <div class="table-foot"><span id="tableRange">—</span><div class="paginate"><button id="prevPage" aria-label="이전 페이지">이전</button><span id="pageNum">1 / 1</span><button id="nextPage" aria-label="다음 페이지">다음</button></div></div>
      </section>
@@ -450,7 +466,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   const collator = new Intl.Collator('ko', {numeric:true, sensitivity:'base'});
   const pageSize = 18;
   const powerButtons = [...document.querySelectorAll('button[data-power-filter]')];
-  const state = {current:null, presentation:'matrix', rows:[], found:[], pageRows:[], powerFilters:new Set(),
+  const state = {current:null, presentation:'matrix', rows:[], found:[], changedRows:[], pageRows:[], powerFilters:new Set(),
     selected:null, page:0, changesOnly:false, preserveView:false, lookup:new Map(), tileByKey:new Map()};
   let searchFrame = 0;
   const embedded=parent!==window && location.pathname==='/matrix' && new URLSearchParams(location.search).get('embedded')==='1';
@@ -553,9 +569,10 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
         row.poeStatus,row.link,row.reportedLink,row.assessmentModel,row.diagnosis,row.raw.message,row.readFailure,
         statusNames[row.status]].some(value => String(value||'').toLowerCase().includes(query))));
     const failures = matching.filter(row => row.readFailure);
-    const candidates = failureReturn ? failures : state.changesOnly ? matching.filter(row => row.comparison?.changed) : matching;
+    const candidates = failureReturn ? failures : matching;
     state.found = state.powerFilters.size
       ? candidates.filter(row => !row.unobserved && state.powerFilters.has(row.status)) : candidates;
+    state.changedRows=state.found.filter(row=>row.comparison?.changed);
     if (!state.lookup.has(state.selected)) state.selected = embedded ? null : state.found[0]?.key ?? null;
     renderMetrics(candidates,failures.length);
   }
@@ -591,8 +608,6 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   }
   function emptyResultsText() {
     if (failureReturn) return '현재 조건에서 조회에 실패한 포트가 없습니다. 조회 실패 개수를 다시 누르면 이전 화면으로 돌아갑니다.';
-    if (state.changesOnly) return state.rows.some(row=>row.comparison?.comparable)
-      ? '현재 조건에 변화가 있는 포트가 없습니다.' : '비교할 실측값이 없습니다. 같은 포트를 다시 조회하세요.';
     return '조건에 일치하는 포트가 없습니다.';
   }
   function renderMatrix() {
@@ -668,7 +683,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     return grid;
   }
   function renderDetail() {
-    const row = state.tileByKey.has(state.selected) && state.lookup.get(state.selected);
+    const row = visibleSelectedRow();
     const box = el('detail');
     const factsOpen=box.querySelector('.port-facts')?.open;
     if (embedded) {
@@ -765,8 +780,13 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       facts.append(more);
     }
   }
+  function visibleSelectedRow() {
+    const row=state.tileByKey.has(state.selected) && state.lookup.get(state.selected);
+    if (state.presentation==='list' && state.changesOnly && !row?.comparison?.changed) return null;
+    return row || null;
+  }
   function selectedActionRow() {
-    return liveSelectionId() && state.tileByKey.has(state.selected) ? state.lookup.get(state.selected) : null;
+    return liveSelectionId() ? visibleSelectedRow() : null;
   }
   function needsInspection(row) {
     return row && !row.unobserved && (row.queryStatus!=='ok' || excludedPorts.has(row.key));
@@ -825,9 +845,25 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     renderChecks();
     parent.postMessage({type:'aruba-port-checks'},location.origin);
   }
+  function listRows() {
+    return state.changesOnly ? state.changedRows : state.found;
+  }
+  function apReading(row) {
+    return row.apName || (lldpMeasured(row)?'이름 없음':'미수집');
+  }
+  function showPrevious(cell,field,text) {
+    cell.dataset.change=field;
+    cell.prepend(node('span',text+' → ','previous-reading'));
+  }
   function renderTable(revealSelection=false) {
+    el('listScope').hidden=!!failureReturn;
+    el('listAll').setAttribute('aria-pressed',String(!state.changesOnly));
+    el('listChanges').setAttribute('aria-pressed',String(state.changesOnly));
+    const hasBaseline=state.found.some(row=>row.comparison?.comparable);
+    el('listChanges').textContent=state.found.length && !hasBaseline ? '변화 포트 · 비교 전'
+      : '변화 포트 '+state.changedRows.length.toLocaleString('ko-KR')+'개';
     const devices=new Map();
-    for (const row of state.found) {
+    for (const row of listRows()) {
       const key=endpoint(row);
       if (!devices.has(key)) devices.set(key,[]);
       devices.get(key).push(row);
@@ -876,17 +912,29 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       if (row.lastGood) power.append(node('small','갱신 지연','reading-delay'));
       const measured=node('td',watts(row));
       if (row.lastGood) measured.title='마지막 측정 · '+timeText(row.lastGood.observed);
-      tr.append(port,power,measured,node('td',row.apName || (lldpMeasured(row)?'이름 없음':'미수집')));
+      const ap=node('td',apReading(row));
+      if (state.changesOnly) {
+        const change=row.comparison, previous=change.previous;
+        if (change.statusChanged) showPrevious(power,'status',statusNames[previous.status]);
+        if (change.wattsChanged) showPrevious(measured,'watts',watts(previous));
+        if (change.apChanged) showPrevious(ap,'ap',apReading(previous));
+      }
+      tr.append(port,power,measured,ap);
       frag.append(tr);
     }
     if (!sorted.length) {
-      const tr=node('tr'), td=node('td',emptyResultsText());
+      let message=emptyResultsText();
+      if (state.changesOnly && state.found.length) message=hasBaseline
+        ? '변화 0개 · 현재 조건에서 직전 측정과 달라진 포트가 없습니다.'
+        : '비교할 이전 측정이 없습니다. 같은 포트를 다시 조회하세요.';
+      const tr=node('tr'), td=node('td',message);
       td.colSpan=4; tr.append(td); frag.append(tr);
     }
     el('tbody').replaceChildren(frag);
     renderChecks();
     el('pageNum').textContent=(state.page+1)+' / '+max;
-    el('tableRange').textContent=(sorted.length?start+1:0)+'–'+Math.min(start+pageSize,sorted.length)+' / '+sorted.length+'개 표시';
+    const baselineNote=!failureReturn && !state.changesOnly && sorted.length && !hasBaseline ? ' · 비교할 이전 측정 없음' : '';
+    el('tableRange').textContent=(sorted.length?start+1:0)+'–'+Math.min(start+pageSize,sorted.length)+' / '+sorted.length+'개 표시'+baselineNote;
     el('prevPage').disabled=state.page===0;
     el('nextPage').disabled=state.page===max-1;
     if (revealSelection) revealPort(selectedRow);
@@ -988,6 +1036,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     if (!liveSelectionId() || !['matrix','list'].includes(mode) || state.presentation===mode) return;
     state.presentation=mode;
     applyPresentation();
+    renderDetail();
     if (mode==='list') renderTable(true);
     else {
       renderChecks();
@@ -1086,8 +1135,11 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     const ap=lldpMeasured(previous) && lldpMeasured(row);
     // A failed LLDP read does not establish that an AP disappeared.
     const color=power && (ap || previous.status==='unpowered' || row.status==='unpowered');
-    return {previous,comparable:power || ap,changed:(power && previous.watts!==row.watts) ||
-      (ap && previous.apName!==row.apName) || (color && previous.status!==row.status)};
+    const wattsChanged=power && previous.watts!==row.watts;
+    const apChanged=ap && previous.apName!==row.apName;
+    const statusChanged=color && previous.status!==row.status;
+    return {previous,comparable:power || ap,changed:wattsChanged || apChanged || statusChanged,
+      wattsChanged,apChanged,statusChanged};
   }
   function loadLive(liveId, records, stillCurrent, unobserved=[], keepView=false, periodic=false, currentControlKey) {
     if (!liveId || !stillCurrent()) return;
@@ -1151,7 +1203,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     if (!liveSelectionId()) return null;
     const target=({ip,sshPort,port})=>({ip,sshPort,port});
     const current=selectedActionRow();
-    const rows=state.found.map(target);
+    const rows=(state.presentation==='list' ? listRows() : state.found).map(target);
     const visibleRows=state.presentation==='list' ? state.pageRows.map(target) : rows;
     return {liveId:liveSelectionId(),current:current?target(current):null,device:el('device').value,rows,visibleRows};
   }
@@ -1169,16 +1221,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       scope:monitorScope,
       setPresentation,
       source: ()=>({hasData:!!state.current,view:'overview',presentation:state.presentation,liveId:state.current?.liveId,
-        powerFilters:[...state.powerFilters],failureOnly:!!failureReturn,
-        changesOnly:state.changesOnly,hasBaseline:state.rows.some(row=>row.comparison?.comparable)}),
-      setChangesOnly(enabled) {
-        if (!state.current || failureReturn) return;
-        state.changesOnly=!!enabled;
-        state.page=0;
-        renderOverview();
-        window.scrollTo({top:0,behavior:'instant'});
-        publishSource();
-      },
+        powerFilters:[...state.powerFilters]}),
       selected:selectedActionRow,
       inspectionTarget() {
         const row=selectedActionRow();
@@ -1260,6 +1303,15 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       el('portReadFailure')?.querySelector('button')?.focus({preventScroll:true});
     }
   });
+  for (const id of ['listAll','listChanges']) el(id).onclick=()=>{
+    const changesOnly=id==='listChanges';
+    if (!state.current || failureReturn || changesOnly===state.changesOnly) return;
+    state.changesOnly=changesOnly;
+    state.page=0;
+    renderTable();
+    renderDetail();
+    if (embedded) parent.postMessage({type:'aruba-port-context'},location.origin);
+  };
   function filtersChanged() { state.page=0; renderOverview(); }
   el('search').addEventListener('input',()=>{
     cancelAnimationFrame(searchFrame); searchFrame=requestAnimationFrame(filtersChanged);

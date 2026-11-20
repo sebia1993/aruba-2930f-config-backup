@@ -169,15 +169,16 @@ def select_measured_port(page, matrix_view, changed, available, untouched_switch
     assert len(untouched_switch.commands) == untouched_commands
     # Two devices share an IP, hostname, interface and AP name. Only the
     # target whose readback changed from measured zero to 9.7 W belongs here.
-    changes = page.get_by_role("button", name="변화만 보기", exact=True)
-    changes.click()
-    changed_tiles = matrix_view.locator("#matrix [data-port-key]")
-    expect(changed_tiles).to_have_count(1)
-    expect(changed_tiles).to_have_attribute("data-port-key", changed + "/1")
-    changed_tiles.click()
+    page.locator("#listView").click()
+    matrix_view.get_by_role("button", name="변화 포트 1개", exact=True).click()
+    changed_ports = matrix_view.locator("#tbody tr[data-port-key]")
+    expect(changed_ports).to_have_count(1)
+    expect(changed_ports).to_have_attribute("data-port-key", changed + "/1")
+    changed_ports.get_by_role("checkbox").check()
+    changed_ports.locator(".row-select").click()
     expect(matrix_view.locator("#portComparison")).to_contain_text("0 W")
     expect(matrix_view.locator("#portComparison")).to_contain_text("9.7 W")
-    changes.click()
+    matrix_view.get_by_role("button", name="전체 포트", exact=True).click()
     expect(changed_row).to_be_enabled()
     expect(other_row).to_be_enabled()
 
