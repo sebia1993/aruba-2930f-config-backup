@@ -7,6 +7,7 @@ import tempfile
 import threading
 from collections import Counter
 from contextlib import contextmanager, suppress
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -227,6 +228,7 @@ class Operations:
         self._backup_progress = None
         self._query_events = []
         self._query_targets = ()
+        self._cable_events = []
 
     def progress_snapshot(self):
         progress = self.progress
@@ -247,10 +249,17 @@ class Operations:
                 changes["targets"] = group_targets(self._query_targets)
             return changes
 
-    def reset_query_progress(self):
+    def cable_progress(self, after):
         with self._progress_lock:
+            rows = self._cable_events[after : after + 512]
+            return {"cableRows": rows, "cursor": after + len(rows)}
+
+    def reset_job_progress(self):
+        with self._progress_lock:
+            self.progress = {}
             self._query_events = []
             self._query_targets = ()
+            self._cable_events = []
 
     def session_summary(self) -> dict:
         credentials = self.credentials
@@ -266,9 +275,13 @@ class Operations:
         self._backup_progress = None
         self.progress = {"message": message, "total": total, "completed": completed}
 
-    def _progress(self, message: str, *, finished: bool = False) -> None:
+    def _progress(
+        self, message: str, *, finished: bool = False, cable_row: dict | None = None
+    ) -> None:
         # Concurrent native callbacks publish a new immutable-in-use dict for each update.
         with self._progress_lock:
+            if cable_row is not None:
+                self._cable_events.append(deepcopy(cable_row))
             total = self.progress["total"]
             completed = min(total, self.progress["completed"] + int(finished))
             self._start_progress(message, total, completed)

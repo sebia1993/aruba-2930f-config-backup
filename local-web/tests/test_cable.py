@@ -11,7 +11,13 @@ from unittest.mock import Mock, call
 from localweb.cable import CableSession, UncertainTest, diagnose_ports, parse_result
 from localweb.operations import Operations, _groups
 
-from aruba2930f_backup.models import CollectionFailure, CollectionOptions, Credentials, DeviceTarget
+from aruba2930f_backup.models import (
+    CollectionFailure,
+    CollectionOptions,
+    Credentials,
+    DeviceTarget,
+    ErrorCode,
+)
 
 
 def table(port, distance="3 m"):
@@ -57,7 +63,7 @@ class CableTests(unittest.TestCase):
 
     def test_declined_missing_in_progress_partial_and_other_target(self):
         for text, status in (
-            ("The transceiver on port 51 does not support cable diagnostics.", "unsupported"),
+            ("The transceiver on port 1 does not support cable diagnostics.", "unsupported"),
             ("No cable diagnostic results available.", "empty"),
             ("Warning: test not yet completed.\n" + table("1"), "pending"),
             ("1 1-2 Short 0m", "partial"),
@@ -211,7 +217,7 @@ class CableTests(unittest.TestCase):
         self.assertEqual(rows[0]["pairs"][0]["distance"], "3 m")
         self.assertEqual(cancel.wait.call_count, 2)
 
-    def test_no_prior_or_partial_pairs_on_test_failure_or_inconclusive_readback(self):
+    def test_no_prior_pairs_on_test_failure_or_inconclusive_readback(self):
         for inline, shown, status in [
             ("Test failed", table("1"), "failed"),
             ("Unexpected response", table("1"), "uncertain"),
@@ -219,8 +225,6 @@ class CableTests(unittest.TestCase):
             ("", "Test has not yet been completed.\n" + table("1"), "uncertain"),
             ("", "No results\n" + table("1"), "uncertain"),
             ("", "Warning: response ambiguous\n" + table("1"), "failed"),
-            ("", table("1") + "\n 7-8 Open 0m", "uncertain"),
-            ("", "1 1-2 Open 100 m", "uncertain"),
         ]:
             with self.subTest(inline=inline, shown=shown):
                 session = Mock()
@@ -239,6 +243,184 @@ class CableTests(unittest.TestCase):
                     session.read_cable.assert_not_called()
                 session.clear_cable.assert_called_once()
                 session.test_cable.assert_called_once()
+
+    def test_no_question_accepts_selected_port_table_completion_or_test_progress(self):
+        for reply in (table("1/1"), "Cable diagnostics completed.", "Test in progress"):
+            with self.subTest(reply=reply):
+                self.channel.reset_mock()
+                self.feed("test cable-diagnostics 1/1\n" + reply + "\nfixture#", "")
+                self.assertEqual(self.session.test_cable("1/1", self.cancel).strip(), reply)
+                self.assertEqual(self.writes(), ["test cable-diagnostics 1/1\n"])
+        for reply in (table("2/1"), "Unknown response.", "", "Continue (y/n)?"):
+            with self.subTest(reject=reply):
+                self.channel.reset_mock()
+                self.feed("test cable-diagnostics 1/1\n" + reply + "\nfixture#", "")
+                with self.assertRaises(CollectionFailure):
+                    self.session.test_cable("1/1", self.cancel)
+                self.assertEqual(self.writes(), ["test cable-diagnostics 1/1\n"])
+
+    def test_progress_retains_only_pairs_read_for_same_port_in_this_run(self):
+        partial_text = "9 1-2 OK 399m\n1 1-2 Open 0m\n 3-6 OK 8m\n 4-5 OK 4m\n 4-5 OK 7m"
+        partial = parse_result(partial_text, "1")
+        self.assertEqual([pair["pair"] for pair in partial["pairs"]], ["1-2", "3-6"])
+        self.assertNotIn("399m", partial["responseExcerpt"])
+        self.assertIn("1-2 Open 0m", partial["responseExcerpt"])
+        session = Mock()
+        session.test_cable.return_value = table("1", "77m")
+        session.read_cable.side_effect = [
+            partial,
+            parse_result("1 4-5 Impedance 12 m\n 7-8 Open 0m", "1"),
+        ]
+        progress = Mock()
+        cancel = Mock(spec=Event)
+        cancel.wait.return_value = cancel.is_set.return_value = False
+        (row,) = diagnose_ports(
+            _groups({"targets": "127.0.0.1 1"}), lambda _: nullcontext(session), cancel, progress
+        )["rows"]
+        self.assertEqual((row["status"], row["stage"]), ("measured", "show"))
+        self.assertEqual([pair["distance"] for pair in row["pairs"]], ["0m", "8m", "12 m", "0m"])
+        self.assertNotIn("responseExcerpt", row)
+        interim = [
+            c.kwargs["cable_row"] for c in progress.call_args_list if "cable_row" in c.kwargs
+        ]
+        self.assertEqual(
+            [r["status"] for r in interim], ["pending", "pending", "partial", "measured"]
+        )
+        self.assertEqual([r["stage"] for r in interim], ["test", "show", "show", "show"])
+        self.assertEqual(sum(bool(c.kwargs.get("finished")) for c in progress.call_args_list), 1)
+        session.clear_cable.assert_called_once()
+        session.test_cable.assert_called_once()
+        self.assertEqual(session.read_cable.call_count, 2)
+
+    def test_partial_expires_without_retesting_and_unknown_report_has_scoped_excerpt(self):
+        session = Mock()
+        session.test_cable.return_value = "Test completed."
+        cancel = Mock(spec=Event)
+        cancel.wait.return_value = cancel.is_set.return_value = False
+        for text, count, status, reads in [
+            ("1 1-2 Short 0m\n   3-6 Open 18m\n   4-5 OK 3m", 3, "partial", 16),
+            ("1 1-2 ???\n2 1-2 OK 399m", 0, "failed", 1),
+        ]:
+            with self.subTest(text=text):
+                session.reset_mock()
+                session.read_cable.return_value = parse_result(text, "1")
+                (row,) = diagnose_ports(
+                    _groups({"targets": "127.0.0.1 1"}),
+                    lambda _: nullcontext(session),
+                    cancel,
+                    Mock(),
+                )["rows"]
+                self.assertEqual(
+                    (row["stage"], row["status"], len(row["pairs"])), ("show", status, count)
+                )
+                self.assertIn("1-2", row["responseExcerpt"])
+                self.assertNotIn("399m", row["responseExcerpt"])
+                self.assertNotIn("unresolved", row)
+                session.clear_cable.assert_called_once()
+                session.test_cable.assert_called_once()
+                self.assertEqual(session.read_cable.call_count, reads)
+
+    def test_read_failure_after_partial_preserves_evidence(self):
+        session = Mock()
+        session.test_cable.return_value = "Test completed."
+        session.read_cable.side_effect = [
+            parse_result("1 1-2 Open 0m", "1"),
+            CollectionFailure(ErrorCode.COMMAND_TIMEOUT, "readback timed out"),
+        ]
+        cancel = Mock(spec=Event)
+        cancel.wait.return_value = cancel.is_set.return_value = False
+        current, next_port = diagnose_ports(
+            _groups({"targets": "127.0.0.1 1,2"}), lambda _: nullcontext(session), cancel, Mock()
+        )["rows"]
+        self.assertEqual((current["stage"], current["status"]), ("show", "failed"))
+        self.assertEqual(current["pairs"], [{"pair": "1-2", "status": "Open", "distance": "0m"}])
+        self.assertEqual(next_port["status"], "skipped")
+        session.test_cable.assert_called_once()
+
+    def test_pending_warning_with_partial_rows_and_foreign_port_notices(self):
+        source = (
+            "The transceiver on port 51 does not support cable diagnostics.\n"
+            "Warning: test incomplete\n"
+            "1 1-2 Open 0m\n 3-6 OK 8m\n 4-5 Inter-short 7m\n"
+            "2 1-2 OK 399m\nPort 2 result: No data"
+        )
+        result = parse_result(source, "1")
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual([p["distance"] for p in result["pairs"]], ["0m", "8m", "7m"])
+        self.assertNotIn("399m", result["responseExcerpt"])
+        self.assertNotIn("port 51", result["responseExcerpt"])
+        self.assertEqual(parse_result(source, "51")["status"], "unsupported")
+
+    def test_unrecognized_response_excerpt_is_bounded_and_excludes_credentials_and_foreign_rows(
+        self,
+    ):
+        source = (
+            "Firmware response: unclassified text\n"
+            "fixture#\nCredentials: must-not-be-displayed\n"
+            "Port 1: VCT report\n 7-8 ??? 192.0.2.4\n"
+            "9 1-2 OK 399m\n 3-6 OK 400m\n"
+        )
+        reading = parse_result(source, "1")
+        self.assertEqual(reading["status"], "failed")
+        self.assertIn("unclassified text", reading["responseExcerpt"])
+        self.assertIn("7-8 ???", reading["responseExcerpt"])
+        for omitted in ("fixture#", "must-not", "192.0.2.4", "399m", "400m"):
+            self.assertNotIn(omitted, reading["responseExcerpt"])
+        large = parse_result(("x" * 2000 + "\n") * 20, "1")["responseExcerpt"]
+        self.assertLessEqual(len(large), 12 * 181)
+        self.assertNotIn("responseExcerpt", parse_result("2 1-2 OK 399m", "1"))
+
+    def test_four_accumulated_pairs_marked_incomplete_wait_for_confirmed_readback(self):
+        session = Mock()
+        session.test_cable.return_value = "Diagnostic status\nTest completed."
+        cancel = Mock(spec=Event)
+        cancel.wait.return_value = cancel.is_set.return_value = False
+        first = parse_result("Warning: test incomplete\n1 1-2 Open 0m\n 3-6 OK 3m", "1")
+        second = parse_result("Test pending\n1 4-5 OK 8m\n 7-8 OK 4m", "1")
+        for readings, expected in [
+            ([first] + [second] * 15, "partial"),
+            ([first, second, parse_result(table("1"), "1")], "measured"),
+        ]:
+            with self.subTest(expected=expected):
+                session.reset_mock()
+                session.read_cable.side_effect = readings
+                progress = Mock()
+                (row,) = diagnose_ports(
+                    _groups({"targets": "127.0.0.1 1"}),
+                    lambda _: nullcontext(session),
+                    cancel,
+                    progress,
+                )["rows"]
+                self.assertEqual((row["status"], len(row["pairs"])), (expected, 4))
+                self.assertEqual(session.read_cable.call_count, len(readings))
+                self.assertNotIn("stillRunning", row)
+                updates = [
+                    c.kwargs["cable_row"]
+                    for c in progress.call_args_list
+                    if "cable_row" in c.kwargs
+                ]
+                self.assertEqual(
+                    next(r["status"] for r in updates if len(r["pairs"]) == 4), "partial"
+                )
+                if expected == "partial":
+                    self.assertIn("완료 확인", row["message"])
+
+    def test_terminal_malformed_read_invalidates_previous_measurement_for_same_pair(self):
+        session = Mock()
+        session.test_cable.return_value = "Test completed."
+        session.read_cable.side_effect = [
+            parse_result("1 1-2 Open 0m\n 3-6 OK 3m", "1"),
+            parse_result("1 1-2 ???", "1"),
+        ]
+        cancel = Mock(spec=Event)
+        cancel.wait.return_value = cancel.is_set.return_value = False
+        (row,) = diagnose_ports(
+            _groups({"targets": "127.0.0.1 1"}), lambda _: nullcontext(session), cancel, Mock()
+        )["rows"]
+        self.assertEqual([p["pair"] for p in row["pairs"]], ["3-6"])
+        self.assertEqual(row["stage"], "show")
+        self.assertEqual(row["status"], "failed")
+        self.assertIn("???", row["responseExcerpt"])
 
     def test_partial_group_failure_keeps_exact_endpoints_and_skips_other_tests_on_that_switch(self):
         groups = _groups({"targets": "127.0.0.1:2202 1,2\n127.0.0.1:2203 1"})

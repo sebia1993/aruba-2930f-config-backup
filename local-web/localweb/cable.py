@@ -1,6 +1,7 @@
 """Selected-port ArubaOS-Switch TDR measurements on the existing pinned SSH connection."""
 
 import re
+from functools import partial
 
 from aruba2930f_backup.models import CollectionFailure, ErrorCode
 from aruba2930f_backup.port_control import validate_interface
@@ -34,7 +35,7 @@ _NO_RESULT = re.compile(
     re.I,
 )
 _COMPLETE = re.compile(
-    r"^\s*(?:cable\s+)?(?:diagnostic(?:s| test)?|test)\s+(?:(?:has|is)\s+)?"
+    r"^\s*(?:cable\s+)?(?:diagnostics?(?:\s+test)?|test)\s+(?:(?:has|is)\s+)?"
     r"complet(?:e|ed)(?:\s+successfully)?[.!]?\s*$",
     re.I | re.M,
 )
@@ -51,42 +52,90 @@ _PAIR = re.compile(
 )
 
 
+_PAIR_IDS = ("1-2", "3-6", "4-5", "7-8")
+_ROW = re.compile(r"^\s*(?:(?P<port>[\w/]+)\s+)?(?P<pair>[1-8]-[1-8])(?:\s|$)")
+_PORT_LINE = re.compile(r"^\s*(?:(?:port|interface)\s+)?([a-z]?\d+(?:/\d+)*)[\s:]+", re.I)
+_MENTIONED_PORT = re.compile(r"\b(?:port|interface)\s+([a-z]?\d+(?:/\d+)*)(?![\w/])", re.I)
+_PRIVATE_LINE = re.compile(
+    r"[#>]\s*$|\b(?:password|passphrase|credentials?|secret|token|community|private key|"
+    r"username|user name|authorization|api[_ -]?key)\b|^\s*(?:show |configure |ssh |ssh@)",
+    re.I,
+)
+_ADDRESS = re.compile(
+    r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])|\b(?:[\da-f]{2}[:-]){5}[\da-f]{2}\b", re.I
+)
+
+
 def _reading(status, message, pairs=()):
     return {"status": status, "message": message, "pairs": list(pairs)}
 
 
 def parse_result(text, interface):
     """Rows without a port belong to the preceding explicit port, including on VSF."""
-    if _UNSUPPORTED.search(text):
-        return _reading("unsupported", "스위치가 이 포트의 케이블 진단을 지원하지 않습니다.")
-    if _TEST_ERROR.search(text):
-        return _reading("failed", "스위치가 이 포트의 케이블 진단에 실패했습니다.")
-    if _PENDING.search(text):
-        return _reading("pending", "스위치에서 케이블 테스트를 진행 중입니다.")
-    if _NO_RESULT.search(text):
-        return _reading("empty", "이번 검사 결과가 아직 없습니다.")
-    if re.search(r"^\s*(?:%\s*)?warning\b", text, re.I | re.M):
-        return _reading("failed", "스위치 경고로 이번 측정값을 확인할 수 없습니다.")
     current = None
     pairs = {}
-    ambiguous = False
-    for line in text.splitlines():
-        # Record a port change even if its first pair uses an unknown output format.
-        first = re.match(r"^\s*([\w/]+)\s+(?=[1-8]-[1-8]\s)", line)
-        if first:
-            current = first[1]
-        match = _PAIR.match(line)
-        if not match or current != interface:
+    seen = set()
+    uncertain = set()
+    notices = []
+    excerpt = []
+    for line in _clean_channel_text(text).splitlines():
+        row = _ROW.match(line)
+        port_line = _PORT_LINE.match(line)
+        mention = _MENTIONED_PORT.search(line)
+        if row and row["port"]:
+            current = row["port"]
+        elif port_line:
+            # A vendor-specific first row still starts a different port's block.
+            current = port_line[1]
+        line_port = mention[1] if mention else current
+        if line_port is not None and line_port != interface:
             continue
-        pair = match["pair"]
-        if pair in pairs:
-            ambiguous = True
-        pairs[pair] = {"pair": pair, "status": match["status"], "distance": match["distance"]}
-    if len(pairs) == 4 and not ambiguous:
+        if not row:
+            notices.append(line)
+        if line.strip() and len(excerpt) < 12 and not _PRIVATE_LINE.search(line):
+            safe_line = _ADDRESS.sub("[주소]", line)
+            excerpt.append(
+                "".join(c for c in safe_line[:180] if c.isprintable() or c == "\t").rstrip()
+            )
+        if not row or current != interface or row["pair"] not in _PAIR_IDS:
+            continue
+        pair = row["pair"]
+        match = _PAIR.match(line)
+        if pair in seen or not match:
+            uncertain.add(pair)
+            pairs.pop(pair, None)
+        else:
+            pairs[pair] = {"pair": pair, "status": match["status"], "distance": match["distance"]}
+        seen.add(pair)
+
+    notice = "\n".join(notices)
+    pending = _PENDING.search(notice)
+    if _UNSUPPORTED.search(notice):
+        return _reading("unsupported", "스위치가 이 포트의 케이블 진단을 지원하지 않습니다.")
+    if _TEST_ERROR.search(notice):
+        return _reading("failed", "스위치가 이 포트의 케이블 진단에 실패했습니다.")
+    if _NO_RESULT.search(notice):
+        return _reading("empty", "이번 검사 결과가 아직 없습니다.")
+    if pending and (not pairs or len(pairs) == len(_PAIR_IDS)):
+        # A full table explicitly marked unfinished cannot establish a completed readback.
+        return _reading("pending", "스위치에서 케이블 테스트를 진행 중입니다.")
+    if not pending and re.search(r"^\s*(?:%\s*)?warning\b", notice, re.I | re.M):
+        return _reading("failed", "스위치 경고로 이번 측정값을 확인할 수 없습니다.")
+    if len(pairs) == len(_PAIR_IDS):
         return _reading("complete", "네 페어의 측정값을 확인했습니다.", pairs.values())
     if pairs:
-        return _reading("partial", "네 페어의 측정값을 모두 확인하지 못했습니다.")
-    return _reading("failed", "스위치 응답에서 이 포트의 케이블 진단 결과를 확인할 수 없습니다.")
+        result = _reading("partial", "일부 페어의 측정값을 확인하지 못했습니다.", pairs.values())
+    elif excerpt:
+        result = _reading("failed", "결과를 수신했지만 이 포트의 출력 형식을 해석하지 못했습니다.")
+    else:
+        result = _reading("failed", "결과에서 이 포트에 해당하는 출력 행을 찾지 못했습니다.")
+    if pending:
+        result["stillRunning"] = True
+    if uncertain:
+        result["unresolved"] = sorted(uncertain)
+    if excerpt:
+        result["responseExcerpt"] = "\n".join(excerpt)
+    return result
 
 
 def _check_cancel(cancel):
@@ -189,7 +238,14 @@ class CableSession(NetmikoSSHSession):
                     output = _strip_command_and_prompt(clean, command, prompt)
                     if _ends_with_prompt(clean, prompt):
                         validate_cli_response(command, output)
-                        if _UNSUPPORTED.search(output) or _TEST_ERROR.search(output):
+                        interface = command.rsplit(" ", 1)[-1]
+                        inline = parse_result(output, interface)
+                        if (
+                            inline["status"] in {"unsupported", "pending"}
+                            or inline["pairs"]
+                            or _COMPLETE.search(output)
+                            or (inline["status"] == "failed" and _TEST_ERROR.search(output))
+                        ):
                             return output
                         raise CollectionFailure(
                             ErrorCode.COMMAND_REJECTED,
@@ -204,11 +260,22 @@ class CableSession(NetmikoSSHSession):
         )
 
 
-def _measure(session, interface, cancel):
+def _update_row(row, reading):
+    # Never carry an excerpt from a previous stage into a completed result.
+    row.pop("responseExcerpt", None)
+    row.update(reading)
+
+
+def _measure(session, row, cancel, report):
+    interface = row["interface"]
     _check_cancel(cancel)
+    row.update(stage="test", status="pending", message="테스트 요청 후 응답 대기")
+    report(cable_row=row.copy())
     output = session.test_cable(interface, cancel)
     inline = parse_result(output, interface)
-    if inline["status"] == "unsupported" or _TEST_ERROR.search(output):
+    if inline["status"] == "unsupported" or (
+        inline["status"] == "failed" and _TEST_ERROR.search(output)
+    ):
         return inline
     if (
         output.strip()
@@ -216,17 +283,47 @@ def _measure(session, interface, cancel):
         and not _COMPLETE.search(output)
     ):
         raise UncertainTest
-    # Results in the test response are not the readback. Only show may be repeated.
+
+    row.update(stage="show", status="pending", message="이번 검사 결과를 조회하고 있습니다.")
+    report(cable_row=row.copy())
+    # Only the readback after this switch's clear and this port's test contributes pairs.
+    pairs = {}
     for attempt in range(16):
         _check_cancel(cancel)
         result = session.read_cable(interface, cancel)
         _check_cancel(cancel)
         if result["status"] == "complete":
             return _reading("measured", "이번 검사에서 측정한 결과입니다.", result["pairs"])
-        if result["status"] not in {"empty", "pending", "partial"}:
-            return result
+        for pair in result.get("unresolved", ()):
+            pairs.pop(pair, None)
+        if result["status"] == "partial":
+            for item in result["pairs"]:
+                pairs[item["pair"]] = item
+            confirmed = [pairs[pair] for pair in _PAIR_IDS if pair in pairs]
+            message = "일부 페어의 측정값을 확인하지 못했습니다."
+            if len(confirmed) == len(_PAIR_IDS):
+                if not result.get("stillRunning"):
+                    return _reading("measured", "이번 검사에서 측정한 결과입니다.", confirmed)
+                message = "네 페어를 수신했으며 장비의 테스트 완료 확인을 기다리고 있습니다."
+            partial = _reading("partial", message, confirmed)
+            if result.get("responseExcerpt"):
+                partial["responseExcerpt"] = result["responseExcerpt"]
+            if any(row.get(k) != partial.get(k) for k in (*partial, "responseExcerpt")):
+                _update_row(row, partial)
+                report(cable_row=row.copy())
+        elif result["status"] not in {"empty", "pending"}:
+            failed = _reading(
+                result["status"], result["message"], [pairs[k] for k in _PAIR_IDS if k in pairs]
+            )
+            if result.get("responseExcerpt"):
+                failed["responseExcerpt"] = result["responseExcerpt"]
+            return failed
         if attempt < 15 and cancel.wait(1):
             _check_cancel(cancel)
+    if row["status"] == "partial":
+        return {
+            key: row[key] for key in ("status", "message", "pairs", "responseExcerpt") if key in row
+        }
     raise UncertainTest
 
 
@@ -239,6 +336,7 @@ def diagnose_ports(groups, open_session, cancel, progress):
                 ip=target.ip,
                 ssh_port=target.port,
                 interface=port,
+                stage="clear",
                 **_reading("skipped", "앞선 포트의 통신이 종료되어 실행을 건너뛰었습니다."),
             )
             for port in group.interfaces
@@ -250,26 +348,28 @@ def diagnose_ports(groups, open_session, cancel, progress):
                 progress(f"{target.endpoint} · 진단 결과 초기화 중")
                 session.clear_cable(cancel)
                 for row in device_rows:
+                    row["stage"] = "test"
+                for row in device_rows:
                     _check_cancel(cancel)
-                    interface = row["interface"]
-                    message = f"{target.endpoint} · 포트 {interface} 케이블 진단"
-                    progress(message)
+                    message = f"{target.endpoint} · 포트 {row['interface']} 케이블 진단"
+                    report = partial(progress, message)
                     try:
-                        row.update(_measure(session, interface, cancel))
+                        result = _measure(session, row, cancel, report)
+                        _update_row(row, result)
                     except UncertainTest:
-                        row.update(
-                            _reading("cancelled", "작업을 취소했습니다.")
-                            if cancel.is_set()
-                            else _reading(
-                                "uncertain", "이번 테스트의 완료 결과를 확인하지 못했습니다."
-                            )
-                        )
+                        row["status"] = "cancelled" if cancel.is_set() else "uncertain"
+                        if cancel.is_set():
+                            row["message"] = "작업을 취소했습니다."
+                        elif row["stage"] == "test":
+                            row["message"] = "테스트 요청 후 완료 응답을 확인하지 못했습니다."
+                        else:
+                            row["message"] = "조회 대기 시간 안에 이번 검사 결과를 받지 못했습니다."
                         break
                     except CollectionFailure as exc:
                         if exc.code is not ErrorCode.COMMAND_REJECTED:
                             raise
-                        row.update(_reading("failed", exc.safe_message))
-                    progress(message, finished=True)
+                        row.update(status="failed", message=exc.safe_message)
+                    report(finished=True, cable_row=row.copy())
                     completed += 1
         except Exception as exc:
             status = "cancelled" if cancel.is_set() else "failed"
@@ -278,14 +378,17 @@ def diagnose_ports(groups, open_session, cancel, progress):
                 if isinstance(exc, CollectionFailure)
                 else "스위치와 통신할 수 없습니다."
             )
-            for row in device_rows:
-                if row["status"] == "skipped":
-                    row.update(_reading(status, detail))
+            for row in device_rows[completed:]:
+                if row["stage"] == "clear":
+                    row.update(status=status, message="초기화 실패 · " + detail)
+                elif row is device_rows[completed] or cancel.is_set():
+                    row.update(status=status, message=detail)
         if cancel.is_set():
-            for row in device_rows:
-                if row["status"] == "skipped":
-                    row.update(_reading("cancelled", "작업을 취소했습니다."))
-        for _ in device_rows[completed:]:
-            progress(f"{target.endpoint} 케이블 진단 처리 완료", finished=True)
+            for row in device_rows[completed:]:
+                row.update(status="cancelled", message="작업을 취소했습니다.")
+        for row in device_rows[completed:]:
+            progress(
+                f"{target.endpoint} 케이블 진단 처리 완료", finished=True, cable_row=row.copy()
+            )
         rows.extend(device_rows)
     return {"rows": rows}

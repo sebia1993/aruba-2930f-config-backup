@@ -70,8 +70,8 @@ function sync() {
   window.cableTools?.sync();
   window.powerMonitoring?.sync();
 }
-async function api(path, data) {
-  const options = {credentials:'same-origin', cache:'no-store'};
+async function api(path, data, headers) {
+  const options = {credentials:'same-origin', cache:'no-store', headers};
   if (data !== undefined) {
     options.method = 'POST';
     options.headers = {'Content-Type':'application/json','X-Local-Token':ui.token};
@@ -91,12 +91,13 @@ async function api(path, data) {
   return json;
 }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function poll(id,resuming=false) {
+async function poll(id,resuming=false,responseKey=null) {
+  const headers=responseKey ? {'X-Cable-Response-Key':responseKey} : undefined;
   let failures = 0;
   let cursor = 0;
   for (;;) {
     let job;
-    try { job = await api('/api/jobs/' + encodeURIComponent(id) + '?after=' + cursor); failures = 0; }
+    try { job = await api('/api/jobs/' + encodeURIComponent(id) + '?after=' + cursor,undefined,headers); failures = 0; }
     catch (e) {
       if (++failures >= 3) throw new Error(e.message + ' 작업 상태를 확인할 수 없습니다. 잠시 후 다시 연결하세요.');
       await delay(850);
@@ -112,6 +113,7 @@ async function poll(id,resuming=false) {
     window.portTools?.onProgress?.(job.action,job.progress || {});
     window.backupTools?.onProgress?.(job.action,job.progress || {});
     window.controlTools?.onProgress?.(job.action,job.progress || {});
+    if (job.action==='cable.test') window.cableTools?.showProgress(id,job.progress?.cableRows,resuming);
     if (Number.isInteger(job.progress?.cursor)) cursor = job.progress.cursor;
     if (job.progress?.message && !$('stopJob').disabled) {
       setJobProgress(job.progress);
@@ -133,6 +135,7 @@ async function run(action, body, receive, retryKeys=null) {
   sync();
   const quick = action === 'control.quick-execute' ? body : null;
   const requestId = quick || action==='cable.test' ? body.requestId : null;
+  const responseKey = action==='cable.test' ? body.responseKey : null;
   setJobProgress({});
   notify(quick ? operationNames[quick.operation] + ' 즉시 실행 · 선택 ' + quick.targets.length + '개' : jobNames[action] + ' 진행 중…');
   try {
@@ -145,7 +148,7 @@ async function run(action, body, receive, retryKeys=null) {
     body = null;
     ui.jobId = submitted.id;
     sync();
-    const {result,cancelled} = await poll(ui.jobId);
+    const {result,cancelled} = await poll(ui.jobId,false,responseKey);
     if (action==='ports.query' && !Array.isArray(result.rows)) {
       await window.portTools.recoverQuery();
       setQueryWorkspace(false);
