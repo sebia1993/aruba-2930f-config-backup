@@ -38,6 +38,7 @@ from aruba2930f_backup.port_control_ssh import port_change_command
 from aruba2930f_backup.storage import default_output_directory
 
 from .operations import first_use_host_key_policy
+from .power_history import sampled_rows
 
 if TYPE_CHECKING:
     from aruba2930f_backup.batch_port_control import _BatchJournal
@@ -381,7 +382,11 @@ class Controls:
             return response
         batch = create_batch_plan(ready, action)
         if direct:
-            response.update(self._execute_batch(batch, credentials, cancel, quick=True))
+            before = sampled_rows(reread)
+            applied = self._execute_batch(batch, credentials, cancel, quick=True)
+            after = sampled_rows(applied)
+            response.update(applied)
+            response["_powerHistoryRows"] = before + after
         else:
             approval = self._batch_approval(batch, credentials, self.operations.last_results)
             approval.quick = True

@@ -7,7 +7,7 @@ import sqlite3
 import time
 from collections import OrderedDict
 from contextlib import closing, suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, RLock, Thread
 
@@ -17,6 +17,7 @@ from .controls import Controls
 from .monitoring import PortMonitoring
 from .operations import Operations, TargetInputError, _groups
 from .port_tools import group_targets
+from .power_history import PowerHistory, sampled_rows
 
 ACTIONS = frozenset(
     [
@@ -59,6 +60,9 @@ PERSIST = {
 EXTENSIONS = {".jsonl", ".json", ".txt", ".xlsx"}
 MAX_RESULTS = 8
 DUPLICATE_POE_REQUEST = "이미 접수한 빠른 PoE 요청입니다. 해당 포트의 현재 상태를 다시 조회하세요."
+POWER_HISTORY_WARNING = (
+    "일부 측정값을 저장하지 못했습니다. 로컬 데이터 폴더와 남은 용량을 확인하세요."
+)
 
 
 def now():
@@ -109,6 +113,8 @@ class Jobs:
     def __init__(self, directory):
         self.directory = Path(directory).resolve()
         self.operations = Operations(self.directory)
+        self.power_history = PowerHistory(self.directory / "power-history.sqlite")
+        self.power_write_errors = {}
         self.controls = Controls(self.operations)
         self.db = self.directory / "web-history.sqlite"
         with closing(sqlite3.connect(self.db)) as db, db:
@@ -370,6 +376,34 @@ class Jobs:
                     row["previousObservation"] = old["previousObservation"]
         self.port_view = {"rows": result["rows"]}
 
+    def _record_power(self, rows, plan, result):
+        if not rows:
+            return
+        try:
+            if plan:
+                self.power_history.record(rows, plan.id, plan.slot, plan.minutes * 60)
+            else:
+                self.power_history.record(rows)
+        except sqlite3.Error:
+            # A storage problem cannot change the outcome of a device operation.
+            failed_at = datetime.now(UTC)
+            cutoff = failed_at - timedelta(days=7)
+            self.power_write_errors = {
+                key: at for key, at in self.power_write_errors.items() if at >= cutoff
+            }
+            for row in rows:
+                self.power_write_errors[(row["ip"], row["ssh_port"], row["interface"])] = failed_at
+            if result is not None:
+                result["powerHistoryWarning"] = POWER_HISTORY_WARNING
+
+    def read_power_history(self, ip, ssh_port, interface, hours):
+        result = self.power_history.read(ip, ssh_port, interface, hours)
+        with self.lock:
+            failed_at = self.power_write_errors.get((ip, ssh_port, interface))
+        if failed_at and failed_at >= datetime.now(UTC) - timedelta(hours=hours):
+            result["warning"] = POWER_HISTORY_WARNING
+        return result
+
     def _output(self, relative):
         if not isinstance(relative, str) or Path(relative).is_absolute():
             raise ValueError("결과 파일 경로를 확인하세요.")
@@ -497,10 +531,18 @@ class Jobs:
         finally:
             with self.lock:
                 monitored = not persist and action in {"ports.query", "ports.refresh"}
+                plan = (
+                    self.monitor if monitored and self.monitor and self.monitor.job == key else None
+                )
+                if result is not None:
+                    self._record_power(sampled_rows(result), plan, result)
                 if action == "ports.query":
                     if result and "rows" in result:
                         self._store_port_view(result, monitored=monitored)
                     elif self.operations.query_started:
+                        self._record_power(
+                            self.operations.invalidate_failed_refresh(cancel.is_set()), plan, result
+                        )
                         self.port_view = None
                 elif action in {
                     "ports.refresh",
@@ -513,6 +555,7 @@ class Jobs:
                     elif state != "done":
                         invalid = self.operations.invalidate_failed_refresh(cancel.is_set())
                         if invalid:
+                            self._record_power(invalid, plan, result)
                             previous = self.port_view["rows"] if self.port_view else []
                             rows = {
                                 (r["ip"], int(r["ssh_port"]), r["interface"]): r

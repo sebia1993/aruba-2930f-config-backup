@@ -91,6 +91,23 @@ def exercise(page, url, switch, _second, shots, _backup):
     hidden = frame.locator(f'#tbody tr[data-port-key="{address}/1"]')
     expect(hidden.locator("td").nth(2)).to_have_text("7 W")
     expect(hidden.locator("td").nth(3)).to_have_text("new-ap-1")
+    # Both real scheduler reads must be present, including the port hidden during that interval.
+    for port, first, second in (("1", 0, 7), ("3", 8, 12)):
+        history = page.evaluate(
+            "url => api(url)",
+            f"/api/power-history?ip=127.0.0.1&ssh_port={switch.port}&interface={port}&hours=1",
+        )
+        prior, latest = history["points"][:2]
+        assert (prior["watts"], latest["watts"], latest["previousWatts"]) == (first, second, first)
+        assert not prior["connected"] and latest["connected"]
+        assert prior["at"] < latest["at"]
+    hidden.locator(".row-select").click()
+    history_panel = frame.locator("#powerHistory")
+    history_panel.locator("summary").click()
+    expect(history_panel.locator(".history-line")).to_have_count(1)
+    expect(history_panel.locator("#powerHistoryLatest")).to_have_text("7 W")
+    if shots:
+        history_panel.screenshot(path=shots / "monitoring-power-history.png")
     assert "configure terminal" not in switch.commands
     page.locator("#shutdown").click()
     page.locator("#reviewBody").get_by_role("button", name="서버 종료").click()

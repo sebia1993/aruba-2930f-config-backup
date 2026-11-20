@@ -113,7 +113,13 @@ class LanSharingTests(unittest.TestCase):
 
     def test_cross_subnet_client_can_open_the_address_and_read_workspace_and_run_jobs(self):
         self.enable()
-        for path in ("/matrix", "/api/bootstrap", "/api/workspace", "/start/obsolete"):
+        for path in (
+            "/matrix",
+            "/api/bootstrap",
+            "/api/workspace",
+            "/api/power-history",
+            "/start/obsolete",
+        ):
             with self.subTest(path=path):
                 self.assertEqual(self.request(path, remote=True)[0], 403)
                 self.assertEqual(self.request(path, remote=True, headers=self.local_auth)[0], 403)
@@ -140,6 +146,13 @@ class LanSharingTests(unittest.TestCase):
             status, _, view = self.request("/api/workspace", remote=remote, headers=auth)
             self.assertEqual(status, 200)
             self.assertEqual(view["groups"][0]["interfaces"], ["1", "2"])
+            route = "/api/power-history?ip=192.0.2.3&ssh_port=22&interface=1%2F2&hours=1"
+            status, _, history = self.request(route, remote=remote, headers=auth)
+            self.assertEqual(status, 200)
+            self.assertEqual(history["points"], [])
+            self.assertEqual(
+                self.request(route + "&hours=168", remote=remote, headers=auth)[0], 400
+            )
 
     def test_distinct_browsers_have_isolated_cookies_and_csrf_tokens(self):
         self.enable()
