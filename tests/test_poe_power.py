@@ -181,6 +181,46 @@ def test_model_comes_from_system_description(description, model):
     assert assess(lldp=LLDPObservation(LLDPStatus.OK, (neighbor,))).status is expected
 
 
+@pytest.mark.parametrize(
+    "description",
+    [
+        "LaserJet (MODEL:535)",
+        "ArubaOS-Switch uplink for AP-535",
+        "System supporting regulatory model APIN0535",
+        "AP-535 compatible mounting device",
+    ],
+)
+def test_model_requires_the_neighbors_own_product_identity(description):
+    neighbor = parse_lldp_neighbors(
+        HEADER + BLOCK.replace("ArubaOS (MODEL:535), Version fictional", description), "13"
+    )[0]
+    assert neighbor.system_name == "fictional-ap"
+    assert neighbor.model == ""
+
+
+def test_enabled_capabilities_are_bound_to_the_advertising_neighbor():
+    first = BLOCK + " System Capabilities Supported : wlan-access-point, bridge\n"
+    second = BLOCK.replace("fictional-ap", "second") + (
+        " System Capabilities Supported : wlan-access-point, bridge, router\n"
+        " System Capabilities Enabled : bridge, WLAN Access Point\n"
+    )
+    neighbors = parse_lldp_neighbors(HEADER + first + second, "13")
+    assert neighbors[0].system_capabilities_enabled == ()
+    assert neighbors[1].system_capabilities_enabled == ("bridge", "WLAN Access Point")
+
+
+def test_conflicting_enabled_capability_rows_are_ambiguous():
+    output = (
+        HEADER
+        + BLOCK
+        + (
+            " System Capabilities Enabled : bridge\n System Capabilities Enabled : wlan-access-point\n"
+        )
+    )
+    with pytest.raises(CollectionFailure):
+        parse_lldp_neighbors(output, "13")
+
+
 def test_multiple_neighbors_or_conflicting_sources_are_unknown():
     neighbor = parse_lldp_neighbors(HEADER + BLOCK, "13")[0]
     assert (
@@ -622,6 +662,7 @@ def test_full_manufacturer_lldp_sections_preserve_neighbor_and_negotiation():
     neighbor = parse_lldp_neighbors(output, "13")[0]
     assert neighbor.system_name == "fictional-ap-535"
     assert neighbor.model == "AP-535"
+    assert neighbor.system_capabilities_enabled == ("wlan-access-point",)
     assert neighbor.management_addresses == ("192.0.2.53",)
     assert neighbor.power is not None
     assert neighbor.power.requested_watts == neighbor.power.allocated_watts == Decimal("25.5")

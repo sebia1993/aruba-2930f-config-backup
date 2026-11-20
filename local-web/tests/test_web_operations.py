@@ -419,7 +419,9 @@ class OperationsTests(unittest.TestCase):
         self.session.read_lldp.return_value = (
             "LLDP Remote Device Information Detail\nLocal Port : 24\nChassisType : mac-address\n"
             "ChassisId : 00 00 00 00 00 01\nPortType : interface-name\nPortId : eth0\n"
-            "SysName : sample-ap\nSystem Descr : ArubaOS (MODEL:535), Version Aruba AP"
+            "SysName : sample-ap\nSystem Descr : ArubaOS (MODEL:535), Version Aruba AP\n"
+            "System Capabilities Supported : bridge, wlan-access-point\n"
+            "System Capabilities Enabled : wlan-access-point"
         )
         response = self.call("ports.query", targets=f"{self.target.endpoint} 24")
         (row,) = response["rows"]
@@ -428,6 +430,9 @@ class OperationsTests(unittest.TestCase):
             (self.target.ip, 2222, "ok", "24", 13.2),
         )
         self.assertIn("sample-ap", row["ap_names"])
+        self.assertEqual(
+            list(row["lldp_neighbors"][0]["system_capabilities_enabled"]), ["wlan-access-point"]
+        )
         self.assertIn("poe_off", row["eligible_operations"])
         self.assertEqual(row["link_status"], "Up")
         self.assertIsNotNone(self.ops.last_results[0].snapshot)

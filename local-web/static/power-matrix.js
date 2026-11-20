@@ -46,31 +46,63 @@
     return Number.isFinite(value) && value >= 0 ? value : null;
   }
 
-  function namedAccessPoint(name, model = '', description = '') {
-    if (!name || /^(?:[-?–—]+|n\/?a|none|null|undefined|unknown|unnamed|no name|not (?:available|reported|specified)|LLDP (?:pending|failed|cancelled)|이름 없음|이웃 없음|미수집|미확인|확인 불가)$/i.test(name)) return '';
-    if (/^(?:[\da-f]{2}[:-]){5}[\da-f]{2}$|^(?:[\da-f]{4}\.){2}[\da-f]{4}$|^[\da-f]{12}$|^(?:\d{1,3}\.){3}\d{1,3}$|^[\da-f]*:[\da-f:]+$/i.test(name)) return '';
-    // An AP-like substring in a switch/uplink label is not a neighbor AP identity.
-    const otherDevice = /(?:^|[\s_.-])(?:switch|sw|router|controller|uplink|telephone|phone|printer|laptop|desktop|workstation|server|pc)(?=$|[\s_.-]|\d)/i;
-    if (otherDevice.test(name) || otherDevice.test(description) || otherDevice.test(model) || /\s\/\s/.test(model)) return '';
-    const apModel = /^I?AP[- ]\d{3}[A-Z]?$/i.test(model);
-    const apDescription = /\b(?:I?AP[- ]\d{3}[A-Z]?|APIN0\d{3}|(?:wireless\s+)?access[ -]point)\b/i.test(description);
-    const apName = /(?:^|[\s_.-])I?AP(?=\d|[\s_.-]|$)/i.test(name) && !/^i?ap$/i.test(name);
-    return apModel || apDescription || apName ? name : '';
+  const missingName = /^(?:[-?–—]+|n\/?a|none|null|undefined|unknown|unnamed|no name|not (?:available|reported|specified)|LLDP (?:pending|failed|cancelled)|이름 없음|이웃 없음|미수집|미확인|확인 불가)$/i;
+
+  function advertisesAccessPoint(neighbor) {
+    const model = text(neighbor.model);
+    const description = text(neighbor.system_description).split(/[,;]\s*(?:version|build)\b/i)[0];
+    const enabled = Array.isArray(neighbor.system_capabilities_enabled)
+      ? neighbor.system_capabilities_enabled.map(token) : [];
+    // SysName is an operator's label. Only advertised device identity and roles describe its type.
+    const otherDevice = /\b(?:switch|controller|router|telephone|phone|printer|laptop|desktop|workstation|server|AOS-CX)\b/i;
+    if (model.includes('/') || otherDevice.test(description) || otherDevice.test(model)
+        || enabled.some(role => /^(?:telephone|station[ _-]?only|docsis[ _-]?cable[ _-]?device)$/.test(role))) return false;
+    if (enabled.some(role => /^wlan[ _-]?(?:access[ _-]?point|ap)$/.test(role))) return true;
+    if (/^(?:(?:HPE )?Aruba(?: Networking| Networks)? )?(?:Wireless )?Access[ -]Point$/i.test(description)) return true;
+    if (!/^I?AP[- ]\d{3}[A-Z]?$/i.test(model)) return false;
+    // Older observations could derive a model from free text anywhere in a description.
+    if (Array.isArray(neighbor.system_capabilities_enabled) || !description) return true;
+    return /^(?:(?:HPE\s+)?Aruba(?:\s+Networking|\s+Networks)?\s+)?(?:Regulatory\s+)?(?:I?AP[- ]\d{3}[A-Z]?|APIN0\d{3})(?=$|\s*[,/;(]|\s+(?:(?:wireless|campus)\s+)?access point\b|\s+version\b)/i.test(description)
+      || /^ArubaOS\s*\(\s*MODEL\s*:\s*\d{3}[A-Z]?\s*\)/i.test(description);
   }
 
-  function lldpAccessPointName(row) {
-    if (text(row.lldp_error_code) || token(row.lldp_status) !== 'ok') return '';
+  function neighborIdentity(row) {
+    const info = {apName: '', names: [], neighborCount: null, label: 'LLDP 이웃 이름', reason: ''};
+    if (row?.complete !== true || row.controlUsed || row.refreshInvalidated
+        || !['ok', 'unsupported', 'failed'].includes(token(row.status))) {
+      info.reason = '이 포트에 최신 LLDP 조회 결과가 없습니다.';
+      return info;
+    }
+    if (text(row.lldp_error_code) || token(row.lldp_status) === 'failed') {
+      info.reason = ['LLDP 조회 실패', text(row.lldp_message) || text(row.lldp_error_code)].filter(Boolean).join(' · ');
+      return info;
+    }
     const neighbors = row.lldp_neighbors;
-    if (!Array.isArray(neighbors) || neighbors.length !== 1) return '';
-    const neighbor = neighbors[0];
-    return namedAccessPoint(text(neighbor?.system_name), text(neighbor?.model), text(neighbor?.system_description));
+    if (token(row.lldp_status) !== 'ok' || !Array.isArray(neighbors)) {
+      info.reason = 'LLDP 수집 결과를 확인할 수 없습니다.';
+      return info;
+    }
+    info.neighborCount = neighbors.length;
+    info.names = neighbors.map(neighbor => text(neighbor?.system_name)).filter(name => name && !missingName.test(name));
+    if (!neighbors.length) {
+      info.reason = '이 포트에서 발견된 LLDP 이웃이 없습니다.';
+    } else if (neighbors.length > 1) {
+      info.label += ' · 이웃 ' + neighbors.length + '대';
+      info.reason = 'LLDP 이웃 ' + neighbors.length + '대가 조회되어 이 포트의 AP를 특정할 수 없습니다.';
+    } else if (!info.names.length) {
+      info.reason = '이 포트의 LLDP 이웃이 장비 이름을 보고하지 않았습니다.';
+    } else if (advertisesAccessPoint(neighbors[0])) {
+      info.apName = info.names[0];
+      info.label = 'AP 이름';
+    } else {
+      info.label += ' · AP 유형 미확인';
+      info.reason = 'LLDP 이웃 이름을 수집했습니다. AP 유형 미확인.';
+    }
+    return info;
   }
 
   function accessPointName(row) {
-    if (row?.complete !== true || row.controlUsed || row.refreshInvalidated) return '';
-    if (!['ok', 'unsupported', 'failed'].includes(token(row.status))) return '';
-    // LLDP can succeed even when the independent PoE command fails.
-    return lldpAccessPointName(row);
+    return neighborIdentity(row).apName;
   }
 
   function supplyProblem(row) {
@@ -109,15 +141,16 @@
     if (row.complete !== true || token(row.lldp_status) === 'pending') {
       return result('unclassified', '이 포트의 조회가 완료되지 않았습니다.');
     }
-    apName = lldpAccessPointName(row);
+    const neighbor = neighborIdentity(row);
+    apName = neighbor.apName;
     watts = measurement(row.watts);
     if (watts === null) return result('unclassified', '유효한 실측 전력값이 없습니다.');
     if (watts === 0) return result('unpowered', '스위치에서 실측 전력 0 W를 보고했습니다.');
     const problem = supplyProblem(row);
     if (problem) return result('limited', problem);
-    if (!apName) return result('limited', '전력을 공급하고 있으나 이 포트의 LLDP에서 AP 이름을 확인하지 못했습니다.');
+    if (!apName) return result('limited', neighbor.reason);
     return result('normal', '스위치에서 전력 공급과 LLDP 이웃 AP 이름을 확인했습니다.');
   }
 
-  globalThis.PowerMatrix = Object.freeze({labels, classify, linkLabel, linkIndicator, readFailure, accessPointName});
+  globalThis.PowerMatrix = Object.freeze({labels, classify, linkLabel, linkIndicator, readFailure, accessPointName, neighborIdentity});
 })();

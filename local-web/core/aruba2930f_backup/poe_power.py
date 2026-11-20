@@ -58,6 +58,7 @@ class LLDPNeighbor:
     port_description: str = ""
     management_addresses: tuple[str, ...] = ()
     power: PowerEvidence | None = None
+    system_capabilities_enabled: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,11 +315,23 @@ _NEIGHBOR_FIELDS = {
 }
 
 
+_AP_PRODUCT_DESCRIPTION = re.compile(
+    r"^(?:ArubaOS\s*\(\s*MODEL\s*:\s*\d{3}[A-Z]?\s*\)|"
+    r"(?:(?:HPE\s+)?Aruba(?:\s+Networking|\s+Networks)?\s+)?(?:Regulatory\s+)?"
+    r"(?:I?AP[- ]\d{3}[A-Z]?|APIN0\d{3})"
+    r"(?=$|\s*[,/;(]|\s+(?:(?:wireless|campus)\s+)?access point\b|\s+version\b))",
+    re.IGNORECASE,
+)
+
+
 def _model_from_description(description: str) -> str:
+    # A product or model number mentioned by a different device is not its identity.
+    if not _AP_PRODUCT_DESCRIPTION.match(description):
+        return ""
     models: set[str] = set()
     for pattern in (
         r"\bMODEL\s*:\s*(\d{3}[A-Z]?)\b",
-        r"\bAP[- ](\d{3}[A-Z]?)\b",
+        r"\bI?AP[- ](\d{3}[A-Z]?)\b",
         r"\bAPIN0(\d{3})\b",
     ):
         models.update(
@@ -342,6 +355,7 @@ def _neighbor(block: list[str]) -> LLDPNeighbor:
     fields: dict[str, str] = {}
     addresses: list[str] = []
     power_lines: list[str] = []
+    enabled_capabilities: tuple[str, ...] | None = None
     in_management = False
     management_type: str | None = None
     for line in block[1:]:
@@ -378,6 +392,10 @@ def _neighbor(block: list[str]) -> LLDPNeighbor:
             if key in fields:
                 raise _failure("LLDP 이웃 식별 필드가 중복되어 연결할 수 없습니다.")
             fields[key] = value
+        elif label == "system capabilities enabled":
+            if enabled_capabilities is not None:
+                raise _failure("LLDP 이웃의 활성 역할 필드가 중복되었습니다.")
+            enabled_capabilities = tuple(role.strip() for role in value.split(",") if role.strip())
         elif label in (
             "management address",
             "management addresses",
@@ -400,6 +418,7 @@ def _neighbor(block: list[str]) -> LLDPNeighbor:
         model=_model_from_description(fields.get("system_description", "")),
         management_addresses=tuple(addresses),
         power=power if has_power else None,
+        system_capabilities_enabled=enabled_capabilities or (),
     )
 
 

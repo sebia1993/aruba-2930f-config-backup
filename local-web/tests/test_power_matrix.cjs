@@ -58,6 +58,8 @@ test('a genuine AP name can have any naming convention and an arbitrarily low dr
   assert.equal(observed.watts, 0.0001);
   const noModel = {system_name: 'lobby', system_description: 'Wireless Access Point'};
   assert.equal(classify({...row, lldp_neighbors: [noModel]}).apName, 'lobby');
+  const regulatory = {...ap, system_description: 'Aruba AP-535/APIN0535'};
+  assert.equal(classify({...row, lldp_neighbors: [regulatory]}).apName, ap.system_name);
 });
 
 test('a failed LLDP read, placeholders, ordinary neighbors and ambiguous rows do not confirm an AP', () => {
@@ -66,7 +68,6 @@ test('a failed LLDP read, placeholders, ordinary neighbors and ambiguous rows do
     {lldp_neighbors: [ap, {system_name: 'office-phone'}]}, {lldp_neighbors: []},
     {lldp_neighbors: [{...ap, system_name: 'N/A'}]}, {lldp_neighbors: [{...ap, system_name: '이름 없음'}]},
     {lldp_neighbors: [{system_name: 'AP-535', system_description: 'Phone'}]},
-    {lldp_neighbors: [{...ap, system_name: '00:11:22:33:44:55'}]},
     {lldp_neighbors: [{...ap, system_description: 'Access Point Controller'}]},
     {lldp_neighbors: [{system_name: 'rack', model: 'AP-535 / AP-515'}]},
     {lldp_neighbors: 'broken', ap_names: ap.system_name},
@@ -114,4 +115,76 @@ test('matrix labels follow the current port LLDP name independently of its PoE r
     {lldp_neighbors: null, previousObservation: row},
   ]) assert.equal(accessPointName({...row, ...fields}), '');
   assert.equal(accessPointName(null), '');
+});
+
+test('a verified AP keeps its exact advertised name irrespective of spelling or address format', () => {
+  for (const name of ['AP-SW-07', 'SWITCH', '3F-01', '535', '00:11:22:33:44:55', '192.0.2.1']) {
+    const current = {...row, lldp_neighbors: [{...ap, system_name: name}]};
+    assert.equal(classify(current).state, 'normal', name);
+    const info = PowerMatrix.neighborIdentity(current);
+    assert.equal(info.apName, name);
+    assert.deepEqual(info.names, [name]);
+    assert.equal(info.label, 'AP 이름');
+  }
+});
+
+test('only enabled WLAN capability or direct AP identity confirms a named neighbor', () => {
+  for (const role of ['wlan-access-point', 'WLAN Access Point', 'wlanAccessPoint']) {
+    const current = {...row, lldp_neighbors: [{system_name: '3F-01', system_description: 'ArubaOS',
+      system_capabilities_enabled: ['bridge', role]}]};
+    assert.equal(classify(current).state, 'normal');
+    assert.equal(PowerMatrix.accessPointName(current), '3F-01');
+  }
+  for (const metadata of [
+    {}, {system_capabilities_supported: ['wlan-access-point'], system_capabilities_enabled: ['bridge']},
+    {system_capabilities_enabled: ['not-wlan-access-point']},
+    {system_capabilities_enabled: ['wlan-access-point-disabled']},
+    {system_capabilities_enabled: ['WL AN Access Point']},
+    {system_description: 'Power adapter for AP-535', model: 'AP-535'},
+    {system_description: 'AP-535 compatible power adapter', model: 'AP-535'},
+    {system_description: 'MODEL: 535', model: 'AP-535'},
+    {system_description: 'HP 2930F Switch', system_capabilities_enabled: ['wlan-access-point']},
+    {system_description: 'AP controller', system_capabilities_enabled: ['wlan-access-point']},
+    {model: 'AP-535 / AP-515', system_capabilities_enabled: ['wlan-access-point']},
+    {system_description: 'IP Phone', model: 'AP-535'},
+    {...ap, system_capabilities_enabled: ['telephone', 'wlan-access-point']},
+  ]) {
+    const current = {...row, lldp_neighbors: [{...metadata, system_name: 'AP-01'}]};
+    assert.equal(classify(current).state, 'limited', JSON.stringify(metadata));
+    const info = PowerMatrix.neighborIdentity(current);
+    assert.deepEqual(info.names, ['AP-01']);
+    assert.equal(info.apName, '');
+    assert.match(info.label, /이웃 이름.*AP 유형 미확인/);
+    assert.match(classify(current).reason, /유형/);
+  }
+});
+
+test('multiple LLDP neighbors keep their reported names but cannot be attributed to one AP', () => {
+  const current = {...row, lldp_neighbors: [ap, {system_name: 'IP 전화기'}, {...ap, system_name: ''}]};
+  const info = PowerMatrix.neighborIdentity(current);
+  assert.deepEqual(info.names, ['서쪽 회의실', 'IP 전화기']);
+  assert.equal(info.neighborCount, 3);
+  assert.equal(info.apName, '');
+  assert.match(info.label, /이웃 3대/);
+  assert.match(classify(current).reason, /3대/);
+});
+
+test('empty, unnamed, failed and stale LLDP observations keep distinct provenance', () => {
+  const info = fields => PowerMatrix.neighborIdentity({...row, ...fields});
+  assert.equal(info({lldp_neighbors: []}).neighborCount, 0);
+  const unnamed = info({lldp_neighbors: [{...ap, system_name: 'N/A'}]});
+  assert.deepEqual(unnamed.names, []);
+  assert.equal(unnamed.neighborCount, 1);
+  assert.equal(unnamed.apName, '');
+  for (const fields of [
+    {lldp_status:'failed'}, {lldp_status:'pending'}, {status:'cancelled'}, {controlUsed:true},
+    {refreshInvalidated:true}, {complete:false}, {lldp_neighbors:null, ap_names:'stale'},
+  ]) {
+    const observed = info(fields);
+    assert.deepEqual(observed.names, []);
+    assert.equal(observed.neighborCount, null);
+    assert.equal(observed.apName, '');
+    assert.notEqual(classify({...row, ...fields}).state, 'normal');
+  }
+  assert.match(classify({...row, lldp_status:'failed'}).reason, /LLDP.*실패/);
 });

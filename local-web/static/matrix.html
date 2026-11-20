@@ -256,7 +256,8 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .embedded[data-theme=light] .port-tile.unpowered{color:#000}
 .embedded[data-theme=light] .port-tile.normal{color:#fff}
 .embedded .port-tile.unclassified{color:var(--ink)}
-.embedded .tile-ap-name{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600;line-height:1.25}
+.embedded .tile-ap-name,.embedded .tile-neighbor-name{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600;line-height:1.25}
+.tile-neighbor-name::before{content:"이웃 · ";font-weight:400}
 .embedded .port-tile[data-link]:hover{transform:none}
 .port-failure-mark{display:inline-grid;place-items:center;width:1.05rem;height:1.05rem;flex:none;border-radius:50%;background:#172331;color:#fff;border:1px solid #fff;font:bold 12px/1 sans-serif}
 .port-tile[data-read-failed=true]{display:inline-flex;align-items:center;justify-content:center;gap:3px}
@@ -443,7 +444,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
           <button type="button" id="listChanges" class="btn ghost" aria-controls="tbody" aria-pressed="false" title="포트별 직전 측정과 비교">변화 포트 0개</button>
         </div>
         <select id="sort" aria-label="결과 정렬"><option value="natural">IP·포트 순</option><option value="issues">전력 점검 우선</option><option value="power">전력 높은 순</option></select></div></div>
-      <div class="tablewrap"><table class="resulttable" aria-labelledby="tableTitle"><colgroup><col class="port-col"><col class="power-state-col"><col class="watts-col"><col></colgroup><thead><tr><th scope="col">포트 번호</th><th scope="col">전력 판정</th><th scope="col">실측 W</th><th scope="col">LLDP AP 이름</th></tr></thead><tbody id="tbody"></tbody></table></div>
+      <div class="tablewrap"><table class="resulttable" aria-labelledby="tableTitle"><colgroup><col class="port-col"><col class="power-state-col"><col class="watts-col"><col></colgroup><thead><tr><th scope="col">포트 번호</th><th scope="col">전력 판정</th><th scope="col">실측 W</th><th scope="col">LLDP 이름</th></tr></thead><tbody id="tbody"></tbody></table></div>
       <div class="table-foot"><span id="tableRange">—</span><div class="paginate"><button id="prevPage" aria-label="이전 페이지">이전</button><span id="pageNum">1 / 1</span><button id="nextPage" aria-label="다음 페이지">다음</button></div></div>
      </section>
     </div>
@@ -526,22 +527,28 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
   }
   const refreshNotice='현재 상태 재조회 필요';
   function needsRefresh(row) { return liveSelectionId() && row.queryStatus==='ok' && excludedPorts.has(row.key); }
-  function matrixApName(row) {
-    return needsRefresh(row) ? '' : window.PowerMatrix.accessPointName(row.raw);
+  function neighborReading(identity) {
+    if (identity?.neighborCount == null) return '미수집';
+    return identity.names.join(' / ') || (identity.neighborCount ? '이름 없음' : '이웃 없음');
   }
   function labelTile(tile,row) {
-    const ap=embedded ? matrixApName(row) : row.apName;
-    const parts=[row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status],ap];
+    const identity=needsRefresh(row) ? null : row.neighbor;
+    const names=identity?.names.join(' / ');
+    const parts=[row.hostname+' ('+endpoint(row)+')',row.port,watts(row),statusNames[row.status]];
+    if (names) parts.push(identity.label+' · '+names);
     if (embedded) {
       const value=excludedPorts.get(row.key) ?? row.link;
       const link=window.PowerMatrix.linkIndicator(value);
       tile.dataset.link=link.state;
       tile.querySelector('.tile-link').textContent=link.label;
       parts.push('링크 '+(link.state==='unknown' ? '미조회' : window.PowerMatrix.linkLabel(value)));
-      const caption=tile.querySelector('.tile-ap-name');
-      if (ap && !caption) tile.querySelector('.tile-power').append(node('span',ap,'tile-ap-name'));
-      else if (!ap) caption?.remove();
-      else if (caption.textContent!==ap) caption.textContent=ap;
+      const caption=tile.querySelector('.tile-ap-name,.tile-neighbor-name');
+      if (names) {
+        const item=caption || node('span');
+        item.className=identity.apName ? 'tile-ap-name' : 'tile-neighbor-name';
+        item.textContent=names;
+        if (!caption) tile.querySelector('.tile-power').append(item);
+      } else caption?.remove();
     }
     if (row.readFailure) parts.push('조회 실패');
     if (row.comparison?.changed) parts.push('직전 조회에서 변화');
@@ -598,7 +605,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       return status==='all' || row.status===status;
     }
     const matching = state.rows.filter(row => (!device || device===endpoint(row))
-      && matchesStatus(row) && (!query || [row.hostname,endpoint(row),row.port,row.apName,row.ap,row.label,
+      && matchesStatus(row) && (!query || [row.hostname,endpoint(row),row.port,...(row.neighbor?.names || []),row.label,
         row.poeStatus,row.link,row.reportedLink,row.assessmentModel,row.diagnosis,row.raw.message,row.readFailure,
         statusNames[row.status]].some(value => String(value||'').toLowerCase().includes(query))));
     const failures = matching.filter(row => row.readFailure);
@@ -710,14 +717,13 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       part.dataset.comparison=key;
       part.append(node('dt',title),node('dd',value)); grid.append(part);
     }
-    const formatAp=value=>lldpMeasured(value)?value.apName || '이름 없음':'미수집';
     let readings=watts(before)+' → '+watts(row);
     if (before.watts!=null && row.watts!=null) {
       const delta=Number((row.watts-before.watts).toFixed(3));
       readings+=' ('+(delta>0?'+':delta<0?'−':'')+Math.abs(delta)+' W)';
     }
     field('watts','직전 전력 → 현재 전력',readings);
-    field('ap','LLDP AP',formatAp(before)+' → '+formatAp(row));
+    field('ap','LLDP 이름',needsRefresh(row) ? refreshNotice : apReading(before)+' → '+apReading(row));
     field('status','전력 판정',statusNames[before.status]+' → '+statusNames[row.status]);
     field('time','관측 시각',timeText(before.observed)+' → '+timeText(row.observed));
     return grid;
@@ -741,11 +747,12 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     const badges=node('div',null,'badges');
     badges.append(node('span',statusNames[row.status],'badge '+row.status),node('span','인터페이스 '+row.port,'badge'));
     if (row.lastGood) badges.append(node('span','갱신 지연','badge'));
-    const ap=embedded && state.presentation==='matrix' ? matrixApName(row) : row.apName;
+    const neighbor=needsRefresh(row) ? null : row.neighbor;
+    const reportedNames=neighborReading(neighbor);
     const fields = node('div',null,'dgrid');
     const values = [
       ['실측 전력',watts(row)],['PoE 공급 상태',row.poeStatus],['PoE 설정',row.poe],
-      ['LLDP AP 이름',ap],['LLDP 이웃 이름',row.ap],['LLDP 수집',collectionNames[row.lldp] || row.lldp],
+      ['LLDP AP 이름',neighbor?.apName],['LLDP 이웃 이름',reportedNames],['LLDP 수집',needsRefresh(row)?refreshNotice:collectionNames[row.lldp] || row.lldp],
       ['포트 조회',collectionNames[row.queryStatus] || row.queryStatus],['관리 상태',row.admin],
       ['관측 당시 링크',row.link],['관측 시각',timeText(row.observed)]
     ];
@@ -772,7 +779,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       const selection=node('div',null,'port-reading');
       badges.append(node('strong',watts(row),'observed-watts'));
       selection.append(identity,badges);
-      badges.append(node('span','LLDP AP · '+(ap || (row.lldp==='ok'?'이름 없음':'미수집')),'ap-name'));
+      badges.append(node('span',(neighbor?.label || 'LLDP 이웃 이름')+' · '+reportedNames,'ap-name'));
       addRefreshNotice(selection,row);
       facts=node('details',null,'port-facts');
       facts.open=!!factsOpen;
@@ -809,6 +816,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       assessment_label:'전력 협상 판정',assessment_reason:'협상 판정 근거',assessment_model:'AP 모델',assessment_model_source:'모델 근거',
       requested_watts:'요청 전력 (W)',allocated_watts:'할당 전력 (W)',negotiation:'전력 협상',port_poe_state:'포트 전력 상태',
       port_poe_explanation:'전력 상세',reference_id:'PoE 판정 기준',reference_url:'판정 자료 주소'})) {
+      if (key==='lldp_neighbors' && neighbor?.neighborCount == null) continue;
       const value=row.raw[key];
       if (value==null || value==='') continue;
       const cell=node('div',null,'dfield wide');
@@ -872,14 +880,17 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     const previousExcluded=excludedPorts;
     // A port can be unavailable for power control and still have a fresh physical-link read.
     excludedPorts=new Map(excluded.map(target=>[targetKey(target),target.link || '']));
+    let namesChanged=false;
     for (const key of new Set([...previousExcluded.keys(),...excludedPorts.keys()])) {
+      if (previousExcluded.has(key)!==excludedPorts.has(key)) namesChanged=true;
       const tile=state.tileByKey.get(key);
       if (tile && previousExcluded.get(key)!==excludedPorts.get(key)) labelTile(tile,state.lookup.get(key));
     }
     const next=new Set(targets.map(targetKey).filter(key=>state.lookup.has(key) && canCheck(state.lookup.get(key))));
     checkedPorts=next;
     if (previousExcluded.has(state.selected)!==excludedPorts.has(state.selected)) renderDetail();
-    renderChecks();
+    if (namesChanged && state.presentation==='list') renderTable();
+    else renderChecks();
   }
   function checkRow(row,checked) {
     if (controlsBusy || !canCheck(row)) return;
@@ -891,7 +902,10 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     return state.changesOnly ? state.changedRows : state.found;
   }
   function apReading(row) {
-    return row.apName || (lldpMeasured(row)?'이름 없음':'미수집');
+    const neighbor=row.neighbor;
+    if (neighbor?.apName || !neighbor?.names.length) return neighborReading(neighbor);
+    const type=neighbor.neighborCount>1 ? '이웃 '+neighbor.neighborCount+'대' : 'AP 유형 미확인';
+    return neighborReading(neighbor)+' · '+type;
   }
   function showPrevious(cell,field,text) {
     cell.dataset.change=field;
@@ -954,12 +968,12 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       if (row.lastGood) power.append(node('small','갱신 지연','reading-delay'));
       const measured=node('td',watts(row));
       if (row.lastGood) measured.title='마지막 측정 · '+timeText(row.lastGood.observed);
-      const ap=node('td',apReading(row));
+      const ap=node('td',needsRefresh(row) ? refreshNotice : apReading(row));
       if (state.changesOnly) {
         const change=row.comparison, previous=change.previous;
         if (change.statusChanged) showPrevious(power,'status',statusNames[previous.status]);
         if (change.wattsChanged) showPrevious(measured,'watts',watts(previous));
-        if (change.apChanged) showPrevious(ap,'ap',apReading(previous));
+        if (change.apChanged && !needsRefresh(row)) showPrevious(ap,'ap',apReading(previous));
       }
       tr.append(port,power,measured,ap);
       frag.append(tr);
@@ -1152,21 +1166,19 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     const lastGood=power.watts==null && priorWatts!=null ?
       {watts:priorWatts,observed:previous.observed_at || previous.finished_at} : null;
     const link=window.PowerMatrix.linkLabel(raw.link_status);
-    const neighbors=(raw.lldp_neighbors || []).map(n=>n.system_name || '이름 없음');
+    const neighbor=window.PowerMatrix.neighborIdentity(raw);
     return {
       ip,sshPort,port,key:targetKey({ip,sshPort,port}),raw,readFailure:window.PowerMatrix.readFailure(raw),
       hostname:raw.hostname || previous?.hostname || ip,label:raw.label,lastGood,
       link,reportedLink:link==='미확인'?raw.link_status:link,linkObserved:raw.link_observed_at,
-      status:power.state,reason:power.reason,watts:power.watts,apName:power.apName,
+      status:power.state,reason:power.reason,watts:power.watts,neighbor,
       poe:setting(raw.poe_enabled,'ON','OFF'),admin:setting(raw.enabled,'Enable','Disable'),
       observed:raw.observed_at || raw.finished_at,queryStatus:raw.status,lldp:raw.lldp_status,
-      ap:neighbors.length?neighbors.join(' / '):raw.lldp_status==='ok'?'이웃 없음':'미수집',
       poeStatus:raw.poe_status,assessmentModel:raw.assessment_model,diagnosis:raw.port_poe_state
     };
   }
   function lldpMeasured(row) {
-    return row.queryStatus==='ok' && !row.raw.error_code && row.raw.complete===true && row.lldp==='ok' &&
-      !row.raw.lldp_error_code && Array.isArray(row.raw.lldp_neighbors);
+    return row.neighbor?.neighborCount != null;
   }
   function comparePrevious(row) {
     const previousRaw=row.raw.previousObservation;
@@ -1178,7 +1190,9 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     // A failed LLDP read does not establish that an AP disappeared.
     const color=power && (ap || previous.status==='unpowered' || row.status==='unpowered');
     const wattsChanged=power && previous.watts!==row.watts;
-    const apChanged=ap && previous.apName!==row.apName;
+    const apChanged=ap && (previous.neighbor.apName!==row.neighbor.apName ||
+      previous.neighbor.neighborCount!==row.neighbor.neighborCount ||
+      JSON.stringify([...previous.neighbor.names].sort())!==JSON.stringify([...row.neighbor.names].sort()));
     const statusChanged=color && previous.status!==row.status;
     return {previous,comparable:power || ap,changed:wattsChanged || apChanged || statusChanged,
       wattsChanged,apChanged,statusChanged};

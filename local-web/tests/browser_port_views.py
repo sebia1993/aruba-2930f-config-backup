@@ -13,7 +13,7 @@ from browser_qa import (
 from browser_unified_controls import hit_point, resize_workspace
 from playwright.sync_api import expect
 
-HEADINGS = ["포트 번호", "전력 판정", "실측 W", "LLDP AP 이름"]
+HEADINGS = ["포트 번호", "전력 판정", "실측 W", "LLDP 이름"]
 SIZES = ((1366, 768), (390, 844), (320, 568))
 LONG_AP = "engineering-floor-3-east-wing-access-point-0002"
 
