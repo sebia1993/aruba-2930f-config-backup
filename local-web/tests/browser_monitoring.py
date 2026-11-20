@@ -3,7 +3,7 @@
 import sys
 
 from browser_power_matrix import PowerMatrixSwitch
-from browser_qa import enter_ssh_credentials, run_browser_case
+from browser_qa import enter_ssh_credentials, power_filter, run_browser_case
 from browser_unified_controls import hit_point, resize_workspace
 from playwright.sync_api import expect
 
@@ -37,7 +37,8 @@ def exercise(page, url, switch, _second, shots, _backup):
     frame.locator(f'#matrix [data-port-key="{key}"]').click()
     page.locator("#listView").click()
     frame.locator("#search").fill("matrix-ap-3")
-    frame.locator("#status").select_option("normal")
+    normal = power_filter(frame, "normal")
+    normal.click()
     row = frame.locator(f'#tbody tr[data-port-key="{key}"]')
     expect(frame.locator("#tbody tr[data-port-key]")).to_have_count(1)
     expect(row.locator("td").nth(2)).to_have_text("8 W")
@@ -73,7 +74,7 @@ def exercise(page, url, switch, _second, shots, _backup):
     }
     assert port_reads == set(commands)
     expect(frame.locator("#search")).to_have_value("matrix-ap-3")
-    expect(frame.locator("#status")).to_have_value("normal")
+    expect(normal).to_have_attribute("aria-pressed", "true")
     expect(row).to_have_class("selected")
     expect(row.locator("input")).to_be_checked()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
@@ -86,7 +87,7 @@ def exercise(page, url, switch, _second, shots, _backup):
     expect(toggle).to_have_attribute("aria-pressed", "false")
     resize_workspace(page, 1366, 768)
     frame.locator("#search").fill("")
-    frame.locator("#status").select_option("all")
+    normal.click()
     hidden = frame.locator(f'#tbody tr[data-port-key="{address}/1"]')
     expect(hidden.locator("td").nth(2)).to_have_text("7 W")
     expect(hidden.locator("td").nth(3)).to_have_text("new-ap-1")

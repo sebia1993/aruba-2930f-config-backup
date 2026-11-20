@@ -19,6 +19,19 @@ from playwright.sync_api import expect, sync_playwright
 from verify_http_ssh import MonitorFixture, backup_switch
 
 
+def power_filter(frame, state):
+    return frame.locator(f'button[data-power-filter="{state}"]')
+
+
+def expect_hidden_selection(page, count):
+    indicator = page.locator("#hiddenSelectedCount")
+    if count:
+        expect(indicator).to_be_visible()
+        expect(indicator).to_have_text(f"화면 밖 {count}개")
+    else:
+        expect(indicator).to_be_hidden()
+
+
 def open_port_controls(page):
     if not page.locator("#controlPanel").evaluate("panel => panel.open"):
         page.locator("#controlHeading").click()
@@ -331,9 +344,12 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     if shots:
         page.screenshot(path=shots / "03-live-port-query.png")
     expect(matrix_frame.locator("#tbody")).to_contain_text("fixture-ap", timeout=20000)
-    page.locator("#portReviewTab").click()
-    expect(matrix_frame.locator("#extraView")).to_be_visible()
-    page.locator("#portReviewTab").click()
+    expect(page.get_by_role("button", name="우선 확인", exact=True)).to_have_count(0)
+    normal = power_filter(matrix_frame, "normal")
+    normal.click()
+    expect(normal).to_have_attribute("aria-pressed", "true")
+    expect(matrix_frame.locator("#tbody tr[data-port-key]")).to_have_count(1)
+    normal.click()
     expect(page.locator("#matrixViewer")).to_be_visible()
     open_port_controls(page)
     page.locator("#selectEligible").click()
@@ -522,7 +538,7 @@ def run_browser_case(
 def main():
     run_browser_case(exercise, second_switch_factory=backup_switch)
     print(
-        "PASS Chrome UI: default ports page, three menus, themes, mobile layout, host trust, XLSX downloads, live matrix and review, confirmed batch/single SSH writes on loopback, retired routes, session close and shutdown."
+        "PASS Chrome UI: default ports page, three menus, themes, mobile layout, host trust, XLSX downloads, live matrix and power filters, confirmed batch/single SSH writes on loopback, retired routes, session close and shutdown."
     )
 
 

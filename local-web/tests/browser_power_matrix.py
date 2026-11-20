@@ -1,8 +1,15 @@
 """Check the unified results and transient refresh states for five switch ports."""
 
+import sys
 from threading import Event
 
-from browser_qa import enter_ssh_credentials, open_port_controls, run_browser_case
+from browser_qa import (
+    enter_ssh_credentials,
+    expect_hidden_selection,
+    open_port_controls,
+    power_filter,
+    run_browser_case,
+)
 from playwright.sync_api import expect
 from verify_http_ssh import MonitorFixture, interface_status_table
 
@@ -93,7 +100,91 @@ def refresh_without_result(page, port, final_state, selected_tile):
         page.unroute(poll)
 
 
-def exercise(page, url, switch, _second, _shots, _backup):
+def check_power_filters(page, frame, shots):
+    tiles = frame.locator("#matrix [data-port-key]")
+    buttons = {
+        key: power_filter(frame, key) for key in ("unpowered", "limited", "normal", "unclassified")
+    }
+    red, amber, green, unmeasured = buttons.values()
+    red_port = frame.locator('#matrix [data-state="unpowered"]')
+    green_port = frame.locator('#matrix [data-state="normal"]')
+    selected = page.locator("#selectedCount")
+    changes = page.locator("#portChanges")
+    mobile = page.context.browser.browser_type.name == "webkit"
+
+    def activate(button):
+        if mobile:
+            button.tap()
+        else:
+            button.focus()
+            button.press("Enter")
+
+    viewport = page.viewport_size
+    try:
+        red_port.click()
+        green_port.click()
+        expect(selected).to_have_text("선택 2개")
+        for width, height in ((390, 844), (320, 568)) if mobile else ((1366, 768),):
+            page.set_viewport_size({"width": width, "height": height})
+            for button in buttons.values():
+                expect(button).to_have_attribute("aria-pressed", "false")
+                expect(button).to_be_visible()
+                assert button.bounding_box()["height"] >= (44 if mobile else 24)
+            activate(red)
+            expect(tiles).to_have_count(1)
+            expect(red_port).to_have_attribute("aria-pressed", "true")
+            expect_hidden_selection(page, 1)
+            # Other counts still describe their groups when a color is selected.
+            expect(frame.locator("#mLimited")).to_have_text("2")
+            expect(frame.locator("#mNormal")).to_have_text("1")
+            activate(amber)
+            expect(tiles).to_have_count(3)
+            assert sorted(tiles.evaluate_all("els => els.map(el => el.dataset.state)")) == [
+                "limited",
+                "limited",
+                "unpowered",
+            ]
+            expect(red).to_have_attribute("aria-pressed", "true")
+            expect(amber).to_have_attribute("aria-pressed", "true")
+            expect(selected).to_have_text("선택 2개")
+            expect_hidden_selection(page, 1)
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            assert frame.locator("html").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+            if shots:
+                page.screenshot(path=shots / f"power-states-{width}.png")
+            activate(changes)
+            expect(tiles).to_have_count(0)
+            expect_hidden_selection(page, 2)
+            activate(red)
+            expect(changes).to_have_attribute("aria-pressed", "true")
+            expect(amber).to_have_attribute("aria-pressed", "true")
+            expect(tiles).to_have_count(0)
+            activate(changes)
+            expect(tiles).to_have_count(2)
+            expect_hidden_selection(page, 2)
+            activate(amber)
+            expect(tiles).to_have_count(5)
+            expect_hidden_selection(page, 0)
+            activate(unmeasured)
+            expect(tiles).to_have_count(1)
+            expect(tiles).to_have_attribute("data-state", "unclassified")
+            expect_hidden_selection(page, 2)
+            activate(unmeasured)
+            activate(green)
+            expect(tiles).to_have_count(1)
+            expect(green_port).to_have_attribute("aria-pressed", "true")
+            expect_hidden_selection(page, 1)
+            activate(green)
+            expect(red_port).to_have_attribute("aria-pressed", "true")
+            expect(green_port).to_have_attribute("aria-pressed", "true")
+        red_port.click()
+        green_port.click()
+        expect(selected).to_have_text("선택 0개")
+    finally:
+        page.set_viewport_size(viewport)
+
+
+def exercise(page, url, switch, _second, shots, _backup):
     page.goto(url)
     page.locator('nav a[href="#ports"]').click()
     page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1-5")
@@ -118,28 +209,12 @@ def exercise(page, url, switch, _second, _shots, _backup):
     expect(matrix.locator("#matrix .empty")).to_be_visible()
     changes.click()
     expect(result_tiles).to_have_count(5)
-    matrix.locator("#status").select_option("limited")
-    expect(result_tiles).to_have_count(2)
-    matrix.locator("#status").select_option("all")
-    page.locator("#portReviewTab").click()
-    expect(matrix.locator("#extraView .dr-list button")).to_have_count(3)
-    issues = matrix.locator("#extraView .dr-list button")
-    issues.nth(1).click()
-    expect(matrix.locator("#matrix")).to_be_visible()
-    selected = matrix.locator("#matrix .port-tile.selected")
-    expect(selected).to_have_count(1)
-    expect(selected).to_have_attribute("aria-pressed", "false")
-    expect(selected).to_have_attribute("data-state", "limited")
-    inspected_key = selected.get_attribute("data-port-key")
-    expect(matrix.locator(f'#tbody tr[data-port-key="{inspected_key}"] input')).not_to_be_checked()
-    expect(page.locator("#matrixWorkspace #quickOn")).to_be_enabled()
-    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
-    expect(matrix.locator("#extraView")).to_be_visible()
-    expect(page.locator("#matrixWorkspace #controlHeading")).to_be_visible()
-    expect(page.locator("#controlPanel")).not_to_have_attribute("open", "")
-    assert "configure terminal" not in switch.commands
-    page.locator("#portReviewTab").click()
-    matrix.locator("#status").select_option("normal")
+    expect(page.get_by_role("button", name="우선 확인", exact=True)).to_have_count(0)
+    before_filters = list(switch.commands)
+    check_power_filters(page, matrix, shots)
+    assert switch.commands == before_filters
+    green = power_filter(matrix, "normal")
+    green.click()
     expect(result_tiles).to_have_count(1)
     result_tiles.click()
     expect(matrix.locator("#detail")).to_contain_text("Down")
@@ -148,7 +223,7 @@ def exercise(page, url, switch, _second, _shots, _backup):
     expect(matrix.locator("#tbody .pillstat.normal")).to_be_visible()
     page.locator("#matrixView").click()
     expect(matrix.locator("#detail .badge.normal")).to_be_visible()
-    matrix.locator("#status").select_option("all")
+    green.click()
     expect(matrix.locator('#matrix [data-port-key$="/3"]')).to_have_attribute(
         "aria-pressed", "true"
     )
@@ -181,6 +256,10 @@ def exercise(page, url, switch, _second, _shots, _backup):
     expect(page.locator("#matrixGroups")).to_be_hidden()
     expect(result_tiles.nth(2).locator(".tile-ap-name")).to_have_text("renamed-ap")
     expected[2] = "unpowered"
+    red, amber = (power_filter(matrix, state) for state in ("unpowered", "limited"))
+    red.click()
+    amber.click()
+    expect(result_tiles).to_have_count(4)
     changes.click()
     expect(result_tiles).to_have_count(1)
     expect(result_tiles).to_have_attribute("data-changed", "true")
@@ -189,7 +268,15 @@ def exercise(page, url, switch, _second, _shots, _backup):
     comparison = matrix.locator("#portComparison")
     for value in ("8 W", "0 W", "matrix-ap-3", "renamed-ap"):
         expect(comparison).to_contain_text(value)
+    red.click()
+    expect(changes).to_have_attribute("aria-pressed", "true")
+    expect(result_tiles).to_have_count(0)
+    red.click()
+    expect(result_tiles).to_have_count(1)
     changes.click()
+    expect(result_tiles).to_have_count(4)
+    amber.click()
+    red.click()
     page.reload()
     expect(result_tiles).to_have_count(5)
     assert result_tiles.evaluate_all("tiles => tiles.map(tile => tile.dataset.state)") == expected
@@ -249,7 +336,10 @@ def exercise(page, url, switch, _second, _shots, _backup):
 
 
 if __name__ == "__main__":
-    run_browser_case(exercise, switch_factory=PowerMatrixSwitch)
+    engine = sys.argv[1] if len(sys.argv) > 1 else "chromium"
+    run_browser_case(
+        exercise, switch_factory=PowerMatrixSwitch, browser_engine=engine, touch=engine == "webkit"
+    )
     print(
         "PASS three power states, unmeasured and in-progress ports, filters, details and restoration of live observations"
     )

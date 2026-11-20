@@ -286,7 +286,6 @@ function clearInspection() {
 function updatePortActions() {
   const source=monitor()?.source();
   const inventory=displayingInventory();
-  const view=inventory ? 'overview' : source?.view || 'overview';
   const inspected=!!currentInspection() && !inventory;
   $('matrixViewer').hidden=inventory;
   $('portMonitor').classList.toggle('has-data',!!source?.hasData);
@@ -296,10 +295,7 @@ function updatePortActions() {
   $('matrixView').setAttribute('aria-pressed',String(!list));
   $('listView').setAttribute('aria-pressed',String(list));
   $('matrixWorkspaceTitle').textContent=list ? '포트별 조회 결과' : '포트 상태 매트릭스';
-  $('portReviewTab').setAttribute('aria-pressed',String(view==='review'));
-  $('portReviewTab').title=view==='review' ? '전체 포트로 돌아가기' : '점검할 포트 보기';
-  $('portReviewTab').disabled=!source?.hasData || inventory;
-  $('portChanges').disabled=$('portReviewTab').disabled || view!=='overview';
+  $('portChanges').disabled=!source?.hasData || inventory || source.failureOnly;
   $('portChanges').setAttribute('aria-pressed',String(!!source?.changesOnly));
   $('controlMode').disabled=inspected;
   $('singleIP').readOnly=$('singlePort').readOnly=inspected;
@@ -308,12 +304,6 @@ function updatePortActions() {
 }
 $('matrixView').onclick=()=>monitor()?.setPresentation('matrix');
 $('listView').onclick=()=>monitor()?.setPresentation('list');
-$('portReviewTab').onclick=()=>{
-  const viewer=monitor();
-  if (!viewer || $('portReviewTab').disabled) return;
-  viewer.navigate(viewer.source().view==='review' ? 'overview' : 'review');
-  updatePortActions();
-};
 $('portChanges').onclick=()=>{
   const viewer=monitor();
   if (!viewer || $('portChanges').disabled) return;
@@ -715,6 +705,12 @@ function observedInspectionTarget() {
   if (currentInspection()) return ui.inspectedRow;
   return $('controlMode').value==='batch' ? viewer.inspectionTarget() : null;
 }
+function updateHiddenSelectedCount() {
+  const count=$('controlMode').value==='batch' && ui.selected.size ? window.portTools?.hiddenSelectedCount() || 0 : 0;
+  const label=$('hiddenSelectedCount');
+  label.hidden=!count;
+  label.textContent='화면 밖 '+count+'개';
+}
 function updateControlTarget() {
   updateMatrixSelectAll();
   const target=$('controlTarget');
@@ -743,8 +739,10 @@ function updateControlTarget() {
     target.textContent=observed.ip+(observed.sshPort===22 ? '' : ':'+observed.sshPort)+' / 포트 '+observed.port;
   } else target.textContent='';
   target.hidden=!target.textContent;
-  $('selectedCount').hidden=!batch || !targets.length;
-  $('selectedCount').textContent='선택 '+targets.length+'개';
+  const selectedCount=ui.selected.size || targets.length;
+  $('selectionSummary').hidden=!batch || !selectedCount;
+  $('selectedCount').textContent='선택 '+selectedCount+'개';
+  updateHiddenSelectedCount();
   $('quickActions').hidden=!targets.length || ($('operation').value==='disable' && !matrixControlTargets('poe_off').length);
   $('liveScope').hidden=!!currentInspection() || !(ui.liveId || displayingInventory());
   const inspect=$('inspectSingle');
@@ -755,7 +753,7 @@ function updateControlTarget() {
   inspect.hidden=batch && !observed;
   if (observed) inspect.title=observed.ip+':'+observed.sshPort+' / 포트 '+observed.port;
   else inspect.removeAttribute('title');
-  strip.hidden=!observed && target.hidden && $('quickActions').hidden && $('liveScope').hidden;
+  strip.hidden=!observed && target.hidden && $('selectionSummary').hidden && $('quickActions').hidden && $('liveScope').hidden;
 }
 function syncMonitorChecks() {
   const viewer=monitor();
@@ -790,9 +788,7 @@ function queryPorts(targets) {
   return run('ports.query',{targets},result=>{
     window.portTools.acceptQuery(result.groups);
     receivePorts(result,true);
-    const viewer=monitor();
-    viewer?.setPresentation('matrix');
-    if (viewer?.source().view==='review') viewer.navigate('overview');
+    monitor()?.setPresentation('matrix');
     setQueryWorkspace(ui.rows.some(portObserved));
   });
 }

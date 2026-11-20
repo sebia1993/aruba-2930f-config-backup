@@ -9,7 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from browser_qa import open_port_controls, open_target_editor
+from browser_qa import expect_hidden_selection, open_port_controls, open_target_editor, power_filter
 from playwright.sync_api import expect, sync_playwright
 from verify_http_ssh import MonitorFixture
 
@@ -207,6 +207,7 @@ def exercise(page, switch):
     expect(select_all).to_have_accessible_name("전체 선택")
     select_all.click()
     expect(page.locator("#selectedCount")).to_have_text("선택 14400개")
+    expect_hidden_selection(page, 14400 - 192)
     expect(select_all).to_have_accessible_name("전체 선택 해제")
     select_all.click()
     expect(page.locator("#selectedCount")).to_be_hidden()
@@ -229,6 +230,7 @@ def exercise(page, switch):
     expect(page.locator("#selectedCount")).to_contain_text("선택 2개")
     page.locator("#inventorySearch").fill("교육동")
     expect(page.locator(".matrix-tile")).to_have_count(1)
+    expect_hidden_selection(page, 2)
     # A broader scope stays visible on a narrow screen, even after closing options.
     viewport = page.viewport_size
     page.set_viewport_size({"width": 320, "height": 720})
@@ -276,10 +278,12 @@ def exercise(page, switch):
     detail = matrix_view.locator("#detail")
     for fact in ("8.1 W", "System Name", "JL255A", "WC.16.11.0025"):
         expect(detail).to_contain_text(fact)
-    page.locator("#portReviewTab").click()
-    expect(matrix_view.locator("#extraView .dr-list button")).to_have_count(0)
-    page.locator("#portReviewTab").click()
-    tile.click()
+    normal = power_filter(matrix_view, "normal")
+    normal.click()
+    expect(normal).to_have_attribute("aria-pressed", "true")
+    expect(tile).to_have_attribute("aria-pressed", "true")
+    expect_hidden_selection(page, 0)
+    normal.click()
     open_port_controls(page)
     page.locator("#refreshPorts").click()
     expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=45000)

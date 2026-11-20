@@ -4,7 +4,13 @@ import re
 import sys
 
 from browser_power_matrix import PowerMatrixSwitch
-from browser_qa import enter_ssh_credentials, open_port_controls, run_browser_case
+from browser_qa import (
+    enter_ssh_credentials,
+    expect_hidden_selection,
+    open_port_controls,
+    power_filter,
+    run_browser_case,
+)
 from browser_unified_controls import hit_point, resize_workspace
 from playwright.sync_api import expect
 
@@ -124,13 +130,14 @@ def exercise(page, url, switch, second, shots, _backup):
     resize_workspace(page, 1366, 768)
     frame.locator("#search").fill("matrix-ap-3")
     frame.locator("#device").select_option(addresses[0])
-    frame.locator("#status").select_option("normal")
+    normal = power_filter(frame, "normal")
+    normal.click()
     for mode, button in (("list", list_button), ("matrix", matrix_button), ("list", list_button)):
         button.click()
         assert_presentation(page, frame, mode)
         expect(frame.locator("#search")).to_have_value("matrix-ap-3")
         expect(frame.locator("#device")).to_have_value(addresses[0])
-        expect(frame.locator("#status")).to_have_value("normal")
+        expect(normal).to_have_attribute("aria-pressed", "true")
         expect(rows if mode == "list" else tiles).to_have_count(1)
         if mode == "list":
             expect(first_row).to_have_class("selected")
@@ -140,7 +147,7 @@ def exercise(page, url, switch, second, shots, _backup):
 
     frame.locator("#search").fill("")
     frame.locator("#device").select_option("")
-    frame.locator("#status").select_option("all")
+    normal.click()
     first_row.locator("input").check()
     other_row.locator("input").check()
     matrix_button.click()
@@ -179,15 +186,20 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(rows).to_have_count(0)
     changes.click()
     expect(rows).to_have_count(6)
-    review = page.locator("#portReviewTab")
-    review.click()
-    expect(frame.locator("#extraView")).to_be_visible()
+    red = power_filter(frame, "unpowered")
+    amber = power_filter(frame, "limited")
+    red.click()
+    amber.click()
+    expect(rows).to_have_count(3)
     matrix_button.click()
-    expect(review).to_have_attribute("aria-pressed", "true")
-    expect(frame.locator("#extraView")).to_be_visible()
+    expect(tiles).to_have_count(3)
+    expect(red).to_have_attribute("aria-pressed", "true")
     list_button.click()
-    expect(review).to_have_attribute("aria-pressed", "true")
-    page.locator("#portReviewTab").click()
+    expect(amber).to_have_attribute("aria-pressed", "true")
+    red.click()
+    expect(rows).to_have_count(2)
+    amber.click()
+    expect(rows).to_have_count(6)
     assert [len(fixture.commands) for fixture in (switch, second)] == before
 
     other_row.locator(".row-select").click()
@@ -251,6 +263,7 @@ def check_paged_select_all(page, frame, switch, second, addresses, shots):
     # Port 1 on the second endpoint must survive an all/none round trip on the first.
     other.click()
     device.select_option(addresses[0])
+    expect_hidden_selection(page, 1)
     first.click()
     expect(count).to_have_text("선택 2개")
     expect(toggle).to_have_accessible_name("전체 선택")
@@ -267,30 +280,38 @@ def check_paged_select_all(page, frame, switch, second, addresses, shots):
         toggle.press("Enter")
     expect(eligible).to_have_count(48)
     expect(count).to_have_text("선택 49개")
+    expect_hidden_selection(page, 31)
     expect(toggle).to_have_accessible_name("전체 선택 해제")
     frame.locator("#nextPage").click()
     expect(rows).to_have_count(18)
     frame.locator("#nextPage").click()
     expect(rows).to_have_count(12)
+    expect_hidden_selection(page, 37)
     expect(frame.locator("#tbody input:checked")).to_have_count(12)
     last = frame.locator(f'#tbody tr[data-port-key="{addresses[0]}/48"] input')
     last.uncheck()
+    expect(count).to_have_text("선택 48개")
+    expect_hidden_selection(page, 37)
     expect(toggle).to_have_accessible_name("전체 선택")
     last.check()
     expect(toggle).to_have_accessible_name("전체 선택 해제")
     toggle.click()
     expect(count).to_have_text("선택 1개")
+    expect_hidden_selection(page, 1)
     expect(toggle).to_have_accessible_name("전체 선택")
     expect(eligible).to_have_count(0)
     resize_workspace(page, 1366, 768)
     device.select_option("")
     page.locator("#matrixView").click()
     expect(other).to_have_attribute("aria-pressed", "true")
+    expect_hidden_selection(page, 0)
     expect(first).to_have_attribute("aria-pressed", "false")
     search.fill("no_matching_switch_or_port")
     expect(tiles).to_have_count(0)
     expect(toggle).to_be_disabled()
+    expect_hidden_selection(page, 1)
     search.fill("")
+    expect_hidden_selection(page, 0)
     other.click()
     expect(count).to_have_text("선택 0개")
     expect(page.locator("#quickActions")).to_be_hidden()
