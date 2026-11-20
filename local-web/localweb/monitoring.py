@@ -55,6 +55,8 @@ class PortMonitoring:
             groups = result["groups"]
             unresolved = any(g.get("all_ports") and not g["interfaces"] for g in groups)
             self.port_count = None if unresolved else sum(len(g["interfaces"]) for g in groups)
+        elif result is None and any(g.all_ports for g in self.groups):
+            self.port_count = None
         rejected = list(
             dict.fromkeys(
                 f"{row['ip']}:{row['ssh_port']}"

@@ -54,6 +54,49 @@ def device_queries(commands, prefix):
     return [command.removeprefix(prefix) for command in commands if command.startswith(prefix)]
 
 
+def check_ssh_context_changes(page, switch, address, other_address):
+    frame = page.frame_locator("#matrixViewer")
+    tiles = frame.locator("#matrix [data-port-key]")
+    pending = page.locator("#matrixGroups [data-key]")
+    other_tile = page.locator(f'#matrixGroups [data-key="{other_address}|1"]')
+    ports_link = page.locator('nav a[href="#ports"]')
+    mixed = f"{address}\n{other_address} 1"
+
+    # Forgetting one key clears the matching discovery even when both peers share an IP.
+    edit_query_targets(page).fill(f"{address}\n{other_address}")
+    page.locator("#queryPorts").click()
+    expect(tiles).to_have_count(len(switch.links) + 1, timeout=60000)
+    page.evaluate("location.hash = '#connect'")
+    page.locator("#listKeys").click()
+    row = page.locator("#knownKeys tr").filter(has=page.get_by_text(address, exact=True))
+    row.get_by_role("button", name="등록 삭제").click()
+    page.get_by_role("button", name="이 키 삭제").click()
+    expect(row).to_have_count(0)
+    ports_link.click()
+    expect(pending).to_have_count(1)
+    expect(other_tile).to_be_visible()
+
+    # Explicit registrations survive both reapplying the current account and closing it.
+    edit_query_targets(page).fill(mixed)
+    for action in ("reapply", "close"):
+        page.locator("#queryPorts").click()
+        expect(tiles).to_have_count(len(switch.links) + 1, timeout=60000)
+        expect(page.locator("#queryPorts")).to_be_enabled()
+        page.evaluate("location.hash = '#connect'")
+        if action == "reapply":
+            page.locator("#username").fill(switch.username)
+            page.locator("#password").fill(switch.password)
+            page.get_by_role("button", name="계정 적용", exact=True).click()
+            expect(page.locator("#statusText")).to_contain_text("접속 계정 적용 완료")
+        else:
+            page.locator("#logout").click()
+            expect(page.locator("#statusText")).to_contain_text("세션 해제 완료")
+        ports_link.click()
+        expect(pending).to_have_count(1)
+        expect(other_tile).to_be_visible()
+        expect(page.locator("#queryTargets")).to_have_value(mixed)
+
+
 def exercise(page, url, switch, other, shots, _backup):
     mobile = page.context.browser.browser_type.name == "webkit"
     if mobile:
@@ -170,6 +213,7 @@ def exercise(page, url, switch, other, shots, _backup):
     toggle.click()
     expect(toggle).to_have_attribute("aria-pressed", "false")
 
+    check_ssh_context_changes(page, switch, address, explicit)
     for peer in (switch, other):
         assert all(
             command.startswith("show ") or command in {"no page", "terminal width 511", "logout"}

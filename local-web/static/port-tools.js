@@ -191,6 +191,13 @@
     const draft=dirty ? '입력한 목록은 검증하여 적용하거나 포트를 조회하면 반영됩니다.' : '';
     $('targetCount').textContent=[count,draft].filter(Boolean).join(' · ');
   }
+  function clearSshObservations(endpoints) {
+    groups=groups.map(group=>group.all_ports && (!endpoints || endpoints.has(group.ip+':'+group.ssh_port))
+      ? {...group,interfaces:[]} : group);
+    live.clear(); loading.clear(); focused=''; failureView=null;
+    updateTargetCount();
+    clearPorts();
+  }
   raw.addEventListener('input',()=>{ directCableTarget=false; updateTargetCount(); });
   for (const input of [$('singleIP'),$('singlePort')]) {
     input.addEventListener('input',()=>{ directCableTarget=true; });
@@ -482,7 +489,7 @@
       message=failureView ? '현재 조건에서 조회에 실패한 포트가 없습니다.' : '현재 조건에 맞는 포트가 없습니다.';
       if (!failureView && !inventory().length) message='검증한 스위치 목록을 적용하거나 포트를 조회하세요.';
       else if (!failureView && !matches.length && !targetCount(groups) && groups.some(g=>g.all_ports)) {
-        message=matrixJob || ui.busy ? '스위치에서 물리 포트 목록을 확인하고 있습니다.' : '조회하면 스위치에서 확인한 물리 포트가 표시됩니다.';
+        message=matrixJob ? '스위치에서 물리 포트 목록을 확인하고 있습니다.' : '조회하면 스위치에서 확인한 물리 포트가 표시됩니다.';
       }
     }
     countText.textContent=message;
@@ -688,6 +695,6 @@
   }
   window.portTools={showStartingMatrix,resumeQuery,endResumedQuery,targetDraftVersion,openTargetEditor,reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,availableControlTargets,scopeKeys,hiddenSelectedCount,unobservedTargets,cableScope,
     hasInventory:()=>groups.length>0 || ui.rows.length>0,awaitingDiscovery:()=>groups.some(g=>g.all_ports && !g.interfaces.length),
-    selectedRefreshCount:()=>targetCount(selectedRefreshGroups()),restoreInventory,matchesInventory};
+    selectedRefreshCount:()=>targetCount(selectedRefreshGroups()),restoreInventory,matchesInventory,clearSshObservations};
   updatePortActions();sync();
 })();

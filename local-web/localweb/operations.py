@@ -292,6 +292,17 @@ class Operations:
     def inventory_view(self):
         return group_targets(self._inventory, {g.target for g in self.query_scope if g.all_ports})
 
+    def _reset_discovered_ports(self, targets: set[DeviceTarget] | None = None) -> None:
+        scopes = {
+            g.target: g
+            for g in self.query_scope
+            if g.all_ports and (targets is None or g.target in targets)
+        }
+        if scopes:
+            self._inventory = tuple(scopes.get(g.target, g) for g in self._inventory)
+            for target in scopes:
+                self._discovery_errors.pop(target, None)
+
     def discovery_errors(self):
         return [
             self._discovery_errors[g.target]
@@ -349,9 +360,7 @@ class Operations:
             self.unverified_controls.clear()
             self.credentials = credentials
             self.query_target_text = None
-            if any(g.all_ports for g in self.query_scope):
-                self._inventory = self.query_scope
-                self._discovery_errors.clear()
+            self._reset_discovered_ports()
             session_legacy_ssh.clear()
             return {"connected": credentials is not None}
         if action == "hostkey.inspect":
@@ -426,8 +435,10 @@ class Operations:
             self._review.clear()
             self.last_results = ()
             self.unverified_controls.clear()
-            for endpoint in selected:
-                session_legacy_ssh.revoke(_endpoint(endpoint))
+            forgotten = {_endpoint(endpoint) for endpoint in selected}
+            self._reset_discovered_ports(forgotten)
+            for target in forgotten:
+                session_legacy_ssh.revoke(target)
             return {"removed": True}
         if action == "backup.history":
             extra = selected_directory(body.get("output_directory"))
@@ -502,10 +513,7 @@ class Operations:
             self._discovery_errors.clear()
         # Until a new inventory arrives, a previous all-port reading confers no current targets.
         if discovering:
-            scope = {g.target: g for g in groups if g.all_ports}
-            self._inventory = tuple(scope.get(g.target, g) for g in self._inventory)
-            for target in discovering:
-                self._discovery_errors.pop(target, None)
+            self._reset_discovered_ports(discovering)
         requested = {(g.target, port) for g in groups for port in g.interfaces}
         # A failed refresh must not authorize actions on stale snapshots of those ports.
         retained = {
@@ -538,7 +546,10 @@ class Operations:
             self._query_targets = groups
             self._query_all = {g.target for g in groups if g.all_ports}
             self._last_discovery_cursor = -1
-        _abort_if_cancelled(cancel)
+        # Discovery reports cancellation per switch, including switches whose
+        # physical port list could not yet be read.
+        if not self._query_all:
+            _abort_if_cancelled(cancel)
 
         power_reads = set()
         completed_ports = set()
@@ -773,6 +784,18 @@ class Operations:
         """Drop measurements for the accepted request if no publishable result exists."""
         if not self._query_targets:
             return []
+        for group in self._query_targets:
+            if group.all_ports and group.target not in self._discovery_errors:
+                self._discovery_errors[group.target] = dict(
+                    ip=group.target.ip,
+                    ssh_port=group.target.port,
+                    error_code=ErrorCode.CANCELLED.value
+                    if cancelled
+                    else ErrorCode.UNEXPECTED_ERROR.value,
+                    message="포트 목록 조회가 취소됐습니다."
+                    if cancelled
+                    else "포트 목록을 확인하지 못했습니다.",
+                )
         absent = self._merge_query_results(self._query_targets, (), cancelled)
         return [
             dict(

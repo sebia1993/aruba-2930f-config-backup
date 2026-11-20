@@ -36,6 +36,54 @@ from aruba2930f_backup.port_control_ssh import PortControlSSHSession, port_chang
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_numeric_summary_below_status_table_is_not_a_physical_port(self):
+        table = interface_status_table([("1", "", "Up"), ("2", "", "Unknown")])
+        table.extend(["", "Other counters", "99".ljust(29) + "packet drops: 7"])
+        self.assertEqual(
+            parse_interface_inventory("\n".join(table)), {"1": "Up", "2": UNKNOWN_LINK}
+        )
+
+    def test_trunk_member_identifier_can_extend_beyond_port_ruler(self):
+        for trunk in ("1/48-Trk10", "2/48-Trk120"):
+            for gap in ("", " "):
+                with self.subTest(trunk=trunk, gap=gap):
+                    lines = interface_status_table([("1", "", "Down"), ("1", " Down", "Up")])
+                    # A long token may fill the separator, or the printer can shift the name column.
+                    lines[-1] = trunk + gap + lines[-1][10:]
+                    expected = {"1": "Down", trunk.split("-")[0]: "Up"}
+                    self.assertEqual(parse_interface_inventory("\n".join(lines)), expected)
+                    self.assertEqual(parse_interface_links("\n".join(lines)), expected)
+
+    def test_trunk_without_separator_keeps_port_and_uses_the_real_status_column(self):
+        for trunk in ("1/48-Trk10", "2/48-Trk120", "1/A1-Trk22"):
+            for name in ("AP floor 1", "1234 AP Up", "12345", "3층 Down"):
+                for terminal_width in (True, False):
+                    with self.subTest(trunk=trunk, name=name, terminal_width=terminal_width):
+                        table = interface_status_table(
+                            [("1", "", "Up"), (trunk, name, "Down")], terminal_width=terminal_width
+                        )
+                        self.assertIn(trunk + name, table[-1])
+                        expected = {"1": "Up", trunk.split("-")[0]: "Down"}
+                        self.assertEqual(parse_interface_inventory("\n".join(table)), expected)
+                        self.assertEqual(parse_interface_links("\n".join(table)), expected)
+
+        truncated = "\n".join([*interface_status_table([("1", "", "Up")]), "1/48-Trk10AP floor 1"])
+        self.assertEqual(parse_interface_inventory(truncated), {})
+        self.assertEqual(parse_interface_links(truncated), {"1": "Up"})
+
+    def test_incomplete_physical_row_fails_discovery_without_erasing_other_explicit_links(self):
+        table = interface_status_table([("1", "", "Up"), ("3", "", "Down")])
+        table.insert(3, "2")
+        self.session.read_interface_status.return_value = "\n".join(table)
+        self.assertEqual(parse_interface_links("\n".join(table)), {"1": "Up", "3": "Down"})
+        on_error, on_discovered = Mock(), Mock()
+        self.assertEqual(
+            self.collect([self.all], on_discovery_error=on_error, on_discovered=on_discovered), ()
+        )
+        on_discovered.assert_not_called()
+        self.assertEqual(on_error.call_args.args[1].code, ErrorCode.COMMAND_REJECTED)
+        self.session.read_poe.assert_not_called()
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

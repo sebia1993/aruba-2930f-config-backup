@@ -81,7 +81,7 @@
       if (next.session && (ui.session.active!==next.session.active || ui.session.username!==next.session.username)) {
         const changedAccount=ui.session.active && ui.session.username!==next.session.username;
         ui.session=next.session;
-        if (!ui.session.active || changedAccount) clearPorts();
+        if (!ui.session.active || changedAccount) window.portTools.clearSshObservations();
         sync();
       }
       if (next.active && firstView && next.jobId && !next.lastJobId &&

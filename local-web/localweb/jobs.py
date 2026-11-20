@@ -568,15 +568,21 @@ class Jobs:
                         self._store_port_view(result, monitored=monitored)
                     elif state != "done":
                         invalid = self.operations.invalidate_failed_refresh(cancel.is_set())
-                        if invalid:
+                        if invalid or (action == "ports.refresh" and self.operations.query_started):
                             self._record_power(invalid, plan, result)
                             previous = self.port_view["rows"] if self.port_view else []
+                            registered = {
+                                (group["ip"], group["ssh_port"], port)
+                                for group in self.operations.inventory_view()
+                                for port in group["interfaces"]
+                            }
                             rows = {
                                 (r["ip"], int(r["ssh_port"]), r["interface"]): r
                                 for r in [*previous, *invalid]
                             }
                             self._store_port_view(
-                                {"rows": list(rows.values())}, monitored=monitored
+                                {"rows": [row for key, row in rows.items() if key in registered]},
+                                monitored=monitored,
                             )
                 elif (
                     action in {"session.open", "session.close", "targets.apply", "hostkey.forget"}

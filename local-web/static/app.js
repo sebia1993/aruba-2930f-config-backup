@@ -552,7 +552,9 @@ async function applySshAccount(username, password, enableSecret) {
   let applied = false;
   await run('session.open',credentials,(result,cancelled) => {
     if (!result.connected) return;
-    if (ui.session.active || ui.rows.length || ui.liveId || ui.inspectedRow) clearPorts();
+    if (ui.session.active || ui.rows.length || ui.liveId || ui.inspectedRow) {
+      window.portTools.clearSshObservations();
+    }
     ui.session = {active:true, username:user};
     applied = !cancelled;
   });
@@ -561,7 +563,8 @@ async function applySshAccount(username, password, enableSecret) {
 form('loginForm', () => applySshAccount($('username'), $('password'), $('enableSecret')));
 $('logout').onclick = () => run('session.close',{},r => {
   if (r.connected !== false) return;
-  ui.session = {active:false}; clearPorts();
+  ui.session = {active:false};
+  window.portTools.clearSshObservations();
   $('password').value = ''; $('enableSecret').value = '';
 });
 form('inspectForm', () => {
@@ -621,7 +624,8 @@ function showStoredKeys(keys) {
       ],'이 키 삭제',()=>run('hostkey.forget',{endpoint:x.endpoint,fingerprint:x.fingerprint},r=>{
         if (r.removed) {
           showStoredKeys(keys.filter(key=>key!==x));
-          $('trustResult').replaceChildren(); $('trustResult').hidden = true; clearPorts();
+          $('trustResult').replaceChildren(); $('trustResult').hidden = true;
+          window.portTools.clearSshObservations(new Set([x.endpoint]));
         }
       })));
       forget.dataset.job = '';
@@ -638,7 +642,8 @@ function showStoredKeys(keys) {
           if (r.removed) {
             const removed = new Set(checks.map(c=>c.endpoint));
             showStoredKeys(keys.filter(k=>!removed.has(k.endpoint)));
-            $('trustResult').replaceChildren(); $('trustResult').hidden = true; clearPorts();
+            $('trustResult').replaceChildren(); $('trustResult').hidden = true;
+            window.portTools.clearSshObservations(removed);
           }
         });
       });
@@ -1154,7 +1159,8 @@ $('shutdown').onclick = () => confirmDialog('로컬 웹 서버 종료',[elem('p'
   try {
     await api('/api/shutdown',{});
     window.dispatchEvent(new Event('aruba-server-stopped'));
-    ui.token = ''; ui.session = {active:false}; clearPorts(); sync();
+    ui.token = ''; ui.session = {active:false};
+    window.portTools.clearSshObservations(); sync();
     notify('로컬 웹 서버를 종료했습니다. 다시 사용하려면 Start-Local-Web.cmd를 여세요.');
   } catch (e) { notify(e.message,true); }
 });
