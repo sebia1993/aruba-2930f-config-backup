@@ -335,7 +335,7 @@ def exercise(page, url, switch, second_switch, shots, backup_directory):
     matrix_frame.locator("#tbody").get_by_role("button", name=re.compile("상세 보기")).click()
     expect(matrix_frame.locator("#detail")).to_contain_text("fixture-ap")
     open_port_controls(page)
-    page.locator("#refreshSwitch").click()
+    page.get_by_role("button", name="선택 1포트 재조회", exact=True).click()
     expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
     expect(page.locator("#matrixViewer")).to_be_visible()
     matrix_frame.locator("#status").select_option("off")

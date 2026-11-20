@@ -99,7 +99,7 @@
             <p id="controlTarget" class="control-target" hidden></p>
             <span id="selectionSummary" role="status" aria-atomic="true" hidden><span id="selectedCount">선택 0개</span><span id="hiddenSelectedCount" hidden>화면 밖 0개</span></span>
             <div id="quickActions" hidden></div>
-            <div id="liveScope" class="bar" hidden><button type="button" id="refreshPorts" data-job aria-label="선택 포트 재조회">선택 재조회</button><button type="button" id="refreshSwitch" data-job aria-label="현재 스위치 재조회">스위치 재조회</button></div>
+            <button type="button" id="refreshPorts" data-job hidden>선택 포트 재조회</button>
           </div>
         </div>
         <div id="portMonitor"><iframe id="matrixViewer" class="viewer" title="포트 상태 매트릭스와 결과 목록" data-src="/matrix?embedded=1"></iframe><div id="monitorInventory"></div></div>
