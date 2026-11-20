@@ -112,11 +112,10 @@ def exercise(page, url, switch, _second, shots, _backup):
 
     toggle.click()
     expect(toggle).to_have_attribute("aria-pressed", "true")
-    page.wait_for_function(
-        "async () => { const state = await api('/api/monitor'); "
-        "return state.active && state.intervalMinutes === 60 && !!state.lastSuccess; }",
-        timeout=90000,
-    )
+    expect(monitor_status).to_contain_text("60분 간격")
+    expect(monitor_status).to_contain_text("다음", timeout=90000)
+    override = page.evaluate("() => api('/api/monitor')")
+    assert override["intervalMinutes"] == 60 and override["lastSuccess"] and not override["jobId"]
     toggle.click()
     expect(toggle).to_have_attribute("aria-pressed", "false")
     expect(interval).to_have_value("60")
