@@ -5,7 +5,12 @@ import sys
 from threading import Event
 
 from browser_power_matrix import PowerMatrixSwitch
-from browser_qa import enter_ssh_credentials, run_browser_case
+from browser_qa import (
+    enter_ssh_credentials,
+    expect_hidden_selection,
+    power_filter,
+    run_browser_case,
+)
 from browser_unified_controls import hit_point, resize_workspace
 from playwright.sync_api import expect
 
@@ -250,6 +255,14 @@ def exercise(page, url, switch, other, shots, _backup):
             requests.append(req.post_data_json)
 
     page.on("request", record_job)
+    red = power_filter(frame, "unpowered")
+    red.click()
+    expect(tiles).to_have_count(1)
+    expect_hidden_selection(page, 1)
+    changes = page.locator("#portChanges")
+    changes.click()
+    expect(tiles).to_have_count(0)
+    expect_hidden_selection(page, 2)
     toggle_failures(failure_count, mobile)
     expect(failure_count).to_have_attribute("aria-pressed", "true")
     expect(failure_count).to_have_text(re.compile("조회 실패 2개"))
@@ -267,6 +280,14 @@ def exercise(page, url, switch, other, shots, _backup):
     expect(frame.locator("#portReadFailure")).to_be_visible()
     toggle_failures(failure_count, mobile)
     expect(failure_count).to_have_attribute("aria-pressed", "false")
+    expect(changes).to_have_attribute("aria-pressed", "true")
+    expect(red).to_have_attribute("aria-pressed", "true")
+    expect(tiles).to_have_count(0)
+    expect_hidden_selection(page, 2)
+    changes.click()
+    expect(tiles).to_have_count(1)
+    expect_hidden_selection(page, 1)
+    red.click()
     expect(tiles).to_have_count(5)
     expect(original).to_have_attribute("aria-pressed", "true")
     expect(frame.locator("#portReadFailure")).to_be_hidden()

@@ -43,9 +43,6 @@ class InterfaceStatusSwitch(PowerMatrixSwitch):
 def assert_live_readings(page, switch, expected, *, poe_failed=None):
     matrix_view = page.frame_locator("#matrixViewer")
     endpoint = f"127.0.0.1:{switch.port}"
-    review = page.locator("#portReviewTab")
-    if review.get_attribute("aria-pressed") == "true":
-        review.click()
     open_port_controls(page)
     page.locator("#operation").select_option("poe_off")
     page.locator("#selectEligible").click()

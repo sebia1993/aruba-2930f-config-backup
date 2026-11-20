@@ -83,11 +83,9 @@
             </div>
             <div class="port-workspace-bar" role="group" aria-label="관제 결과 보기">
               <button type="button" id="portChanges" aria-pressed="false" aria-controls="portMonitor" disabled>변화만 보기</button>
-              <button type="button" id="portReviewTab" aria-pressed="false" aria-controls="portMonitor" disabled>우선 확인</button>
             </div>
             <button type="button" id="matrixSelectAll" aria-controls="portMonitor" aria-pressed="false" disabled>전체 선택</button>
             <span id="matrixSelectionScope" hidden></span>
-            <span id="selectedCount" aria-live="polite" hidden>선택 0개</span>
           </div>
           <details id="controlPanel"><summary id="controlHeading">제어 옵션</summary><div class="panelbody">
             <div class="bar"><label>제어 방식<select id="controlMode"><option value="batch">조회 결과에서 선택</option><option value="single" selected>단일 포트 직접 지정</option></select></label><label>작업<select id="operation"><option value="poe_off">PoE 전원 OFF</option><option value="poe_on">PoE 전원 ON</option><option value="disable">포트 비활성화 (Disable)</option><option value="enable">포트 활성화 (Enable)</option></select></label></div>
@@ -99,11 +97,12 @@
           </div>
           <div class="port-action-strip" id="portActionStrip" hidden>
             <p id="controlTarget" class="control-target" hidden></p>
+            <span id="selectionSummary" role="status" aria-atomic="true" hidden><span id="selectedCount">선택 0개</span><span id="hiddenSelectedCount" hidden>화면 밖 0개</span></span>
             <div id="quickActions" hidden></div>
             <div id="liveScope" class="bar" hidden><button type="button" id="refreshPorts" data-job aria-label="선택 포트 재조회">선택 재조회</button><button type="button" id="refreshSwitch" data-job aria-label="현재 스위치 재조회">스위치 재조회</button></div>
           </div>
         </div>
-        <div id="portMonitor"><iframe id="matrixViewer" class="viewer" title="포트 관제 · 점검 목록" data-src="/matrix?embedded=1"></iframe><div id="monitorInventory"></div></div>
+        <div id="portMonitor"><iframe id="matrixViewer" class="viewer" title="포트 상태 매트릭스와 결과 목록" data-src="/matrix?embedded=1"></iframe><div id="monitorInventory"></div></div>
         <div id="matrixFeedback" role="region" aria-label="포트 제어 결과"><div id="controlResult" class="output" hidden></div></div>
       </section>
     </section>

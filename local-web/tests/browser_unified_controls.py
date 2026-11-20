@@ -7,9 +7,11 @@ from browser_qa import (
     click_quick_poe,
     edit_query_targets,
     enter_ssh_credentials,
+    expect_hidden_selection,
     expect_power_result,
     open_port_controls,
     open_target_editor,
+    power_filter,
     run_browser_case,
 )
 from playwright.sync_api import expect
@@ -91,8 +93,10 @@ def verify_viewport_controls(page, view, endpoint, other_endpoint):
         expect(tiles).to_have_count(1)
         expect(card.locator("#controlTarget")).to_contain_text(endpoint)
         expect(card.locator("#selectedCount")).to_have_text("선택 1개")
+        expect_hidden_selection(page, 1)
         search.fill(endpoint)
         expect(tiles).to_have_count(1)
+        expect_hidden_selection(page, 0)
         selected_tile.click()
         expect(card.locator("#quickActions")).to_be_hidden()
         checkbox = view.locator("#tbody input[data-control-key]")
@@ -267,8 +271,7 @@ def exercise(page, url, switch, second, shots, _backup):
     ports_menu.click()
     expect(ports_menu).to_have_attribute("href", "#ports")
     expect(page.locator("#crumb")).to_have_text("포트·PoE 관리")
-    review = page.locator("#portReviewTab")
-    expect(review).to_have_attribute("aria-pressed", "false")
+    expect(page.locator("#portReviewTab")).to_have_count(0)
     expect(page.locator("#portMonitorTab")).to_have_count(0)
     workspace = page.locator('[data-page="ports"]')
     expect(workspace.get_by_role("heading", name="포트·PoE 관리", exact=True)).to_have_count(1)
@@ -284,8 +287,8 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#queryTargets")).to_have_value("")
     page.locator("#targetClose").click()
     page.locator("#dismissStatus").click()
-    for name in ("우선 확인", "포트 조회"):
-        expect(workspace.get_by_role("button", name=name, exact=True)).to_have_count(1)
+    expect(workspace.get_by_role("button", name="포트 조회", exact=True)).to_have_count(1)
+    expect(workspace.get_by_role("button", name="우선 확인", exact=True)).to_have_count(0)
     for selector in (
         "#openPortCsv",
         "#portCompareTab",
@@ -342,7 +345,6 @@ def exercise(page, url, switch, second, shots, _backup):
     tiles = matrix_view.locator("#matrix [data-port-key]")
     expect(tiles).to_have_count(2, timeout=90000)
     verify_viewport_controls(page, matrix_view, *addresses)
-    expect(review).to_have_attribute("aria-pressed", "false")
     expect(page.locator("#batchControls")).to_be_hidden()
     checkboxes = matrix_view.locator("#tbody input[data-control-key]")
     expect(checkboxes).to_have_count(2)
@@ -353,14 +355,13 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#queryForm")).to_be_visible()
     expect(page.locator("#matrixViewer")).to_be_visible()
     expect(page.locator("#queryPorts")).to_be_enabled()
-    expect(review).to_be_enabled()
-    review.click()
-    expect(review).to_have_attribute("aria-pressed", "true")
-    expect(matrix_view.locator("#extraView")).to_be_visible()
+    normal = power_filter(matrix_view, "normal")
+    normal.click()
+    expect(normal).to_have_attribute("aria-pressed", "true")
+    expect(tiles).to_have_count(2)
     expect(page.locator("#queryForm")).to_be_visible()
-    review.click()
-    expect(review).to_have_attribute("aria-pressed", "false")
-    expect(matrix_view.locator("#extraView")).to_be_hidden()
+    normal.click()
+    expect(normal).to_have_attribute("aria-pressed", "false")
 
     # Every tile adds or removes its own endpoint directly.
     resize_workspace(page, 390, 844)
@@ -502,7 +503,7 @@ def exercise(page, url, switch, second, shots, _backup):
         after_write = fixture.commands.index(off_command) + 1
         assert fixture.commands[after_write:].count(power_read) >= 2
     expect(page.locator("#matrixViewer")).to_be_visible()
-    expect(review).to_have_attribute("aria-pressed", "false")
+    expect(normal).to_have_attribute("aria-pressed", "false")
     expect(page.locator("#selectedCount")).to_have_text("선택 0개")
     failed_row = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"]')
     ready_row = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"]')

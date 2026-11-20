@@ -37,7 +37,9 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 #portPresentation {display:inline-flex;min-width:0;gap:2px}
 #portPresentation button {white-space:nowrap;padding:5px 9px}
 #portPresentation button[aria-pressed="true"] {background:var(--active);border-color:var(--teal);color:var(--teal)}
-#selectedCount {font-size:12px;font-weight:650;color:var(--teal);white-space:nowrap}
+#selectionSummary {display:inline-flex;align-items:center;gap:.4em;font-size:12px;font-weight:650;color:var(--teal);white-space:nowrap}
+#hiddenSelectedCount {color:var(--ink)}
+#hiddenSelectedCount::before {content:"·" / "";margin-right:.4em}
 #matrixSelectAll {white-space:nowrap}
 #matrixSelectionScope {font-size:12px;color:var(--muted)}
 #matrixSelectAll[aria-pressed=true] {color:var(--teal);border-color:var(--teal);background:var(--active)}
@@ -85,7 +87,7 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   #queryFields {flex-basis:100%}
   .matrix-control-head {padding-inline:8px}
   .matrix-control-head h2 {flex-basis:100%;padding-inline-end:5.6rem}
-  .matrix-control-head:has(#portPresentation[hidden]) .port-workspace-bar:has(#portReviewTab:disabled) {display:none}
+  .matrix-control-head:has(#portPresentation[hidden]) .port-workspace-bar:has(#portChanges:disabled) {display:none}
   #controlPanel .panelbody {display:grid;grid-template-columns:minmax(0,1fr)}
   #batchControls {display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
   .port-action-strip {gap:4px 6px}
@@ -111,6 +113,16 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 }
 @media(max-width:650px) and (min-height:360px) {
   .shell:has([data-page=ports]:not([hidden])) {display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+}
+/* Keep the power filters and ports within reach on short phones. */
+@media(max-width:380px) and (max-height:650px) {
+  main:has(.matrix-first:not([hidden])) .topbar .crumb {display:none}
+  main:has(.matrix-first:not([hidden])) .topbar {justify-content:flex-end}
+  .matrix-first .matrix-control-head {gap:2px;padding-inline:4px}
+  .matrix-first .matrix-control-head button {font-size:12px;min-width:44px;padding-inline:4px}
+  .matrix-first #matrixSelectAll {padding-inline:4px}
+  .matrix-first #queryForm:has(#queryFields[hidden]) .query-summary {flex:1 1 60px;line-height:1.25}
+  .matrix-first #queryForm:has(#queryFields[hidden]) .query-commands {column-gap:3px}
 }
 @media(max-height:500px) {
   #controlPanel .panelbody {max-height:35dvh}
@@ -143,7 +155,10 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 [data-zoom=large] .matrix-tile {min-height:38px;min-width:40px;font-size:14px}
 :root {--power-red:#ffacb5;--power-yellow:#f6d376;--power-green:#82e5b4}
 :root[data-theme=light] {--power-red:#a01e36;--power-yellow:#805000;--power-green:#00683c}
-.matrix-legend {display:flex;flex-wrap:wrap;gap:.35rem 1rem;margin-bottom:.4rem}
+.matrix-legend {display:flex;flex-wrap:wrap;gap:4px;margin-bottom:.4rem}
+.matrix-legend button {padding:4px 8px;border:1px solid var(--stroke);font-size:12px}
+.matrix-legend button[aria-pressed=true] {background:var(--active);border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
+.matrix-legend button[aria-pressed=true]::after {content:"✓" / ""}
 #matrixCounts {display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px}
 #matrixCounts button {font-size:inherit;font-weight:650}
 #matrixCounts button[aria-pressed=true] {background:var(--active);color:var(--teal);border-color:var(--teal)}
@@ -167,7 +182,7 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 #matrixPager {margin-top:.6rem}
 @media(max-width:650px){.target-body{padding:0 10px 14px}.port-matrix-panel header .tools{flex-wrap:wrap}.matrix-group-head{align-items:flex-start}}
 @media(max-width:650px), (pointer:coarse) {
-  #matrixCounts button {min-height:44px}
+  #matrixCounts button,.matrix-legend button {min-height:44px}
   #matrixGroups .matrix-tile {min-width:48px;min-height:48px}
   #matrixGroups[data-zoom=small] .matrix-tile {min-width:44px;min-height:44px}
   #matrixGroups[data-zoom=large] .matrix-tile {min-width:56px;min-height:56px}

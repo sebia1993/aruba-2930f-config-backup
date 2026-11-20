@@ -6,7 +6,8 @@
   let groups = [], preview = null, page = 0, focused = '', live = new Map(), loading = new Set();
   let matrixJob = '', registeredText = '', progressGroups = null, fullQuery = null;
   let directCableTarget=false;
-  let failureView=null, failureGroups=new Map();
+  let failureView=null, powerFilters=new Set(), powerFiltersEdited=false;
+  let shownKeys=new Set(), matchedGroups=new Map();
   const pageSize = 192;
   const noPowerData = PowerMatrix.classify({});
   const phaseLabels = {pending:'조회 대기',loading:'조회 중',stale:'재조회 필요'};
@@ -18,13 +19,22 @@
   matrix.innerHTML = '<header><h2>조회 대상 및 진행 상태</h2><div class="tools"><label>등록 포트 검색 <input id="inventorySearch" type="search" placeholder="장비, 주소, 포트"></label><label>크기 <select id="matrixSize"><option value="small">작게</option><option value="medium" selected>보통</option><option value="large">크게</option></select></label></div></header><div class="panelbody"><p id="matrixCounts" class="hint"></p><div id="matrixGroups"></div><div id="matrixPager" class="bar" hidden><button type="button" id="matrixPrev">이전</button><span id="matrixPage"></span><button type="button" id="matrixNext">다음</button></div><div id="matrixDetails" hidden></div></div>';
   $('monitorInventory').append(matrix);
 
-  // Keep the three measured states visible even when a filter has an empty result.
+  // Count each power state before applying the selected states so more can be added.
   const legend = elem('div',undefined,'matrix-legend');
   legend.id = 'matrixLegend';
-  legend.setAttribute('aria-label','전력 판정 범례');
-  for (const state of ['unpowered','limited','normal']) {
-    const entry = elem('span',PowerMatrix.labels[state],'power-badge');
-    entry.dataset.state=state;
+  legend.setAttribute('role','group');
+  legend.setAttribute('aria-label','전력 상태 필터');
+  for (const state of ['unpowered','limited','normal','unclassified']) {
+    const label=state==='unclassified'?'전력 미측정':PowerMatrix.labels[state];
+    const entry=button(label,()=>{
+      if (powerFilters.has(state)) powerFilters.delete(state); else powerFilters.add(state);
+      powerFiltersEdited=true;
+      page=0;
+      renderMatrix();
+      updateMatrixSelectAll();
+    },'power-badge');
+    entry.dataset.powerFilter=entry.dataset.state=state;
+    entry.setAttribute('aria-controls','matrixGroups');
     entry.append(elem('b','0'));
     legend.append(entry);
   }
@@ -156,7 +166,7 @@
       groups = stableGroups(r.groups);
       raw.value = r.targets;
       registeredText = raw.value;
-      failureView=null; focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
+      failureView=null; powerFilters.clear(); powerFiltersEdited=false; focused = ''; page = 0; live.clear(); loading.clear(); $('inventorySearch').value=''; clearPorts();
       $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
       updateTargetCount();
       if (editor.open && preview === accepted) editor.close();
@@ -261,6 +271,13 @@
     }
     return device ? available.filter(key=>key.split('|')[0]===device) : available;
   }
+  function hiddenSelectedCount(selected) {
+    const scope=currentScope();
+    const visible=scope ? new Set(scope.visibleRows.map(controlPortKey)) : shownKeys;
+    let hidden=0;
+    for (const key of selected) if (!visible.has(key)) hidden++;
+    return hidden;
+  }
   function refreshTargets(bySwitch) {
     const device=currentAddress(), current=currentKey();
     if (current) focused=current;
@@ -303,7 +320,9 @@
     return result;
   }
   function visibleEntries(items) {
-    return failureView ? items.filter(item=>item.view.failure) : items;
+    if (failureView) return items.filter(item=>item.view.failure);
+    if (!powerFilters.size) return items;
+    return items.filter(item=>item.view.phase==='observed' && powerFilters.has(item.state));
   }
   function toggleFailures() {
     const scroller=$('monitorInventory'), search=$('inventorySearch');
@@ -323,8 +342,7 @@
     }
   }
   function groupCheckKeys(g) {
-    const addr=address(g);
-    return failureView ? failureGroups.get(addr) || [] : g.interfaces.map(p=>addr+'|'+p);
+    return matchedGroups.get(address(g)) || [];
   }
   function details(item) {
     const area=$('matrixDetails');
@@ -379,7 +397,16 @@
   }
   function showInventory(visible) {
     const viewer=monitor();
-    if (!visible && failureView && ui.liveId && viewer?.source().liveId===ui.liveId) {
+    if (visible && matrix.hidden) {
+      powerFilters=new Set(viewer?.source().powerFilters || []);
+      powerFiltersEdited=false;
+    }
+    const liveReady=!visible && ui.liveId && viewer?.source().liveId===ui.liveId;
+    if (liveReady && powerFiltersEdited) {
+      powerFiltersEdited=false;
+      viewer.setPowerFilters([...powerFilters]);
+    }
+    if (liveReady && failureView) {
       const previous=failureView;
       failureView=null;
       const liveKey=key=>{
@@ -398,26 +425,36 @@
     if (matrix.hidden) return;
     if (!matrixJob && !ui.rows.length && !live.size) failureView=null;
     const matches=entries(), visible=visibleEntries(matches), counts={};
-    failureGroups=new Map();
-    if (failureView) {
-      if (focused && !visible.some(item=>item.key===focused)) focused='';
-      for (const item of visible) {
-        const addr=address(item.g);
-        if (!failureGroups.has(addr)) failureGroups.set(addr,[]);
-        failureGroups.get(addr).push(item.key);
-      }
+    matchedGroups=new Map();
+    for (const item of visible) {
+      const addr=address(item.g);
+      if (!matchedGroups.has(addr)) matchedGroups.set(addr,[]);
+      matchedGroups.get(addr).push(item.key);
     }
-    for(const item of visible) counts[item.state]=(counts[item.state]||0)+1;
-    for(const badge of legend.children) badge.lastElementChild.textContent=counts[badge.dataset.state] || 0;
+    if (failureView && focused && !visible.some(item=>item.key===focused)) focused='';
+    let unobserved=0;
+    const candidates=failureView ? visible : matches;
+    for (const item of candidates) {
+      if (item.view.phase!=='observed') unobserved++;
+      else counts[item.state]=(counts[item.state] || 0)+1;
+    }
+    for (const badge of legend.children) {
+      const state=badge.dataset.state;
+      badge.lastElementChild.textContent=counts[state] || 0;
+      badge.setAttribute('aria-pressed',String(!failureView && powerFilters.has(state)));
+      badge.disabled=!!failureView;
+    }
     const pages=Math.max(1,Math.ceil(visible.length/pageSize));
     page=Math.max(0,Math.min(page,pages-1));
     const start=page*pageSize, shown=visible.slice(start,start+pageSize);
+    shownKeys=new Set(shown.map(item=>item.key));
+    updateHiddenSelectedCount();
     const summary = ['표시 '+visible.length+'포트'];
-    if (counts.unclassified) summary.push('미분류 '+counts.unclassified);
+    if (unobserved) summary.push('관측값 대기 '+unobserved);
     const failedCount=failureView ? visible.length : matches.filter(item=>item.view.failure).length;
     let message=summary.join(' · ');
     if (!visible.length) {
-      message=failureView ? '현재 조건에서 조회에 실패한 포트가 없습니다.' : '검색 조건에 맞는 포트가 없습니다.';
+      message=failureView ? '현재 조건에서 조회에 실패한 포트가 없습니다.' : '현재 조건에 맞는 포트가 없습니다.';
       if (!failureView && !inventory().length) message='검증한 스위치 목록을 적용하거나 포트를 조회하세요.';
     }
     countText.textContent=message;
@@ -433,7 +470,7 @@
         const group=elem('section',undefined,'matrix-group'), head=elem('div',undefined,'matrix-group-head');
         const label=elem('label',undefined,'inline-check'), check=elem('input');
         check.type='checkbox'; check.dataset.checkGroup=addr;
-        check.setAttribute('aria-label',addr+(failureView?' 조회 실패 포트 전체 체크':' 등록 포트 전체 체크'));
+        check.setAttribute('aria-label',addr+(failureView?' 조회 실패 포트 전체 체크':' 검색 결과 포트 전체 체크'));
         check.onchange=()=>{
           const available=new Set(availableControlTargets().map(controlPortKey));
           for (const key of groupCheckKeys(item.g)) {
@@ -443,7 +480,7 @@
         };
         const name=item.row?.hostname || item.g.label;
         label.append(check,document.createTextNode((name && name!==addr ? name+' · ' : '')+addr));
-        const count=failureView ? failureGroups.get(addr).length : item.g.interfaces.length;
+        const count=groupCheckKeys(item.g).length;
         head.append(label,elem('small',count+'포트'));group.append(head);
         const grid=elem('div',undefined,'matrix-tiles');group.append(grid);grids.set(addr,grid);nodes.push(group);
       }
@@ -478,7 +515,7 @@
   function replaceQueryInventory(items,text,preserveView=false) {
     directCableTarget=false;
     groups=stableGroups(items); registeredText=text;
-    failureView=null; focused=''; page=0; live.clear(); loading.clear(); $('inventorySearch').value='';
+    failureView=null; powerFilters.clear(); powerFiltersEdited=false; focused=''; page=0; live.clear(); loading.clear(); $('inventorySearch').value='';
     clearPorts(preserveView);
     $('controlMode').value=groups.length?'batch':'single'; $('controlMode').onchange();
     updateTargetCount();
@@ -590,7 +627,7 @@
     });
     return reconciled.concat([...invalid.values()]);
   }
-  window.portTools={showStartingMatrix,resumeQuery,endResumedQuery,targetDraftVersion,openTargetEditor,reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,availableControlTargets,scopeKeys,unobservedTargets,cableScope,
+  window.portTools={showStartingMatrix,resumeQuery,endResumedQuery,targetDraftVersion,openTargetEditor,reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,availableControlTargets,scopeKeys,hiddenSelectedCount,unobservedTargets,cableScope,
     hasInventory:()=>groups.length>0 || ui.rows.length>0,refreshTargets,restoreInventory,matchesInventory};
   updatePortActions();sync();
 })();
