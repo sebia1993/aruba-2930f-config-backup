@@ -1,6 +1,7 @@
 """Selected-port ArubaOS-Switch TDR measurements on the existing pinned SSH connection."""
 
 import re
+from contextlib import ExitStack
 from functools import partial
 
 from aruba2930f_backup.models import CollectionFailure, ErrorCode
@@ -148,6 +149,57 @@ class UncertainTest(Exception):
     """The test may already have affected a link. Never replay the transaction."""
 
 
+class UnconfirmedCableRequest(UncertainTest):
+    """The selected test was confirmed; only its readback may be retried on a new channel."""
+
+
+def _confirmation_reply(clean, prompt):
+    lines = clean.strip().splitlines()
+    prompts = {prompt, prompt * 2}
+    if lines:
+        first = lines[0].strip()
+        # A single-key console may print its prompt directly against the echoed Y.
+        if first[:1].lower() == "y" and (not first[1:].strip() or first[1:].strip() in prompts):
+            lines[0] = first[1:].strip()
+    # The trailing Enter can redisplay the same EXEC prompt.
+    synchronized = bool(lines and lines[-1].strip() in prompts)
+    while lines and (not lines[-1].strip() or lines[-1].strip() in prompts):
+        lines.pop()
+    return "\n".join(lines).strip(), synchronized
+
+
+def _missing_confirmation(command, raw, prompt):
+    output, _ = _confirmation_reply(_clean_channel_text(raw), prompt)
+    try:
+        validate_cli_response(command, output)
+    except CollectionFailure as exc:
+        raise CollectionFailure(
+            ErrorCode.PROMPT_PARSE_FAILED,
+            "스위치가 테스트를 거부했고 SSH 프롬프트가 복구되지 않았습니다.",
+        ) from exc
+    if _UNSUPPORTED.search(output) or _TEST_ERROR.search(output):
+        raise CollectionFailure(
+            ErrorCode.PROMPT_PARSE_FAILED,
+            "스위치가 테스트 실패 또는 미지원을 알렸고 SSH 프롬프트가 복구되지 않았습니다.",
+        )
+    if output:
+        interface = command.rsplit(" ", 1)[-1]
+        if (
+            any(port != interface for port in _MENTIONED_PORT.findall(output))
+            or any(line.rstrip().endswith(("?", "#", ">", ":")) for line in output.splitlines())
+            or not (
+                _COMPLETE.fullmatch(output)
+                or (
+                    _PENDING.search(output)
+                    and re.fullmatch(r"(?:test|cable diagnostics?)\b[^\n]{0,180}", output, re.I)
+                )
+                or parse_result(output, interface)["pairs"]
+            )
+        ):
+            raise UncertainTest
+    raise UnconfirmedCableRequest
+
+
 class CableSession(NetmikoSSHSession):
     def _command(self, command, prompt, cancel, *, next_prompt=None):
         connection = self._require_connection()
@@ -188,6 +240,8 @@ class CableSession(NetmikoSSHSession):
     def read_cable(self, interface, cancel):
         command = f"show cable-diagnostics {validate_interface(interface)}"
         output = self._command(command, self._require_cached_prompt(), cancel)
+        if not output.strip():
+            return _reading("empty", "이번 검사 결과가 아직 없습니다.")
         return parse_result(output, interface)
 
     def test_cable(self, interface, cancel):
@@ -205,19 +259,27 @@ class CableSession(NetmikoSSHSession):
         _check_cancel(cancel)
         try:
             connection.write_channel(connection.normalize_cmd("y"))
-            result = self._response("y", prompt, cancel, confirm=True)
         except Exception as exc:
             raise UncertainTest from exc
+        result = self._response(command, prompt, cancel, confirm=True)
         validate_cli_response(command, result)
         return result
 
     def _response(self, command, prompt, cancel, *, confirm):
+        from netmiko.exceptions import ReadException
+        from paramiko.ssh_exception import SSHException
+
         connection = self._require_connection()
         raw = ""
         deadline = self._clock() + self._options.command_timeout_seconds
         while self._clock() < deadline:
             _check_cancel(cancel)
-            chunk = connection.read_channel()
+            try:
+                chunk = connection.read_channel()
+            except OSError, EOFError, ReadException, SSHException:
+                if confirm:
+                    _missing_confirmation(command, raw, prompt)
+                raise
             if chunk:
                 raw += chunk
                 _enforce_output_bounds(
@@ -228,13 +290,9 @@ class CableSession(NetmikoSSHSession):
             elif raw:
                 clean = _clean_channel_text(raw)
                 if confirm:
-                    # Single-key firmware consumes y immediately; the following Enter
-                    # can redisplay EXEC on the same line. Line-mode firmware needs it.
-                    head, sep, tail = clean.rstrip().rpartition("\n")
-                    if tail.strip() == prompt * 2:
-                        clean = head + sep + prompt
-                    if _ends_with_prompt(clean, prompt):
-                        return _strip_command_and_prompt(clean, command, prompt)
+                    output, synchronized = _confirmation_reply(clean, prompt)
+                    if synchronized:
+                        return output
                 elif _has_command_echo(clean, command, prompt):
                     output = _strip_command_and_prompt(clean, command, prompt)
                     if _ends_with_prompt(clean, prompt):
@@ -257,6 +315,8 @@ class CableSession(NetmikoSSHSession):
                         validate_cli_response(command, output)
                         return output
             self._sleep(0.05)
+        if confirm:
+            _missing_confirmation(command, raw, prompt)
         raise CollectionFailure(
             ErrorCode.COMMAND_TIMEOUT, "스위치에서 테스트 응답을 받지 못했습니다."
         )
@@ -268,7 +328,7 @@ def _update_row(row, reading):
     row.update(reading)
 
 
-def _measure(session, row, cancel, report):
+def _start_test(session, row, cancel, report):
     interface = row["interface"]
     _check_cancel(cancel)
     row.update(stage="test", status="pending", message="테스트 요청 후 응답 대기")
@@ -284,8 +344,14 @@ def _measure(session, row, cancel, report):
         and inline["status"] not in {"pending", "partial", "complete"}
         and not _COMPLETE.search(output)
     ):
-        raise UncertainTest
+        if inline.get("responseExcerpt"):
+            row["responseExcerpt"] = inline["responseExcerpt"]
+        raise UncertainTest("스위치가 보낸 테스트 응답 형식을 확인하지 못했습니다.")
+    return None
 
+
+def _read_measurement(session, row, cancel, report):
+    interface = row["interface"]
     row.update(stage="show", status="pending", message="이번 검사 결과를 조회하고 있습니다.")
     report(cable_row=row.copy())
     # Only the readback after this switch's clear and this port's test contributes pairs.
@@ -329,6 +395,25 @@ def _measure(session, row, cancel, report):
     raise UncertainTest
 
 
+def _reconnect_for_readback(sessions, open_session, target, row, cancel, report):
+    _check_cancel(cancel)
+    row.update(
+        stage="show", message="테스트 승인 후 응답이 끊겨 결과 조회용 SSH에 다시 연결합니다."
+    )
+    report(cable_row=row.copy())
+    sessions.close()
+    _check_cancel(cancel)
+    try:
+        return sessions.enter_context(open_session(target))
+    except Exception as exc:
+        detail = (
+            exc.safe_message
+            if isinstance(exc, CollectionFailure)
+            else "스위치와 통신할 수 없습니다."
+        )
+        raise UncertainTest("결과 조회용 SSH 재연결 실패 · " + detail) from exc
+
+
 def diagnose_ports(groups, open_session, cancel, progress):
     rows = []
     for group in groups:
@@ -346,7 +431,8 @@ def diagnose_ports(groups, open_session, cancel, progress):
         completed = 0
         try:
             _check_cancel(cancel)
-            with open_session(target) as session:
+            with ExitStack() as sessions:
+                session = sessions.enter_context(open_session(target))
                 progress(f"{target.endpoint} · 진단 결과 초기화 중")
                 session.clear_cable(cancel)
                 for row in device_rows:
@@ -356,14 +442,24 @@ def diagnose_ports(groups, open_session, cancel, progress):
                     message = f"{target.endpoint} · 포트 {row['interface']} 케이블 진단"
                     report = partial(progress, message)
                     try:
-                        result = _measure(session, row, cancel, report)
+                        try:
+                            result = _start_test(session, row, cancel, report)
+                        except UnconfirmedCableRequest:
+                            session = _reconnect_for_readback(
+                                sessions, open_session, target, row, cancel, report
+                            )
+                            result = None
+                        if result is None:
+                            result = _read_measurement(session, row, cancel, report)
                         _update_row(row, result)
-                    except UncertainTest:
+                    except UncertainTest as exc:
                         row["status"] = "cancelled" if cancel.is_set() else "uncertain"
                         if cancel.is_set():
                             row["message"] = "작업을 취소했습니다."
+                        elif str(exc):
+                            row["message"] = str(exc)
                         elif row["stage"] == "test":
-                            row["message"] = "테스트 요청 후 완료 응답을 확인하지 못했습니다."
+                            row["message"] = "테스트 요청 후 스위치 응답을 확인하지 못했습니다."
                         else:
                             row["message"] = "조회 대기 시간 안에 이번 검사 결과를 받지 못했습니다."
                         break
