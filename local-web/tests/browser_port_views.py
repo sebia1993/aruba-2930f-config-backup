@@ -263,17 +263,22 @@ def check_paged_select_all(page, frame, switch, second, addresses, shots):
     # Inspecting a row offers it as the sole control target even with no checkboxes checked.
     page.locator("#listView").click()
     rows = frame.locator("#tbody tr[data-port-key]")
-    inspected = rows.first
-    inspected_key = inspected.get_attribute("data-port-key")
+    inspected_key = rows.first.get_attribute("data-port-key")
+    inspected = frame.locator(f'#tbody tr[data-port-key="{inspected_key}"]')
     inspected.locator(".row-select").click()
     expect(inspected.get_by_role("checkbox")).not_to_be_checked()
     expect(count).to_have_text("선택 1개")
     expect_hidden_selection(page, 0)
-    frame.locator("#nextPage").click()
-    expect(frame.locator(f'#tbody tr[data-port-key="{inspected_key}"]')).to_have_count(0)
+    # Opening the list reveals the previous focus, which can be on the last page.
+    next_page, previous_page = frame.locator("#nextPage"), frame.locator("#prevPage")
+    away, back = (
+        (next_page, previous_page) if next_page.is_enabled() else (previous_page, next_page)
+    )
+    away.click()
+    expect(inspected).to_have_count(0)
     expect(count).to_have_text("선택 1개")
     expect_hidden_selection(page, 1)
-    frame.locator("#prevPage").click()
+    back.click()
     expect_hidden_selection(page, 0)
     inspected.get_by_role("checkbox").check()
     inspected.get_by_role("checkbox").uncheck()
