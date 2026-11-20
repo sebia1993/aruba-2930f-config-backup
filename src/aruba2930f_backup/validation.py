@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from ipaddress import IPv4Address
 
 from .models import (
@@ -45,10 +46,35 @@ ARUBA_2930F_MODELS: dict[str, str] = {
     "JL693A": "Aruba 2930F 12G PoE+ 2G/2SFP+",
 }
 
-_SKU_RE = re.compile(r"\b(JL\d{3}A)\b", re.IGNORECASE)
+SUPPORTED_MODELS = {**ARUBA_2930F_MODELS, "JL320A": "Aruba 2930M 24G PoE+ 1-slot"}
+
+_SKU_RE = re.compile(r"\b(?:J[A-Z]\d{3}[A-Z]|J\d{4}[A-Z]|R\d[A-Z]\d{2}[A-Z])\b", re.IGNORECASE)
 _SOFTWARE_RE = re.compile(r"\b([A-Z]{2}\.\d{2}\.\d{2}\.\d{4})\b")
+_BOOT_ROM_VERSION_RE = re.compile(
+    r"\b(?:BOOT[ \t-]*ROM(?:[ \t]+(?:VERSION|REVISION))?|ROM[ \t]+VERSION)\s*[:=]?\s*"
+    + _SOFTWARE_RE.pattern,
+    re.IGNORECASE,
+)
+_CHASSIS_ROW_RE = re.compile(
+    r"^\s*(?:(?:VSF\s+)?member\s+\d+\s*:?\s*|\*?\d+\s+[0-9a-f]{6}-[0-9a-f]{6}\s+)?"
+    r"(?:chassis\b|model\b|product (?:name|number)\b|(?:Aruba|HPE|HP)\b|2930[FM]\b|JL\d{3}A\b)",
+    re.IGNORECASE,
+)
+_STACK_ID_RE = re.compile(r"^[ \t]*Stack ID[ \t]*:[ \t]*([^\r\n]*)", re.IGNORECASE | re.MULTILINE)
+_STACK_HEADER_RE = re.compile(
+    r"^[ \t]*(?:Mbr[ \t]+)?ID[ \t]+Mac[ \t]+Address[ \t]+Model[ \t]+Pri(?:ority)?[ \t]+Status[ \t]*\r?$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_STACK_MEMBER_RE = re.compile(
+    r"\*?\s*(10|[1-9])\s+([0-9a-f]{6}-[0-9a-f]{6})\s+(.+?)\s+\d{1,3}\s+(Commander|Standby|Member)",
+    re.IGNORECASE,
+)
+_WRONG_JL320A_VARIANT_RE = re.compile(
+    r"\b2930M[- ]+(?:(?!24G\b)\d+[A-Z]|24G[- ]+(?:Switch|Non-PoE)\b)", re.IGNORECASE
+)
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _FAMILY_2930F_RE = re.compile(r"\b2930F\b", re.IGNORECASE)
+_FAMILY_2930M_RE = re.compile(r"\b2930M\b", re.IGNORECASE)
 _RUNNING_CONFIG_HOSTNAME_RE = re.compile(
     r'^hostname[ \t]+(?:"([^"\r\n]+)"|([^" \t\r\n]+))[ \t]*$',
     re.IGNORECASE,
@@ -57,7 +83,7 @@ _APPENDED_CLI_MODE_RE = re.compile(r"^.+\([^()\r\n]+\)[ \t]*[#>]$")
 _MAX_PROMPT_LENGTH = 256
 _MAX_HOSTNAME_LENGTH = 255
 _CONFLICTING_FAMILY_RE = re.compile(
-    r"\b(?:2530|2540|2920|2930M|3810M|5400R|6200F|6300[FM]|6400|CX)\b",
+    r"\b(?:2530|2540|2920|3810M|5400R|6200F|6300[FM]|6400|CX)\b",
     re.IGNORECASE,
 )
 _CLI_ERROR_RE = re.compile(
@@ -149,19 +175,33 @@ def validate_output_limits(output: str, *, max_bytes: int, max_lines: int) -> No
         )
 
 
+def requires_stacking_inventory(modules_output: str) -> bool:
+    """A backplane stack reports a Stack ID and accessory slots in show modules."""
+    return _STACK_ID_RE.search(_ANSI_RE.sub("", modules_output)) is not None
+
+
+def identify_connected_device(
+    version_output: str,
+    modules_output: str,
+    read_stacking: Callable[[], str],
+    *,
+    hostname: str | None = None,
+) -> DeviceIdentity:
+    """Request the separate chassis inventory only on a backplane stack."""
+    inventory = read_stacking() if requires_stacking_inventory(modules_output) else ""
+    return validate_device_identity(
+        version_output, modules_output, hostname=hostname, stacking_output=inventory
+    )
+
+
 def validate_device_identity(
     version_output: str,
     modules_output: str = "",
     *,
     hostname: str | None = None,
+    stacking_output: str = "",
 ) -> DeviceIdentity:
-    """Return a 2930F identity from compatible, non-conflicting CLI evidence.
-
-    ``show version`` remains mandatory, but ArubaOS-Switch commonly reports only
-    software and boot details there. Chassis evidence from ``show modules`` is
-    therefore considered equally. Exact official SKUs take precedence, while a
-    standalone 2930F family marker is sufficient for a generic identity.
-    """
+    """Identify a 2930F or the supported JL320A chassis from switch CLI output."""
 
     version = _ANSI_RE.sub("", version_output or "")
     modules = _ANSI_RE.sub("", modules_output or "")
@@ -170,17 +210,28 @@ def validate_device_identity(
             "The show version response was empty.",
             DiagnosticDetail.IDENTITY_EVIDENCE_MISSING,
         )
-    if _CONFLICTING_FAMILY_RE.search(version) or _CONFLICTING_FAMILY_RE.search(modules):
+    module_rows = _chassis_rows(modules)
+    stack_models = (
+        _stack_member_models(modules, _ANSI_RE.sub("", stacking_output))
+        if requires_stacking_inventory(modules)
+        else []
+    )
+    evidence = "\n".join([*_chassis_rows(version), *module_rows, *stack_models])
+    explicit_skus = _all_skus(evidence)
+    candidates = explicit_skus & SUPPORTED_MODELS.keys()
+    family_f = bool(_FAMILY_2930F_RE.search(evidence) or candidates & ARUBA_2930F_MODELS.keys())
+    family_m = bool(_FAMILY_2930M_RE.search(evidence) or "JL320A" in candidates)
+    if (
+        _CONFLICTING_FAMILY_RE.search(version)
+        or _CONFLICTING_FAMILY_RE.search(evidence)
+        or (family_f and family_m)
+    ):
         raise _unsupported(
             "A conflicting switch family was detected.",
             DiagnosticDetail.IDENTITY_FAMILY_CONFLICT,
         )
 
-    version_skus = _recognized_skus(version)
-    module_skus = _recognized_skus(modules)
-    candidates = version_skus | module_skus
-    explicit_skus = _all_skus(version) | _explicit_module_identity_skus(modules)
-    unsupported_skus = explicit_skus - ARUBA_2930F_MODELS.keys()
+    unsupported_skus = explicit_skus - SUPPORTED_MODELS.keys()
     if unsupported_skus:
         detail = (
             DiagnosticDetail.IDENTITY_SKU_CONFLICT
@@ -189,20 +240,34 @@ def validate_device_identity(
         )
         raise _unsupported("Unsupported or conflicting chassis SKU evidence was detected.", detail)
 
-    software_match = _SOFTWARE_RE.search(version.upper())
+    if "JL320A" in candidates:
+        # Do not advertise an unknown or different second chassis as another JL320A.
+        chassis = [row for row in module_rows if re.search(r"\bchassis\b", row, re.IGNORECASE)]
+        unverified = any(
+            "JL320A" not in _all_skus(row)
+            and (len(chassis) > 1 or not _FAMILY_2930M_RE.search(row))
+            for row in chassis
+        )
+        if unverified or _WRONG_JL320A_VARIANT_RE.search(evidence):
+            raise _unsupported(
+                "Conflicting JL320A chassis information was detected.",
+                DiagnosticDetail.IDENTITY_SKU_CONFLICT,
+            )
+
+    software_match = _SOFTWARE_RE.search(_BOOT_ROM_VERSION_RE.sub("", version.upper()))
     if len(candidates) == 1:
         sku = next(iter(candidates))
-        model = ARUBA_2930F_MODELS[sku]
+        model = SUPPORTED_MODELS[sku]
         display_sku: str | None = sku
     elif len(candidates) > 1:
         model = "Aruba 2930F VSF"
         display_sku = ", ".join(sorted(candidates))
-    elif _FAMILY_2930F_RE.search(version) or _FAMILY_2930F_RE.search(modules):
+    elif family_f:
         model = "Aruba 2930F"
         display_sku = None
     else:
         raise _unsupported(
-            "The command responses did not identify an Aruba 2930F.",
+            "The command responses did not identify a supported Aruba 2930F or JL320A chassis.",
             DiagnosticDetail.IDENTITY_EVIDENCE_MISSING,
         )
 
@@ -359,31 +424,80 @@ def _config_banners_closed(text: str) -> bool:
     return _config_lines_outside_banners(text) is not None
 
 
-def _recognized_skus(text: str) -> set[str]:
-    reported = _all_skus(text)
-    return reported & ARUBA_2930F_MODELS.keys()
+def _chassis_rows(text: str) -> list[str]:
+    """Keep chassis descriptions, omitting serial numbers and module/slot rows."""
+    return [
+        re.split(r"\bserial\s+number\s*:", line, maxsplit=1, flags=re.IGNORECASE)[0]
+        for line in text.splitlines()
+        if _CHASSIS_ROW_RE.match(line)
+        and not re.search(r"\b(?:module|transceiver)\b", line, re.IGNORECASE)
+    ]
 
 
 def _all_skus(text: str) -> set[str]:
     return {match.upper() for match in _SKU_RE.findall(text)}
 
 
-def _explicit_module_identity_skus(text: str) -> set[str]:
-    """Return module-output SKUs only from lines that describe chassis identity.
+def _stack_member_models(modules: str, inventory: str) -> list[str]:
+    """Read all members of the same backplane stack, including unrecognized rows."""
+    ids = _STACK_ID_RE.findall(modules)
+    reported_ids = _STACK_ID_RE.findall(inventory)
+    table = _STACK_HEADER_RE.search(inventory)
+    stack_id = ids[0].strip().casefold() if len(ids) == 1 else ""
+    unformed = stack_id == "no id - will merge upon connectivity"
+    if (
+        len(reported_ids) != 1
+        or stack_id != reported_ids[0].strip().casefold()
+        or (not unformed and not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{8}", stack_id))
+        or table is None
+    ):
+        raise _unsupported(
+            "Stack member inventory was not verified.", DiagnosticDetail.IDENTITY_EVIDENCE_MISSING
+        )
 
-    ``show modules`` can also list transceiver and expansion-module part numbers.
-    Those rows must not turn an otherwise supported chassis into an unknown SKU.
-    """
+    if unformed:
+        status = re.findall(
+            r"^[ \t]*stack status[ \t]*:[ \t]*([^\n\r]*)", inventory.casefold(), re.MULTILINE
+        )
+        if [value.strip() for value in status] != ["no stack formed"]:
+            raise _unsupported(
+                "The stack formation state was not verified.",
+                DiagnosticDetail.IDENTITY_EVIDENCE_MISSING,
+            )
 
-    reported: set[str] = set()
-    for line in text.splitlines():
-        if re.search(r"\b(?:chassis|model)\b", line, re.IGNORECASE) or re.search(
-            r"\b(?:2930F|2930M|2530|2540|2920|3810M|5400R|6200F|6300[FM]|6400|CX)\b",
-            line,
-            re.IGNORECASE,
-        ):
-            reported.update(_all_skus(line))
-    return reported
+    members: dict[str, str] = {}
+    for line in inventory[table.end() :].strip().splitlines():
+        line = line.strip()
+        if not line or re.fullmatch(r"[-\s]+", line):
+            continue
+        row = _STACK_MEMBER_RE.fullmatch(line)
+        if row is None or row[1] in members:
+            raise _unsupported(
+                "Incomplete or ambiguous stack member inventory.",
+                DiagnosticDetail.IDENTITY_EVIDENCE_MISSING,
+            )
+        if unformed and (members or row[4].casefold() != "commander"):
+            raise _unsupported(
+                "An unformed stack requires a single Commander.",
+                DiagnosticDetail.IDENTITY_EVIDENCE_MISSING,
+            )
+        model = row[3]
+        if _all_skus(model) != {"JL320A"}:
+            raise _unsupported(
+                "Unsupported or unidentified stack member.", DiagnosticDetail.IDENTITY_SKU_CONFLICT
+            )
+        members[row[1]] = model
+
+    # Slot rows identify members with installed accessories, even though they do
+    # not identify the chassis. Every such member must appear in the inventory.
+    slots = set(
+        re.findall(r"^[ \t]*(\d+)[ \t]+(?:STK|[A-Z])[ \t]+", modules, re.IGNORECASE | re.MULTILINE)
+    )
+    if not members or not slots.issubset(members):
+        raise _unsupported(
+            "The stack member list was incomplete.", DiagnosticDetail.IDENTITY_EVIDENCE_MISSING
+        )
+    return list(members.values())
 
 
 def _unsupported(message: str, detail: DiagnosticDetail) -> CollectionFailure:

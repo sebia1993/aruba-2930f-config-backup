@@ -31,6 +31,7 @@ from .port_control import (
     validate_interface,
 )
 from .storage import default_output_directory
+from .validation import SUPPORTED_MODELS
 
 MAX_BATCH_ACTIONS = 300
 BATCH_CHECKPOINT = 10
@@ -78,10 +79,15 @@ class BatchTarget(BatchPort):
         )
         if hostname_unknown and not self.allow_unknown_hostname:
             raise BatchControlError("장비 호스트네임을 확인한 포트만 일괄 제어할 수 있습니다.")
-        if self.allow_unknown_hostname and (
-            not hostname_unknown or "2930F" not in self.expected_model.upper()
-        ):
-            raise BatchControlError("호스트네임 미확인 시 검증된 Aruba 2930F 모델이 필요합니다.")
+        if self.allow_unknown_hostname:
+            supported = (
+                "2930F" in self.expected_model.upper()
+                or self.expected_model == SUPPORTED_MODELS["JL320A"]
+            )
+            if not hostname_unknown or not supported:
+                raise BatchControlError(
+                    "호스트네임 미확인 시 검증된 Aruba 2930F 또는 JL320A 모델이 필요합니다."
+                )
         if not self.fingerprint.startswith("SHA256:"):
             raise BatchControlError("승인된 SSH 지문이 없는 대상은 일괄 제어할 수 없습니다.")
 

@@ -43,7 +43,7 @@ from .port_control import (
     parse_poe_status,
 )
 from .port_control_ssh import PortControlSSHSession
-from .validation import ARUBA_2930F_MODELS, hostname_from_prompt, validate_device_identity
+from .validation import SUPPORTED_MODELS, hostname_from_prompt, identify_connected_device
 
 
 class QuerySession(PortSession, Protocol):
@@ -227,7 +227,7 @@ class PoEQueryService:
         port: InterfaceState,
         cancel: threading.Event,
     ) -> tuple[PoEState, PowerEvidence | None]:
-        known_model = ARUBA_2930F_MODELS.get(identity.sku or "")
+        known_model = SUPPORTED_MODELS.get(identity.sku or "")
         if (
             known_model is not None and "PoE" not in known_model
         ) or "SFP" in port.port_type.upper():
@@ -262,9 +262,10 @@ class PoEQueryService:
             _bounded(cancel, session.set_terminal_width)
             version = _bounded(cancel, lambda: session.send_show("show version"))
             modules = _bounded(cancel, lambda: session.send_show("show modules"))
-            identity = validate_device_identity(
+            identity = identify_connected_device(
                 version,
                 modules,
+                lambda: _bounded(cancel, lambda: session.send_show("show stacking")),
                 hostname=hostname_from_prompt(_bounded(cancel, session.get_prompt)),
             )
             # AOS-S show interfaces brief reports all local interfaces.

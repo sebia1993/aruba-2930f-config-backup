@@ -64,6 +64,7 @@ _ALLOWED_SHOW_COMMANDS = frozenset(
     {
         "show version",
         "show modules",
+        "show stacking",
         "show system information",
         "show running-config",
     }

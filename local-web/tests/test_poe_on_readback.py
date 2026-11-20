@@ -12,6 +12,7 @@ from unittest.mock import Mock, call, patch
 from uuid import uuid4
 
 from aruba2930f_backup.batch_port_control import (
+    BatchControlError,
     BatchPlan,
     BatchPortController,
     BatchStatus,
@@ -62,6 +63,24 @@ class PoEOnReadbackTests(unittest.TestCase):
         return self.service._apply_once(
             self.session, before or self.before, action, self.creds, self.cancel
         )
+
+    def test_jl320a_supports_verified_model_fallback_for_poe_on(self):
+        target = BatchTarget(
+            self.before.target,
+            "1/1",
+            "",
+            True,
+            False,
+            self.before.fingerprint,
+            expected_model="Aruba 2930M 24G PoE+ 1-slot",
+            allow_unknown_hostname=True,
+        )
+        plan = BatchPlan(str(uuid4()), "now", PortAction.POE_ON, (target,))
+        self.assertEqual(plan.targets, (target,))
+        with self.assertRaises(BatchControlError):
+            replace(target, expected_model="Aruba 2930M")
+        with self.assertRaises(BatchControlError):
+            replace(plan, action=PortAction.POE_OFF)
 
     def test_still_off_after_fresh_read_reports_power_enable_and_preserves_observation(self):
         with (
