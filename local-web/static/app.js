@@ -13,6 +13,9 @@ const stateNames = {ok:'성공',success:'성공',failed:'실패',cancelled:'취�
 const ui = { token:'', session:{active:false}, busy:false, jobId:null, rows:[], selected:new Set(), tileRow:null, liveId:null, inspectedRow:null };
 const dialog = $('review');
 const queryCredentials = $('queryCredentials');
+const quickActions = $('quickActions');
+const quickOff = $('quickOff');
+const quickOn = $('quickOn');
 Object.assign(jobNames, {'targets.preview':'대상 목록 검토','targets.apply':'대상 목록 적용','control.inspect':'단일 포트 상태 조회','control.quick':'빠른 제어 검토','control.quick-execute':'빠른 PoE 제어','backup.pick-directory':'백업 폴더 선택'});
 
 function elem(tag, text, className) {
@@ -767,7 +770,13 @@ function updateControlTarget() {
   $('selectionSummary').hidden=!batch || !selectedCount;
   $('selectedCount').textContent='선택 '+selectedCount+'개';
   updateHiddenSelectedCount(targets);
-  $('quickActions').hidden=!targets.length || ($('operation').value==='disable' && !matrixControlTargets('poe_off').length);
+  // Both matrices share these same buttons, selection validation and action handlers.
+  const displayed = ui.liveId ? $('matrixViewer').contentDocument : document;
+  const lastFilter = displayed?.querySelector('button[data-power-filter="unclassified"]');
+  if (lastFilter && lastFilter.nextElementSibling!==quickActions) lastFilter.after(quickActions);
+  const powerEligible = targets.length && ($('operation').value!=='disable' || matrixControlTargets('poe_off').length);
+  quickActions.hidden = !lastFilter || !batch || !(ui.selected.size || targets.length);
+  quickOff.disabled = quickOn.disabled = quickActions.hidden || ui.busy || !ui.token || !powerEligible;
   const refresh=$('refreshPorts');
   const refreshCount=!currentInspection() && (ui.liveId || displayingInventory())
     ? window.portTools?.selectedRefreshCount() || 0 : 0;
@@ -780,7 +789,7 @@ function updateControlTarget() {
   inspect.hidden=batch && !observed;
   if (observed) inspect.title=observed.ip+':'+observed.sshPort+' / 포트 '+observed.port;
   else inspect.removeAttribute('title');
-  strip.hidden=!observed && target.hidden && $('selectionSummary').hidden && $('quickActions').hidden && refresh.hidden;
+  strip.hidden=!observed && target.hidden && $('selectionSummary').hidden && refresh.hidden;
 }
 function syncMonitorChecks() {
   const viewer=monitor();

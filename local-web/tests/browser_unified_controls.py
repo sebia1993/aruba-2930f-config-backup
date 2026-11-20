@@ -8,10 +8,12 @@ from browser_qa import (
     edit_query_targets,
     enter_ssh_credentials,
     expect_hidden_selection,
+    expect_no_quick_power,
     expect_power_result,
     open_port_controls,
     open_target_editor,
     power_filter,
+    quick_power_group,
     run_browser_case,
 )
 from playwright.sync_api import expect
@@ -48,9 +50,12 @@ def hit_point(locator):
 
 
 def verify_quick_power_buttons(page):
-    label = "선택 포트 PoE 전원"
-    actions = page.get_by_role("group", name=label, exact=True)
-    expect(actions.get_by_text(label, exact=True)).to_be_visible()
+    actions = quick_power_group(page)
+    expect(actions).to_be_visible()
+    expect(actions).to_have_accessible_name("선택 포트 PoE 전원")
+    assert actions.evaluate(
+        """group => group.previousElementSibling?.matches('button[data-power-filter="unclassified"]')"""
+    ), "The power toolbar should directly follow the unmeasured-power count"
     off, on = actions.get_by_role("button").all()
     icons, boxes = [], []
     for button, text in ((off, "Power OFF"), (on, "Power ON")):
@@ -112,7 +117,7 @@ def verify_viewport_controls(page, view, endpoint, other_endpoint):
         expect(tiles).to_have_count(1)
         expect_hidden_selection(page, 0)
         selected_tile.click()
-        expect(card.locator("#quickActions")).to_be_hidden()
+        expect_no_quick_power(page)
         checkbox = view.locator("#tbody input[data-control-key]")
         page.mouse.click(*hit_point(heading))
         expect(options).to_have_attribute("open", "")
@@ -272,7 +277,7 @@ def verify_rejected_draft_and_failed_read(page, view, addresses, first, second):
     expect(rows.get_by_role("checkbox")).to_be_disabled()
     expect(page.locator("#selectedCount")).to_have_text("선택 0개")
     open_port_controls(page)
-    expect(page.locator("#quickOn")).to_be_hidden()
+    expect_no_quick_power(page)
     assert len(first.commands) == baseline[0]
     assert len(second.commands) > baseline[1]
     assert "configure terminal" not in second.commands[baseline[1] :]
@@ -393,7 +398,7 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(card.locator("#selectedCount")).to_have_text("선택 1개")
     other_tile.click()
     expect(card.locator("#selectedCount")).to_have_text("선택 0개")
-    expect(card.locator("#quickActions")).to_be_hidden()
+    expect_no_quick_power(page)
     expect(matrix_view.locator("#tbody input:checked")).to_have_count(0)
     resize_workspace(page, 1440, 960)
     assert all("configure terminal" not in fixture.commands for fixture in (switch, second))
@@ -535,6 +540,10 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(failed_check).to_be_enabled()
     failed_check.check()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+    power = quick_power_group(page)
+    expect(power).to_be_visible()
+    expect(power.locator("#quickOff")).to_be_disabled()
+    expect(power.locator("#quickOn")).to_be_disabled()
     page.locator("#operation").select_option("poe_off")
     expect(failed_check).not_to_be_checked()
     expect(failed_check).to_be_disabled()

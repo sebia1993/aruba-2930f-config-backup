@@ -11,6 +11,7 @@ from browser_qa import (
     enter_ssh_credentials,
     expect_power_result,
     launch_test_browser,
+    quick_power_group,
     run_browser_case,
 )
 from browser_unified_controls import hit_point, resize_workspace
@@ -104,7 +105,7 @@ def check_phone_port_control(peer, switch, shots):
     expect(card.locator("#matrixSelectAll")).to_have_text("전체 선택 해제")
     assert "configure terminal" not in switch.commands
     for selector in ("#quickOn", "#quickOff"):
-        hit_point(card.locator(selector))
+        hit_point(quick_power_group(peer).locator(selector))
     with click_quick_poe(peer, "poe_off", [(address, "1")], touch=True):
         expect_power_result(peer, address, "8.1 W", "0 W", delta="\N{MINUS SIGN}8.1 W")
     expect(card.locator("#controlResult")).to_be_visible()

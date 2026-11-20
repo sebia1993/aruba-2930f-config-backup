@@ -470,7 +470,7 @@
       if (item.view.phase!=='observed') unobserved++;
       else counts[item.state]=(counts[item.state] || 0)+1;
     }
-    for (const badge of legend.children) {
+    for (const badge of legend.querySelectorAll('button[data-power-filter]')) {
       const state=badge.dataset.state;
       badge.lastElementChild.textContent=counts[state] || 0;
       badge.setAttribute('aria-pressed',String(!failureView && powerFilters.has(state)));

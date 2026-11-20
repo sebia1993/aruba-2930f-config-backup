@@ -7,6 +7,7 @@ from browser_power_matrix import PowerMatrixSwitch
 from browser_qa import (
     enter_ssh_credentials,
     expect_hidden_selection,
+    expect_no_quick_power,
     power_filter,
     run_browser_case,
 )
@@ -157,7 +158,7 @@ def exercise(page, url, switch, second, shots, _backup):
         expect(other_tile).to_have_attribute("aria-pressed", "false")
         expect(first_tile).to_have_attribute("aria-pressed", "true")
         first_tile.click()
-        expect(page.locator("#quickActions")).to_be_hidden()
+        expect_no_quick_power(page)
         first_tile.click()
         expect(first_row.locator("input")).to_be_checked()
 
@@ -391,7 +392,7 @@ def check_paged_select_all(page, frame, switch, second, addresses, shots):
     expect_hidden_selection(page, 0)
     other.click()
     expect(count).to_have_text("선택 0개")
-    expect(page.locator("#quickActions")).to_be_hidden()
+    expect_no_quick_power(page)
     assert [len(peer.commands) for peer in (switch, second)] == baseline
 
 
