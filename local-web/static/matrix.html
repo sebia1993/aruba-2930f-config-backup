@@ -1083,7 +1083,9 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     if (mode==='list') renderTable(true);
     else {
       renderChecks();
-      revealPort(state.tileByKey.get(state.selected));
+      const selectedTile=state.tileByKey.get(state.selected);
+      const firstFailedTile=failureReturn && el('matrix').querySelector('.port-tile');
+      revealPort(selectedTile || firstFailedTile);
     }
     parent.postMessage({type:'aruba-port-view'},location.origin);
   }
