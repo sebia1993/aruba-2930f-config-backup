@@ -79,15 +79,7 @@ def verify_viewport_controls(page, view, endpoint, other_endpoint):
         filter_toggle = view.locator("#shortFilterToggle")
         if search.is_hidden():
             page.mouse.click(*hit_point(filter_toggle))
-        if filter_toggle.is_visible():
-            expect(view.locator("#filterOptionsToggle")).to_be_hidden()
-            for selector in ("#site", "#clearFilters"):
-                expect(view.locator(selector)).to_be_visible()
-        else:
-            advanced = view.locator("#filterOptionsToggle")
-            advanced.click()
-            expect(view.locator("#clearFilters")).to_be_visible()
-            advanced.click()
+        expect(view.locator("#clearFilters")).to_be_visible()
         page.mouse.click(*hit_point(search))
         search.fill(other_endpoint)
         expect(tiles).to_have_count(1)

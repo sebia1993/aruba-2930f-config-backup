@@ -106,7 +106,7 @@ def check_block_size(page, frame, mobile):
     expect(slider).to_have_count(1)
     expect(frame.locator("#overviewFilters input[type=range]")).to_have_count(0)
     expect(frame.locator("#shortFilterToggle")).to_have_attribute("aria-expanded", "false")
-    expect(frame.locator("#filterOptionsToggle")).to_have_attribute("aria-expanded", "false")
+    expect(frame.locator("#filterOptionsToggle")).to_have_count(0)
     x, y = hit_point(slider)
     initial = int(slider.input_value())
     tile = frame.locator('#matrix [data-port-key$="/4"]')
