@@ -36,7 +36,7 @@ from .storage import default_output_directory
 from .validation import SUPPORTED_MODELS, identify_connected_device
 
 _PORT_RE = re.compile(r"[1-9][0-9]*(?:/[1-9][0-9]*)?")
-_QUERY_PORT_RE = re.compile(r"(?:[1-9][0-9]*/)?[A-Z]?[1-9][0-9]*")
+_QUERY_PORT_RE = re.compile(r"(?:[A-Z][1-9][0-9]*+|[1-9][0-9]*+(?:/[A-Z]?[1-9][0-9]*+)?)")
 
 
 class PreMutationRejected(CollectionFailure):
