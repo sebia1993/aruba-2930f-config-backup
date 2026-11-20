@@ -170,17 +170,24 @@
     if (highlighted) highlighted.classList.remove('ui-inspected');
     highlighted = null;
   }
+  function itemFrame(item) {
+    if (item.id===quickOff.id || item.id===quickOn.id) {
+      return quickActions.ownerDocument===document ? '' : 'matrixViewer';
+    }
+    return item.frame;
+  }
   function showItem(index) {
     const item = catalog[index]; if (!item) return;
     clearHighlight();
     select.value = String(index);
-    const doc = item.frame ? $(item.frame)?.contentDocument : document;
+    const frame = itemFrame(item);
+    const doc = frame ? $(frame)?.contentDocument : document;
     highlighted = doc?.getElementById(item.id);
     highlighted?.classList.add('ui-inspected');
     const match = /^v\d+\.\d+\.\d+$/.exec($('version').textContent.trim());
     preview.textContent = ['프로그램 버전: '+(match?.[0] || '로컬 웹'),
       '화면 위치: '+item.screen, '요소 이름: '+item.title,
-      'UI 식별자: '+(item.frame ? item.frame+'.' : '')+item.id,
+      'UI 식별자: '+(frame ? frame+'.' : '')+item.id,
       '소스 위치: '+item.source, '용도: '+item.purpose, '', '현재 현상:', '원하는 변경:'].join('\n');
   }
   function setSelecting(value) {
@@ -219,7 +226,7 @@
       // Selection consumes the click even on an unregistered control.
       e.preventDefault(); e.stopImmediatePropagation();
       for (let node=e.target; node && node !== doc; node=node.parentElement) {
-        const index = catalog.findIndex(item=>item.frame === frame && item.id === node.id);
+        const index = catalog.findIndex(item=>item.id === node.id && itemFrame(item) === frame);
         if (index !== -1) { display(index); break; }
       }
     },true);

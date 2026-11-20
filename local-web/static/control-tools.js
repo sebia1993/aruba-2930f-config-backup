@@ -73,7 +73,7 @@
     }
   }
   function requestQuick(operation) {
-    if (ui.busy || !controlContextMatches(null) || $('controlMode').value!=='batch') return;
+    if (ui.busy || !ui.token || quickActions.hidden || !controlContextMatches(null) || $('controlMode').value!=='batch') return;
     const targets = matrixControlTargets(operation);
     if (!targets.length) return notify('빠른 제어를 실행할 포트를 선택하세요.',true);
     if (targets.length > 300) return notify('최대 300포트까지 한 번에 처리할 수 있습니다.',true);
@@ -83,8 +83,8 @@
     const requestId = crypto.randomUUID().replaceAll('-','');
     runSsh('control.quick-execute',{operation,targets,requestId},(result,cancelled)=>showQuickResult(result,cancelled));
   }
-  $('quickOff').onclick=()=>requestQuick('poe_off');
-  $('quickOn').onclick=()=>requestQuick('poe_on');
+  quickOff.addEventListener('click',()=>requestQuick('poe_off'));
+  quickOn.addEventListener('click',()=>requestQuick('poe_on'));
   const progress = elem('details'); progress.id = 'controlProgress'; progress.hidden = true;
   progress.append(elem('summary','포트별 실행 단계'));
   const stageTable = elem('div'); progress.append(stageTable);

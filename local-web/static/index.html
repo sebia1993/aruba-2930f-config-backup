@@ -97,23 +97,21 @@
           <div class="port-action-strip" id="portActionStrip" hidden>
             <p id="controlTarget" class="control-target" hidden></p>
             <span id="selectionSummary" role="status" aria-atomic="true" hidden><span id="selectedCount">선택 0개</span><span id="hiddenSelectedCount" hidden>화면 밖 0개</span></span>
-            <div id="quickActions" role="group" aria-labelledby="quickPowerLabel" hidden>
-              <span id="quickPowerLabel">선택 포트 PoE 전원</span>
-              <div class="power-buttons">
-                <button type="button" id="quickOff" data-job aria-label="Power OFF 즉시 실행">
-                  <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M12 3v5m4.3-2.2a8 8 0 0 1 3.4 9.2M17.6 18.8A8 8 0 0 1 6.4 7.4M3 3l18 18"/></svg>
-                  Power OFF
-                </button>
-                <button type="button" id="quickOn" data-job aria-label="Power ON 즉시 실행">
-                  <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M12 3v9m4.3-6.2a8 8 0 1 1-8.6 0"/></svg>
-                  Power ON
-                </button>
-              </div>
-            </div>
             <button type="button" id="refreshPorts" data-job hidden>선택 포트 재조회</button>
           </div>
         </div>
-        <div id="portMonitor"><iframe id="matrixViewer" class="viewer" title="포트 상태 매트릭스와 결과 목록" data-src="/matrix?embedded=1"></iframe><div id="monitorInventory"></div></div>
+        <div id="portMonitor"><iframe id="matrixViewer" class="viewer" title="포트 상태 매트릭스와 결과 목록" data-src="/matrix?embedded=1"></iframe><div id="monitorInventory">
+          <div id="quickActions" role="group" aria-label="선택 포트 PoE 전원" hidden>
+            <button type="button" id="quickOff" aria-label="Power OFF 즉시 실행" title="선택한 포트의 PoE 전력 공급 차단" disabled>
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M12 3v5m4.3-2.2a8 8 0 0 1 3.4 9.2M17.6 18.8A8 8 0 0 1 6.4 7.4M3 3l18 18"/></svg>
+              Power OFF
+            </button>
+            <button type="button" id="quickOn" aria-label="Power ON 즉시 실행" title="선택한 포트에 PoE 전력 공급" disabled>
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M12 3v9m4.3-6.2a8 8 0 1 1-8.6 0"/></svg>
+              Power ON
+            </button>
+          </div>
+        </div></div>
         <div id="matrixFeedback" role="region" aria-label="포트 제어 결과"><div id="controlResult" class="output" hidden></div></div>
       </section>
     </section>

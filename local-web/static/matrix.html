@@ -415,7 +415,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     <button type="button" class="metric power-filter red" data-power-filter="unpowered" aria-pressed="false" aria-controls="matrix tbody"><span data-power-label="unpowered"></span><span class="compact-power-label" aria-hidden="true">미공급</span> <b class="value" id="mUnpowered">—</b></button>
     <button type="button" class="metric power-filter amber" data-power-filter="limited" aria-pressed="false" aria-controls="matrix tbody"><span data-power-label="limited"></span><span class="compact-power-label" aria-hidden="true">점검</span> <b class="value" id="mLimited">—</b></button>
     <button type="button" class="metric power-filter green" data-power-filter="normal" aria-pressed="false" aria-controls="matrix tbody"><span data-power-label="normal"></span><span class="compact-power-label" aria-hidden="true">정상</span> <b class="value" id="mNormal">—</b></button>
-    <button type="button" class="metric power-filter" data-power-filter="unclassified" aria-pressed="false" aria-controls="matrix tbody"><span id="mUnclassified"><span class="full-power-prefix">전력 </span>미측정 <b id="mMissing" class="value">—</b>개</span></button>
+    <div class="unmeasured-actions"><button type="button" class="metric power-filter" data-power-filter="unclassified" aria-pressed="false" aria-controls="matrix tbody"><span id="mUnclassified"><span class="full-power-prefix">전력 </span>미측정 <b id="mMissing" class="value">—</b>개</span></button></div>
     <small id="mUnobserved" hidden></small>
     <button id="mReadFailed" type="button" class="btn" aria-pressed="false" aria-controls="matrix tbody" title="조회 실패 포트만 보기" hidden><span class="port-failure-mark" aria-hidden="true">!</span><span id="readFailedCount"></span></button>
    </div>
@@ -883,7 +883,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     if (controlsBusy || !canCheck(row)) return;
     if (checked) checkedPorts.add(row.key); else checkedPorts.delete(row.key);
     renderChecks();
-    parent.postMessage({type:'aruba-port-checks'},location.origin);
+    parent.postMessage({type:'aruba-port-checks',selectedKey:checked ? row.key : null},location.origin);
   }
   function listRows() {
     return state.changesOnly ? state.changedRows : state.found;
@@ -996,7 +996,8 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     // Scroll only the embedded results, keeping the host controls in place.
     const rect=element.getBoundingClientRect(), dock=el('detailTitle').closest('section');
     const bottom=getComputedStyle(dock).position==='sticky' ? Math.min(innerHeight,dock.getBoundingClientRect().top) : innerHeight;
-    const top=innerScroll ? 0 : header;
+    const scrollPadding=parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+    const top=scrollPadding+(innerScroll ? 0 : header);
     if (rect.top<top) window.scrollBy({top:rect.top-top,behavior:'instant'});
     else if (rect.bottom>bottom) window.scrollBy({top:rect.bottom-bottom,behavior:'instant'});
   }
@@ -1120,7 +1121,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
             parent.postMessage({type:'aruba-port-checks'},location.origin);
           }
         }
-      } else parent.postMessage({type:'aruba-observed-port',liveId:liveSelectionId(),key},location.origin);
+      } else parent.postMessage({type:'aruba-observed-port',liveId:liveSelectionId(),key,reveal:true},location.origin);
       revealReadFailure();
     }
     else if (scroll) el('detailTitle').scrollIntoView({block:'center'});
@@ -1268,6 +1269,12 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       source: ()=>({hasData:!!state.current,view:'overview',presentation:state.presentation,liveId:state.current?.liveId,
         powerFilters:[...state.powerFilters]}),
       selected:selectedActionRow,
+      revealPowerPort(key) {
+        if (el('quickActions')?.hidden!==false) return;
+        const item=state.presentation==='list'
+          ? el('tbody').querySelector('tr[data-port-key="'+CSS.escape(key)+'"]') : state.tileByKey.get(key);
+        revealPort(item);
+      },
       inspectionTarget() {
         const row=selectedActionRow();
         return needsInspection(row) ? row : null;
@@ -1291,7 +1298,18 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     stage.append(matrixPanel);
     matrixPanel.append(el('portListPane'));
     applyPresentation();
-    matrixPanel.querySelector('.matrix-area').before(document.querySelector('.metrics'));
+    const powerBar=document.querySelector('.metrics');
+    matrixPanel.querySelector('.matrix-area').before(powerBar);
+    const actionRow=powerBar.querySelector('.unmeasured-actions');
+    const measurePowerRow=new ResizeObserver(()=>{
+      if (!actionRow.getClientRects().length) return;
+      // Let preceding counts scroll away; only the action row needs to remain reachable.
+      const offset=Math.max(0,actionRow.offsetTop-2);
+      document.documentElement.style.setProperty('--power-toolbar-offset',offset+'px');
+      document.documentElement.style.setProperty('--power-toolbar-height',(powerBar.offsetHeight-offset)+'px');
+    });
+    measurePowerRow.observe(powerBar);
+    measurePowerRow.observe(actionRow);
     stage.after(el('detailTitle').closest('section'));
     document.querySelector('.rightcol').hidden=true;
 

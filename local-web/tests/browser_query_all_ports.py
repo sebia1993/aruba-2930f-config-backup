@@ -6,6 +6,7 @@ from browser_power_matrix import PowerMatrixSwitch
 from browser_qa import (
     edit_query_targets,
     enter_ssh_credentials,
+    expect_no_quick_power,
     open_target_editor,
     run_browser_case,
 )
@@ -123,7 +124,7 @@ def exercise(page, url, switch, other, shots, _backup):
     assert_matrix(page, address, switch.links)
     frame = page.frame_locator("#matrixViewer")
     expect(frame.locator("#matrix [aria-pressed=true]")).to_have_count(0)
-    expect(page.locator("#quickActions")).to_be_hidden()
+    expect_no_quick_power(page)
     expect(frame.locator(f'[data-port-key="{address}/2/A1"]').first).to_have_attribute(
         "data-state", "unclassified"
     )

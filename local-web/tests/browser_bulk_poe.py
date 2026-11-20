@@ -10,6 +10,7 @@ from browser_qa import (
     expect_power_result,
     open_port_controls,
     open_target_editor,
+    quick_power_group,
     run_browser_case,
 )
 from playwright.sync_api import expect
@@ -118,7 +119,7 @@ def cancel_before_off(page, switch, address):
     ):
         try:
             assert reading.wait(30), "Quick OFF never reached the port state read"
-            expect(page.locator("#quickOff")).to_be_disabled()
+            expect(quick_power_group(page).locator("#quickOff")).to_be_disabled()
             with page.expect_response(lambda res: res.url.endswith("/cancel")) as cancellation:
                 page.locator("#stopJob").click()
             assert cancellation.value.ok
@@ -265,7 +266,7 @@ def run_range(page, url, switch, second, shots, output):
     open_port_controls(page)
     page.get_by_role("button", name="전체 선택", exact=True).click()
     expect(page.locator("#selectedCount")).to_have_text("선택 1개")
-    page.get_by_role("button", name="Power OFF 즉시 실행", exact=True).click()
+    quick_power_group(page).get_by_role("button", name="Power OFF 즉시 실행", exact=True).click()
     expect(page.locator("#queryCredentials")).to_be_visible()
     assert not switch.auth_attempts
     with page.expect_request(

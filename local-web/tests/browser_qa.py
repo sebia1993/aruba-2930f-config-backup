@@ -23,6 +23,18 @@ def power_filter(frame, state):
     return frame.locator(f'button[data-power-filter="{state}"]')
 
 
+def quick_power_group(page):
+    """Find the actual toolbar in the document displaying the port matrix."""
+    if page.locator("#matrixViewer").is_visible():
+        return page.frame_locator("#matrixViewer").locator("#quickActions")
+    return page.locator("#matrixLegend #quickActions")
+
+
+def expect_no_quick_power(page):
+    expect(page.locator("#quickActions")).to_be_hidden()
+    expect(page.frame_locator("#matrixViewer").locator("#quickActions")).to_be_hidden()
+
+
 def expect_hidden_selection(page, count):
     indicator = page.locator("#hiddenSelectedCount")
     if count:
@@ -108,8 +120,7 @@ def click_quick_poe(page, operation, targets, *, touch=False):
     try:
         name = "Power ON 즉시 실행" if operation == "poe_on" else "Power OFF 즉시 실행"
         with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/jobs")):
-            card = page.locator("#matrixWorkspace")
-            button = card.get_by_role("button", name=name, exact=True)
+            button = quick_power_group(page).get_by_role("button", name=name, exact=True)
             if touch:
                 button.tap()
             else:

@@ -7,10 +7,11 @@ from browser_power_matrix import PowerMatrixSwitch
 from browser_qa import (
     enter_ssh_credentials,
     expect_hidden_selection,
+    expect_no_quick_power,
     power_filter,
     run_browser_case,
 )
-from browser_unified_controls import hit_point, resize_workspace
+from browser_unified_controls import hit_point, resize_workspace, verify_quick_power_buttons
 from playwright.sync_api import expect
 
 HEADINGS = ["포트 번호", "전력 판정", "실측 W", "LLDP 이름"]
@@ -157,7 +158,7 @@ def exercise(page, url, switch, second, shots, _backup):
         expect(other_tile).to_have_attribute("aria-pressed", "false")
         expect(first_tile).to_have_attribute("aria-pressed", "true")
         first_tile.click()
-        expect(page.locator("#quickActions")).to_be_hidden()
+        expect_no_quick_power(page)
         first_tile.click()
         expect(first_row.locator("input")).to_be_checked()
 
@@ -273,6 +274,24 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(page.locator("#statusText")).to_contain_text("종료했습니다.")
 
 
+def verify_scrolled_power_controls(page, last_port, shots):
+    resize_workspace(page, 390, 844)
+    last_port.scroll_into_view_if_needed()
+    is_scrolled = "port => scrollY + port.closest('#matrix').scrollTop > 100"
+    assert last_port.evaluate(is_scrolled)
+    page.touchscreen.tap(*hit_point(last_port))
+    expect(last_port).to_have_attribute("aria-pressed", "true")
+    expect(page.locator("#selectedCount")).to_have_text("선택 1개")
+    # A touch on a far-down port must expose usable actions without scrolling back up.
+    verify_quick_power_buttons(page)
+    assert last_port.evaluate(is_scrolled), "Selecting the last port jumped back to the top"
+    if shots:
+        page.screenshot(path=shots / "power-actions-last-port.png")
+    last_port.tap()
+    expect(last_port).to_have_attribute("aria-pressed", "false")
+    expect_no_quick_power(page)
+
+
 def check_paged_select_all(page, frame, switch, second, addresses, shots):
     switch.draws.update({str(port): 8 for port in range(6, 49)})
     page.locator("#editQueryTargets").click()
@@ -311,6 +330,9 @@ def check_paged_select_all(page, frame, switch, second, addresses, shots):
                 flush=True,
             )
             page.screenshot(path=shots / f"port-ap-name-48-{width}.png")
+    if page.context.browser.browser_type.name == "webkit":
+        bottom = frame.locator(f'#matrix [data-port-key="{addresses[0]}/48"]')
+        verify_scrolled_power_controls(page, bottom, shots)
     resize_workspace(page, 1366, 768)
     # Inspecting a row offers it as the sole control target even with no checkboxes checked.
     page.locator("#listView").click()
@@ -391,7 +413,7 @@ def check_paged_select_all(page, frame, switch, second, addresses, shots):
     expect_hidden_selection(page, 0)
     other.click()
     expect(count).to_have_text("선택 0개")
-    expect(page.locator("#quickActions")).to_be_hidden()
+    expect_no_quick_power(page)
     assert [len(peer.commands) for peer in (switch, second)] == baseline
 
 
