@@ -137,6 +137,17 @@ class Jobs:
         self.cancel_event = None
         self.monitor: PortMonitoring | None = None
 
+    def latest_cable_job(self):
+        with self.lock:
+            return next(
+                (
+                    job["id"]
+                    for job in reversed(self.recent.values())
+                    if job["action"] == "cable.test"
+                ),
+                None,
+            )
+
     def monitor_status(self):
         with self.lock:
             plan = self.monitor

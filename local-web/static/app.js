@@ -34,6 +34,22 @@ function notify(message, error = false, inMatrix = false) {
   if ($('statusText').textContent!==message) $('statusText').textContent = message;
   $('dismissStatus').hidden = ui.busy;
 }
+const cableStatusLabels = {
+  measured:'측정 완료', partial:'부분 측정', empty:'측정값 없음',
+  pending:'테스트 진행 중', unsupported:'미지원', failed:'실패', uncertain:'측정 결과 미확인', cancelled:'취소됨', skipped:'건너뜀'
+};
+function notifyCableResult(result, cancelled) {
+  const rows = result.rows || [];
+  const counts = new Map();
+  for (const row of rows) {
+    const label = cableStatusLabels[row.status] || '측정 결과 미확인';
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  const parts = [cancelled ? '케이블 진단 취소됨' : '케이블 진단'];
+  for (const [label, count] of counts) parts.push(label + ' ' + count + '포트');
+  if (!rows.length && !cancelled) parts.push('받은 결과 없음');
+  notify(parts.join(' · '), !cancelled && !rows.some(row => row.status === 'measured' || row.status === 'partial'));
+}
 function setJobProgress(progress) {
   const meter=$('jobProgress'), percent=$('jobPercent');
   meter.hidden=progress===null;
@@ -153,7 +169,9 @@ async function run(action, body, receive, retryKeys=null) {
       await window.portTools.recoverQuery();
       setQueryWorkspace(false);
     } else if (receive) receive(result, cancelled);
-    if (['control.apply','control.quick-execute'].includes(action) && hasUncertainControl(result)) {
+    if (action === 'cable.test') {
+      notifyCableResult(result, cancelled);
+    } else if (['control.apply','control.quick-execute'].includes(action) && hasUncertainControl(result)) {
       notify(result.message || '포트 제어 결과를 확인하지 못했습니다.',true);
     } else if (action === 'control.quick-execute' && result.blocked?.length) {
       notify(result.message || '선택한 포트의 사전 검증에 실패했습니다.',true);
@@ -1139,13 +1157,15 @@ async function start() {
     window.powerMonitoring?.connect(ui.bootMonitor);
     $('version').textContent = 'v' + String(bootstrap.version || '').replace(/^v/,'');
     let resumed;
-    if (bootstrap.busyJob && bootstrap.busyJob!==bootstrap.monitor?.jobId) {
-      ui.busy = true; ui.jobId = bootstrap.busyJob; sync();
+    const resumeId=window.cableTools?.jobOnOpen(bootstrap) || bootstrap.busyJob;
+    if (resumeId && resumeId!==bootstrap.monitor?.jobId) {
+      ui.busy = true; ui.jobId = resumeId; sync();
       setJobProgress({});
       notify('진행 중인 작업을 기다리고 있습니다.');
       try {
-        resumed=await poll(bootstrap.busyJob,true);
-        notify((jobNames[resumed.action] || '작업') + (resumed.cancelled ? ' 취소됨' : ' 완료'));
+        resumed=await poll(resumeId,true);
+        if (resumed.action === 'cable.test') notifyCableResult(resumed.result, resumed.cancelled);
+        else notify((jobNames[resumed.action] || '작업') + (resumed.cancelled ? ' 취소됨' : ' 완료'));
       } catch (error) {
         notify(error.message,true);
       } finally {
@@ -1157,7 +1177,6 @@ async function start() {
     }
     const workspace = await api('/api/workspace');
     if (workspace.groups?.length) {
-      if (document.readyState === 'loading') await new Promise(resolve=>window.addEventListener('DOMContentLoaded', resolve,{once:true}));
       window.portTools.restoreInventory(workspace.groups,workspace.targetText,true);
       if (workspace.query) {
         receivePorts(workspace.query);
@@ -1188,4 +1207,6 @@ async function start() {
   } catch (error) { notify(error.message,true); }
   finally { sync(); }
 }
-start();
+// The deferred feature scripts register their startup handlers before DOMContentLoaded.
+if (document.readyState==='complete') start();
+else window.addEventListener('DOMContentLoaded',start,{once:true});

@@ -311,6 +311,36 @@ class CableTests(unittest.TestCase):
                 session.clear_cable.assert_called_once()
                 session.test_cable.assert_called_once()
 
+    def test_synchronized_selected_port_rejection_stays_failed_with_or_without_confirmation(self):
+        for confirm in (False, True):
+            with self.subTest(confirm=confirm):
+                self.channel.reset_mock()
+                command = "test cable-diagnostics 1/1"
+                rejection = "Port 1/1: Error: test failed"
+                reply = (
+                    [
+                        command + "\nThis command will cause a loss of link\nContinue (y/n)?",
+                        "",
+                        "Y\n" + rejection + "\nfixture#",
+                        "",
+                    ]
+                    if confirm
+                    else [command + "\n" + rejection + "\nfixture#", ""]
+                )
+                self.feed(*reply)
+                self.session.clear_cable = Mock()
+                (row,) = diagnose_ports(
+                    _groups({"targets": "127.0.0.1 1/1"}),
+                    lambda _: nullcontext(self.session),
+                    self.cancel,
+                    Mock(),
+                )["rows"]
+                self.assertEqual(
+                    (row["status"], row["stage"], row["pairs"]), ("failed", "test", [])
+                )
+                self.assertIn("스위치가 이 포트의 케이블 진단에 실패", row["message"])
+                self.assertEqual(self.writes(), [command + "\n"] + (["y\n"] if confirm else []))
+
     def test_no_question_accepts_selected_port_table_completion_or_test_progress(self):
         for reply in (table("1/1"), "Cable diagnostics completed.", "Test in progress"):
             with self.subTest(reply=reply):

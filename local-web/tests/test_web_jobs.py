@@ -96,8 +96,10 @@ class JobTests(unittest.TestCase):
             self.assertTrue(finish.wait(5))
             return {"rows": [row]}
 
+        self.assertIsNone(self.jobs.latest_cable_job())
         with patch.object(ops, "dispatch", side_effect=diagnose):
             key = self.jobs.submit("cable.test", request)
+            self.assertEqual(self.jobs.latest_cable_job(), key)
             try:
                 self.assertTrue(started.wait(3))
                 view = self.jobs.get(key, response_key=operator_key)
@@ -114,6 +116,12 @@ class JobTests(unittest.TestCase):
             done = self.finished(key)["result"]["rows"][0]
             self.assertNotIn("responseExcerpt", done)
             self.assertEqual(self.jobs.get(key, response_key=operator_key)["result"]["rows"], [row])
+            newer = self.jobs.submit(
+                "cable.test", {"requestId": "d" * 32, "responseKey": operator_key}
+            )
+            self.finished(newer)
+            self.assertEqual(self.jobs.latest_cable_job(), newer)
+        self.assertIsNone(Jobs(self.root).latest_cable_job())
         self.assertNotIn(row["responseExcerpt"], json.dumps(self.jobs.history()))
         self.assertNotIn(operator_key.encode(), self.jobs.db.read_bytes())
         self.assertNotIn(row["responseExcerpt"].encode(), self.jobs.db.read_bytes())
