@@ -73,6 +73,50 @@ class JobTests(unittest.TestCase):
         self.assertEqual(len(reopened.history()), 1)
         self.assertIn("건너뜀 1개", reopened.history()[0]["summary"])
 
+    def test_cable_progress_and_details_are_scoped_to_the_running_inspection(self):
+        started, finish = threading.Event(), threading.Event()
+        operator_key = "b" * 32
+        request = {"requestId": "a" * 32, "responseKey": operator_key}
+        row = {
+            "ip": "127.0.0.1",
+            "ssh_port": 22,
+            "interface": "1",
+            "status": "partial",
+            "pairs": [{"pair": "1-2", "status": "Open", "distance": "0m"}],
+            "responseExcerpt": "1 1-2 Open 0m",
+        }
+        ops = self.jobs.operations
+
+        def diagnose(action, body, cancel):
+            self.assertNotIn("responseKey", body)
+            ops._start_progress("결과 조회", 1)
+            ops._progress("페어 수신", cable_row=row)
+            started.set()
+            self.assertTrue(finish.wait(5))
+            return {"rows": [row]}
+
+        with patch.object(ops, "dispatch", side_effect=diagnose):
+            key = self.jobs.submit("cable.test", request)
+            try:
+                self.assertTrue(started.wait(3))
+                view = self.jobs.get(key, response_key=operator_key)
+                self.assertNotIn(operator_key, json.dumps(view))
+                self.assertEqual(view["progress"]["cableRows"], [row])
+                self.assertEqual(view["progress"]["completed"], 0)
+                self.assertEqual(self.jobs.get(key, after=1)["progress"]["cableRows"], [])
+                for other in (None, "c" * 32):
+                    public = self.jobs.get(key, response_key=other)["progress"]["cableRows"][0]
+                    self.assertNotIn("responseExcerpt", public)
+                    self.assertEqual(public["pairs"], row["pairs"])
+            finally:
+                finish.set()
+            done = self.finished(key)["result"]["rows"][0]
+            self.assertNotIn("responseExcerpt", done)
+            self.assertEqual(self.jobs.get(key, response_key=operator_key)["result"]["rows"], [row])
+        self.assertNotIn(row["responseExcerpt"], json.dumps(self.jobs.history()))
+        self.assertNotIn(operator_key.encode(), self.jobs.db.read_bytes())
+        self.assertNotIn(row["responseExcerpt"].encode(), self.jobs.db.read_bytes())
+
     def test_prior_downloads_hide_retired_csv_and_preserve_original_files(self):
         folder = self.root / "outputs"
         folder.mkdir()

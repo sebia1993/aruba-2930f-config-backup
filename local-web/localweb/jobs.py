@@ -97,6 +97,10 @@ def _observation_for_comparison(row):
     return snapshot
 
 
+def _without_excerpts(rows):
+    return [{k: v for k, v in row.items() if k != "responseExcerpt"} for row in rows]
+
+
 class Busy(Exception):
     pass
 
@@ -236,12 +240,15 @@ class Jobs:
                 error="",
                 result=None,
             )
+            if action == "cable.test":
+                response_key = body.pop("responseKey", None)
+                if isinstance(response_key, str) and re.fullmatch(r"[0-9a-f]{32}", response_key):
+                    self.recent[key]["_response_key"] = response_key
             while len(self.recent) > MAX_RESULTS:
                 self.recent.popitem(last=False)
             self.active = key
             self.cancel_event = Event()
-            self.operations.progress = {}
-            self.operations.reset_query_progress()
+            self.operations.reset_job_progress()
             Thread(
                 target=self._run, args=(key, action, body, self.cancel_event, persist), daemon=True
             ).start()
@@ -255,14 +262,33 @@ class Jobs:
                 self.cancel_event.set()
             return {"requested": key == self.active}
 
-    def get(self, key, after=0):
+    def get(self, key, after=0, *, response_key=None):
         with self.lock:
-            item = self.recent[key]
+            item = self.recent[key].copy()
+            owner_key = item.pop("_response_key", None)
             progress = self.operations.progress_snapshot() if self.active == key else {}
             if self.active == key and item["action"] in {"ports.query", "ports.refresh"}:
                 progress.update(self.operations.query_progress(after))
                 if item["action"] == "ports.query" and "targets" in progress:
                     progress["targetText"] = self.operations.query_target_text
+            if item["action"] == "cable.test":
+                if self.active == key:
+                    progress.update(self.operations.cable_progress(after))
+                # Reconnected browsers can follow the job, but only its initiating tab
+                # holds the ephemeral key for command output. Never store it on disk.
+                can_read = (
+                    owner_key is not None
+                    and isinstance(response_key, str)
+                    and response_key.isascii()
+                    and secrets.compare_digest(owner_key, response_key)
+                )
+                if not can_read:
+                    if "cableRows" in progress:
+                        progress["cableRows"] = _without_excerpts(progress["cableRows"])
+                    if item["result"] and "rows" in item["result"]:
+                        item["result"] = dict(
+                            item["result"], rows=_without_excerpts(item["result"]["rows"])
+                        )
             return dict(item, progress=progress)
 
     def history(self):

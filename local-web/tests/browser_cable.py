@@ -13,18 +13,29 @@ from browser_qa import (
 )
 from browser_unified_controls import resize_workspace
 from playwright.sync_api import expect
+from verify_http_ssh import interface_status_table
 
 
 class CableSwitch(PowerMatrixSwitch):
     def __init__(self):
         super().__init__()
         self.readings = {"1": "11m", "2": "12m", "9": "99m"}
+        self.test_reply = "confirm"
+        self.format_unknown = False
+        self.final_pair_ready = Event()
+        self.final_pair_ready.set()
+        self.ap_names["1"] = None
         self.reject_clear = False
         self.tested = []
         self.confirmations = []
         self.confirmed = Event()
         self.release_result = Event()
         self.release_result.set()
+
+    def status_lines(self):
+        return interface_status_table(
+            (port, "Up Down", "Down" if port == "1" else "Up") for port in self.draws
+        )
 
     def _respond(self, channel, command):
         if command == "clear cable-diagnostics":
@@ -44,6 +55,16 @@ class CableSwitch(PowerMatrixSwitch):
         with self._lock:
             self.commands.append(command)
         if command.startswith("test "):
+            if self.test_reply != "confirm":
+                self.tested.append(port)
+                self.readings[port] = "27m"
+                if self.test_reply == "table":
+                    # This inline result must trigger show, not supply the missing measurement.
+                    output = [f"{port} 1-2 Short 77m", "3-6 OK 77m", "4-5 OK 77m", "7-8 OK 77m"]
+                else:
+                    output = ["Cable diagnostics completed."]
+                channel.sendall("\r\n".join([command, *output, self.prompt]).encode())
+                return False
             channel.sendall(
                 (
                     command + "\r\nThis command will cause a loss of link on all tested ports."
@@ -79,9 +100,15 @@ class CableSwitch(PowerMatrixSwitch):
                 f"{port:<7}1-2    Short       {distance}",
                 "       3-6    OK          8m",
                 "       4-5    Open        0m",
-                "       7-8    OK          8m",
-                self.prompt,
             ]
+            if self.format_unknown:
+                lines = [command, f"{port} 1-2 ???", "9 1-2 OK 399m"]
+            elif self.final_pair_ready.is_set():
+                lines.append("       7-8    OK          8m")
+            else:
+                # CLI output may contain an unrecognized pair and an unrelated port.
+                lines += [f"{port} 7-8 ???", "9 1-2 OK 399m", "  7-8 OK 399m"]
+            lines.append(self.prompt)
             channel.sendall("\r\n".join(lines).encode())
         return False
 
@@ -180,7 +207,8 @@ def exercise(page, url, switch, other, shots, _backup):
     switch.reject_clear = True
     try:
         start()
-        expect(results).to_contain_text("실패", timeout=60000)
+        failure = results.locator('[data-stage="clear"][data-status="failed"]')
+        expect(failure).to_contain_text("초기화", timeout=60000)
         expect(results.locator("table")).to_have_count(0)
         assert switch.readings["1"] == "17m"
         assert "clear cable-diagnostics" in commands(before)
@@ -195,6 +223,10 @@ def exercise(page, url, switch, other, shots, _backup):
     matrix = page.frame_locator("#matrixViewer")
     tiles = matrix.locator("#matrix [data-port-key]")
     expect(tiles).to_have_count(2, timeout=90000)
+    expect(tiles.first).to_have_attribute("data-state", "unpowered")
+    tiles.first.click()
+    expect(matrix.locator("#detail")).to_contain_text("Down")
+    tiles.first.click()
     # Tile and list selection share the same cable-diagnostics targets.
     tiles.last.click()
     cable.click()
@@ -241,6 +273,93 @@ def exercise(page, url, switch, other, shots, _backup):
             }"""), (width, link.text_content())
         if shots:
             page.screenshot(path=shots / f"cable-results-{width}.png")
+    resize_workspace(page, 1440, 960)
+
+    # Port 1 is selected, draws 0 W, and its physical link is Down. Both ways of
+    # acknowledging a test without a Y/N exchange must obtain fresh data from show.
+    if touch:
+        resize_workspace(page, 390, 844)
+    for test_reply in ("table", "completion"):
+        switch.test_reply = test_reply
+        switch.final_pair_ready.clear()
+        before = len(switch.commands)
+        confirmations = len(switch.confirmations)
+        try:
+            with page.expect_response(
+                lambda response: (
+                    response.request.method == "POST"
+                    and response.url.endswith("/api/jobs")
+                    and response.request.post_data_json.get("action") == "cable.test"
+                )
+            ) as created:
+                start()
+            job_url = created.value.url + "/" + created.value.json()["id"]
+            card = results.locator(".cable-reading")
+            expect(card).to_contain_text("3/4페어 확인", timeout=30000)
+            expect(test).to_be_disabled()
+            rows = card.locator("tbody tr")
+            expect(rows).to_have_count(4)
+            expect(rows.filter(has_text="4-5")).to_contain_text(re.compile(r"0\s*m"))
+            expect(rows.filter(has_text="4-5")).to_contain_text("Open")
+            expect(rows.filter(has_text="7-8")).to_contain_text("값 미수신")
+            expect(card).to_contain_text("27m")
+            expect(card).not_to_contain_text(re.compile(r"(17|77)\s*m"))
+            if test_reply == "table":
+                switch.final_pair_ready.set()
+                expect(card).to_contain_text("측정 완료", timeout=30000)
+                expect(rows.filter(has_text="7-8")).to_contain_text("8m")
+                expect(card.locator("summary")).to_have_count(0)
+            else:
+                # Let this run reach its real read deadline with three usable pairs.
+                expect(test).to_be_enabled(timeout=60000)
+                expect(card).to_contain_text("3/4페어 확인")
+                expect(rows.filter(has_text="7-8")).to_contain_text("값 미수신")
+                disclosure = card.locator("details")
+                expect(disclosure).not_to_have_attribute("open", "")
+                click(disclosure.get_by_text("이번 응답 보기", exact=True))
+                expect(disclosure).to_contain_text("7-8")
+                expect(disclosure).not_to_contain_text("399m")
+                # Another authorized viewer can read the partial measurements, but the
+                # initiating screen alone receives the diagnostic text.
+                shared_job = page.context.request.get(job_url)
+                assert shared_job.ok
+                peer_row = shared_job.json()["result"]["rows"][0]
+                assert len(peer_row["pairs"]) == 3
+                assert "responseExcerpt" not in shared_job.text()
+                if touch:
+                    resize_workspace(page, 320, 568)
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                if shots:
+                    card.screenshot(path=shots / f"cable-partial-{page.viewport_size['width']}.png")
+            expect(test).to_be_enabled()
+            sent = commands(before)
+            assert sent[:4] == sequence(1)[:4], sent
+            reads = sent[4:]
+            assert 1 < len(reads) <= 16 and all(
+                cmd == "show cable-diagnostics 1" for cmd in reads
+            ), sent
+            assert len(switch.confirmations) == confirmations
+            assert "y" not in switch.commands[before:]
+        finally:
+            switch.final_pair_ready.set()
+            switch.test_reply = "confirm"
+
+    before = len(switch.commands)
+    switch.test_reply = "completion"
+    switch.format_unknown = True
+    try:
+        start()
+        unreadable = results.locator('[data-stage="show"][data-status="failed"]')
+        expect(unreadable).to_contain_text("형식", timeout=30000)
+        click(unreadable.get_by_text("이번 응답 보기", exact=True))
+        expect(unreadable.locator("pre")).to_contain_text("1-2 ???")
+        expect(unreadable.locator("pre")).not_to_contain_text("399m")
+        expect(unreadable).not_to_contain_text("27m")
+        assert commands(before) == sequence(1)
+    finally:
+        switch.format_unknown = False
+        switch.test_reply = "confirm"
+
     resize_workspace(page, 1440, 960)
 
     # Changing just the SSH endpoint in the editor must override old selected ports,

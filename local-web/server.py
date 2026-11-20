@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.19.1"
+VERSION = "1.20.0"
 STATIC = {
     "/": "index.html",
     "/matrix": "matrix.html",
@@ -206,7 +206,13 @@ class Handler(BaseHTTPRequestHandler):
             elif re.fullmatch("/api/jobs/" + KEY, path):
                 raw_cursor = parse_qs(urlsplit(self.path).query).get("after", ["0"])[0]
                 after = int(raw_cursor) if re.fullmatch(r"[0-9]{1,9}", raw_cursor) else 0
-                self._json(app.jobs.get(path.rsplit("/", 1)[1], after))
+                self._json(
+                    app.jobs.get(
+                        path.rsplit("/", 1)[1],
+                        after,
+                        response_key=self.headers.get("X-Cable-Response-Key"),
+                    )
+                )
             elif re.fullmatch("/download/" + KEY, path):
                 self._file(app.jobs.download(path.rsplit("/", 1)[1]), download=True)
             else:
