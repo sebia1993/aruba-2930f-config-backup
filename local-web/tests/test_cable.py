@@ -405,6 +405,51 @@ class CableTests(unittest.TestCase):
                 if expected == "partial":
                     self.assertIn("완료 확인", row["message"])
 
+    def test_pending_invalid_pairs_withdraw_prior_measurements_until_valid_again(self):
+        first = parse_result("1 1-2 OK 99m\n 3-6 OK 7m", "1")
+        missing = parse_result("1 3-6 OK 7m\n 4-5 OK 8m\n 7-8 OK 4m", "1")
+        restored = parse_result("1 1-2 Open 0m", "1")
+        for bad, extra, expected in [
+            ("1 1-2 ???", [], "partial"),
+            ("1 1-2 OK 2m\n 1-2 Open 9m\n 3-6 ???", [restored], "measured"),
+        ]:
+            with self.subTest(bad=bad):
+                session = Mock()
+                session.test_cable.return_value = "Test completed."
+                invalid = parse_result("Test pending\n" + bad, "1")
+                expected_pairs = set(invalid["unresolved"])
+                self.assertIn("1-2", expected_pairs)
+                session.read_cable.side_effect = [first, invalid, missing] + (
+                    extra or [missing] * 13
+                )
+                cancel = Mock(spec=Event)
+                cancel.wait.return_value = cancel.is_set.return_value = False
+                progress = Mock()
+                (row,) = diagnose_ports(
+                    _groups({"targets": "127.0.0.1 1"}),
+                    lambda _, session=session: nullcontext(session),
+                    cancel,
+                    progress,
+                )["rows"]
+                updates = [
+                    c.kwargs["cable_row"]
+                    for c in progress.call_args_list
+                    if c.kwargs.get("cable_row", {}).get("status") == "partial"
+                ]
+                withdrawn = updates[1]
+                self.assertEqual(
+                    {v["pair"] for v in withdrawn["pairs"]},
+                    {"1-2", "3-6"} - expected_pairs,
+                )
+                self.assertEqual([v["pair"] for v in updates[2]["pairs"]], ["3-6", "4-5", "7-8"])
+                self.assertEqual(row["status"], expected)
+                self.assertNotIn("99m", [v["distance"] for v in row["pairs"]])
+                if extra:
+                    self.assertEqual(
+                        row["pairs"][0], {"pair": "1-2", "status": "Open", "distance": "0m"}
+                    )
+                session.test_cable.assert_called_once()
+
     def test_terminal_malformed_read_invalidates_previous_measurement_for_same_pair(self):
         session = Mock()
         session.test_cable.return_value = "Test completed."

@@ -116,14 +116,15 @@ def parse_result(text, interface):
         return _reading("failed", "스위치가 이 포트의 케이블 진단에 실패했습니다.")
     if _NO_RESULT.search(notice):
         return _reading("empty", "이번 검사 결과가 아직 없습니다.")
-    if pending and (not pairs or len(pairs) == len(_PAIR_IDS)):
+    if pending and (not seen or len(pairs) == len(_PAIR_IDS)):
         # A full table explicitly marked unfinished cannot establish a completed readback.
         return _reading("pending", "스위치에서 케이블 테스트를 진행 중입니다.")
     if not pending and re.search(r"^\s*(?:%\s*)?warning\b", notice, re.I | re.M):
         return _reading("failed", "스위치 경고로 이번 측정값을 확인할 수 없습니다.")
     if len(pairs) == len(_PAIR_IDS):
         return _reading("complete", "네 페어의 측정값을 확인했습니다.", pairs.values())
-    if pairs:
+    if pairs or (pending and uncertain):
+        # Unusable rows can withdraw a pair reported by an earlier poll of this test.
         result = _reading("partial", "일부 페어의 측정값을 확인하지 못했습니다.", pairs.values())
     elif excerpt:
         result = _reading("failed", "결과를 수신했지만 이 포트의 출력 형식을 해석하지 못했습니다.")
@@ -242,6 +243,7 @@ class CableSession(NetmikoSSHSession):
                         inline = parse_result(output, interface)
                         if (
                             inline["status"] in {"unsupported", "pending"}
+                            or inline.get("stillRunning")
                             or inline["pairs"]
                             or _COMPLETE.search(output)
                             or (inline["status"] == "failed" and _TEST_ERROR.search(output))
