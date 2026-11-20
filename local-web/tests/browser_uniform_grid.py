@@ -229,7 +229,9 @@ def exercise(page, url, switch, second, shots, _backup):
         ).to_have_count(0)
         expect(outer.locator(".tile-link")).to_have_text("—")
         if shots:
-            pending.screenshot(path=shots / f"uniform-grid-in-progress-{width}.png")
+            # Progress polling replaces the grid nodes. Capture the stable browser viewport.
+            pending.evaluate("grid => grid.scrollIntoView({block: 'nearest'})")
+            page.screenshot(path=shots / f"uniform-grid-in-progress-{width}.png")
         print(
             f"In progress {width}px: {columns} columns, "
             f"{outer_size['width']:.2f} x {outer_size['height']:.2f}px"
