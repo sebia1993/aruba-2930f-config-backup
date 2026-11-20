@@ -174,6 +174,7 @@ def select_measured_port(page, matrix_view, changed, available, untouched_switch
     changed_ports = matrix_view.locator("#tbody tr[data-port-key]")
     expect(changed_ports).to_have_count(1)
     expect(changed_ports).to_have_attribute("data-port-key", changed + "/1")
+    changed_ports.get_by_role("checkbox").check()
     changed_ports.locator(".row-select").click()
     expect(matrix_view.locator("#portComparison")).to_contain_text("0 W")
     expect(matrix_view.locator("#portComparison")).to_contain_text("9.7 W")
