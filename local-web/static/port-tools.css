@@ -14,7 +14,7 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
 .port-query-input {display:grid;gap:3px}
 .port-query-input label {font-weight:550}
 .port-query-input textarea {width:100%;min-height:36px;max-height:9rem;min-width:0}
-.query-field-tools,.query-commands,.query-summary,.port-workspace-bar {display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0}
+.query-field-tools,.query-commands,.query-summary {display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0}
 .query-field-tools {justify-content:space-between}
 .query-commands {flex:1 1 auto;justify-content:flex-end}
 .query-commands button {white-space:nowrap}
@@ -76,7 +76,7 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   #monitorInventory {overflow:auto}
 }
 @media(max-width:800px), (pointer:coarse) {
-  .port-workspace-bar button,.query-commands button,#manageTargets,#controlHeading,.port-action-strip button,#portPresentation button,#matrixSelectAll {min-height:44px}
+  .query-commands button,#manageTargets,#controlHeading,.port-action-strip button,#portPresentation button,#matrixSelectAll {min-height:44px}
   .matrix-control-head {min-height:44px}
   #controlHeading {padding:10px 7px}
 }
@@ -85,7 +85,6 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   #queryFields {flex-basis:100%}
   .matrix-control-head {padding-inline:8px}
   .matrix-control-head h2 {flex-basis:100%;padding-inline-end:5.6rem}
-  .matrix-control-head:has(#portPresentation[hidden]) .port-workspace-bar:has(#portChanges:disabled) {display:none}
   #controlPanel .panelbody {display:grid;grid-template-columns:minmax(0,1fr)}
   #batchControls {display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
   .port-action-strip {gap:4px 6px}
@@ -99,8 +98,8 @@ main:has([data-page=ports]:not([hidden])) .status.query-complete button {display
   .matrix-first .matrix-control-head h2 {padding-right:9.5rem;line-height:1.15;min-height:36px;display:flex;align-items:center}
   #queryForm {padding:3px 8px;gap:3px}
   .query-summary {flex-basis:100%;gap:2px 8px}
-  .query-commands,.port-workspace-bar {justify-content:flex-start;gap:3px}
-  .port-workspace-bar button,.query-commands button,#portPresentation button {min-width:44px;padding-inline:5px}
+  .query-commands {justify-content:flex-start;gap:3px}
+  .query-commands button,#portPresentation button {min-width:44px;padding-inline:5px}
   .query-commands {column-gap:2px}
   .query-commands button {padding-inline:4px}
   #monitorInterval {width:44px}

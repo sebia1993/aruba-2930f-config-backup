@@ -228,7 +228,5 @@ dialog::backdrop { background: #030c17bc; }
 .key-list input { width:auto }
 .key-list code { overflow-wrap:anywhere }
 
-.port-workspace-bar { margin-bottom: 12px; }
-.port-workspace-bar button[aria-pressed="true"] { border-color: var(--teal); color: var(--teal); }
 .control-target { margin: 0; color: var(--teal); overflow-wrap: anywhere; }
 #portMonitor:not(.has-data) .viewer { height: var(--empty-view-height, 100px); min-height: 0; }

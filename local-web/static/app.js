@@ -298,8 +298,6 @@ function updatePortActions() {
   $('matrixView').setAttribute('aria-pressed',String(!list));
   $('listView').setAttribute('aria-pressed',String(list));
   $('matrixWorkspaceTitle').textContent=list ? '포트별 조회 결과' : '포트 상태 매트릭스';
-  $('portChanges').disabled=!source?.hasData || inventory || source.failureOnly;
-  $('portChanges').setAttribute('aria-pressed',String(!!source?.changesOnly));
   $('controlMode').disabled=inspected;
   $('singleIP').readOnly=$('singlePort').readOnly=inspected;
   window.portTools?.showInventory(inventory);
@@ -307,12 +305,6 @@ function updatePortActions() {
 }
 $('matrixView').onclick=()=>monitor()?.setPresentation('matrix');
 $('listView').onclick=()=>monitor()?.setPresentation('list');
-$('portChanges').onclick=()=>{
-  const viewer=monitor();
-  if (!viewer || $('portChanges').disabled) return;
-  viewer.setChangesOnly(!viewer.source().changesOnly);
-  updatePortActions();
-};
 function setQueryExpanded(expanded) {
   $('queryFields').hidden=!expanded;
   const edit=$('editQueryTargets');
