@@ -132,7 +132,7 @@
     ['monitorStatus','모니터링 상태','대상 수, 마지막 성공과 다음 조회 시각을 표시합니다.'],
     ['manageTargets','대상 목록 관리','조회 대상을 편집하거나 프로필로 불러오고 저장합니다.'],
     ['controlMode','제어 방식','단일 또는 일괄 제어를 선택합니다.'],['selectionSummary','선택한 포트 수','선택한 전체 포트 수와 현재 필터 또는 페이지에서 보이지 않는 선택 수를 표시합니다.'],
-    ['quickOn','PoE ON','선택한 포트의 전원을 켭니다.'],['quickOff','PoE OFF','선택한 포트의 전원을 끕니다.'],
+    ['quickOff',operationNames.poe_off,'선택한 포트의 PoE 전력 공급을 차단합니다.'],['quickOn',operationNames.poe_on,'선택한 포트의 PoE 전력을 공급합니다.'],
     ['operation','제어 동작','PoE 또는 인터페이스 상태 변경을 선택합니다.'],['selectionScope','선택 범위','대상 선택 범위를 정합니다.'],
     ['preview','명령 검토','명령 실행 전 대상과 현재 상태를 검토합니다.'],['controlResult','명령 실행 결과','검증된 포트 변경 결과를 표시합니다.']
   ]);

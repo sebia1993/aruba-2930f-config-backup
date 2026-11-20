@@ -5,13 +5,6 @@
   const inspection = elem('div',undefined,'output');
   inspection.hidden = true;
   single.after(inspection);
-  function liveButton(id,title,onClick) {
-    const node = button(title,onClick);
-    node.setAttribute('aria-label',title+' 즉시 실행');
-    node.id = id;
-    node.dataset.job = '';
-    return node;
-  }
   function hideInspection() { inspection.hidden = true; inspection.replaceChildren(); }
   for (const id of ['singleIP','singlePort','controlMode']) $(id).addEventListener('input',hideInspection);
   $('inspectSingle').onclick=()=>{
@@ -61,7 +54,7 @@
     if (!restored) receiveControlObservations(result);
     if (!result.operation) return;
     const state = result.operation==='poe_off' ? 'OFF' : 'ON';
-    const title = 'PoE ' + state + ' 즉시 실행';
+    const title = operationNames[result.operation] + ' 즉시 실행';
     const skipped=result.skipped || [], blocked=result.blocked || [];
     quickResult.hidden=false;
     quickResult.replaceChildren(elem('b',title + (cancelled ? ' 취소 결과' : ' 결과')),
@@ -90,8 +83,8 @@
     const requestId = crypto.randomUUID().replaceAll('-','');
     runSsh('control.quick-execute',{operation,targets,requestId},(result,cancelled)=>showQuickResult(result,cancelled));
   }
-  $('quickActions').append(liveButton('quickOff','PoE OFF',()=>requestQuick('poe_off')),
-               liveButton('quickOn','PoE ON',()=>requestQuick('poe_on')));
+  $('quickOff').onclick=()=>requestQuick('poe_off');
+  $('quickOn').onclick=()=>requestQuick('poe_on');
   const progress = elem('details'); progress.id = 'controlProgress'; progress.hidden = true;
   progress.append(elem('summary','포트별 실행 단계'));
   const stageTable = elem('div'); progress.append(stageTable);

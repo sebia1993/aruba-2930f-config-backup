@@ -2,7 +2,7 @@
 
 const $ = id => document.getElementById(id);
 const all = (selector, parent = document) => [...parent.querySelectorAll(selector)];
-const operationNames = {poe_on: 'PoE 전원 ON', poe_off: 'PoE 전원 OFF', enable: '포트 활성화 (Enable)', disable: '포트 비활성화 (Disable)'};
+const operationNames = {poe_on: 'Power ON', poe_off: 'Power OFF', enable: '포트 활성화 (Enable)', disable: '포트 비활성화 (Disable)'};
 const jobNames = {
   'session.open': '접속 계정 적용', 'session.close': '세션 해제', 'hostkey.inspect': '호스트 키 조회',
   'hostkey.approve': '호스트 키 승인', 'hostkey.list':'등록된 키 조회', 'hostkey.forget':'등록된 키 삭제', 'ports.query': '포트 조회', 'ports.refresh':'선택 범위 재조회',
