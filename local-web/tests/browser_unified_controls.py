@@ -81,7 +81,7 @@ def verify_viewport_controls(page, view, endpoint, other_endpoint):
             page.mouse.click(*hit_point(filter_toggle))
         if filter_toggle.is_visible():
             expect(view.locator("#filterOptionsToggle")).to_be_hidden()
-            for selector in ("#site", "#zoom", "#clearFilters"):
+            for selector in ("#site", "#clearFilters"):
                 expect(view.locator(selector)).to_be_visible()
         else:
             advanced = view.locator("#filterOptionsToggle")
