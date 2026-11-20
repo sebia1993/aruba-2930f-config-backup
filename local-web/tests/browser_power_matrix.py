@@ -101,6 +101,47 @@ def refresh_without_result(page, port, final_state, selected_tile):
         page.unroute(poll)
 
 
+def check_block_size(page, frame, mobile):
+    slider = frame.get_by_role("slider", name="블록 크기", exact=True)
+    expect(slider).to_have_count(1)
+    expect(frame.locator("#overviewFilters input[type=range]")).to_have_count(0)
+    expect(frame.locator("#shortFilterToggle")).to_have_attribute("aria-expanded", "false")
+    expect(frame.locator("#filterOptionsToggle")).to_have_attribute("aria-expanded", "false")
+    x, y = hit_point(slider)
+    initial = int(slider.input_value())
+    tile = frame.locator('#matrix [data-port-key$="/4"]')
+    initial_height = tile.bounding_box()["height"]
+
+    if mobile:
+        width = slider.bounding_box()["width"]
+        page.touchscreen.tap(x + width * 0.4, y)
+    else:
+        slider.focus()
+        slider.press("End")
+    expect(slider).not_to_have_value(str(initial))
+    size = slider.input_value()
+    expect(frame.locator("#zoomValue")).to_have_text(size + "px")
+    assert tile.bounding_box()["height"] > initial_height
+    if mobile:
+        assert initial_height >= 44
+    page.locator("#listView").click()
+    expect(frame.locator("#zoom")).to_be_hidden()
+    page.locator("#matrixView").click()
+    expect(slider).to_have_value(size)
+    expect(frame.locator('#matrix [data-state="unpowered"]')).to_have_attribute(
+        "aria-pressed", "true"
+    )
+    expect(power_filter(frame, "unpowered")).to_have_attribute("aria-pressed", "true")
+    expect(power_filter(frame, "limited")).to_have_attribute("aria-pressed", "true")
+    expect(page.locator("#selectedCount")).to_have_text("선택 2개")
+    expect_hidden_selection(page, 1)
+
+    slider.press("Home")
+    for _ in range(initial - int(slider.get_attribute("min"))):
+        slider.press("ArrowRight")
+    expect(slider).to_have_value(str(initial))
+
+
 def check_power_filters(page, frame, shots):
     tiles = frame.locator("#matrix [data-port-key]")
     buttons = {
@@ -151,6 +192,7 @@ def check_power_filters(page, frame, shots):
             expect_hidden_selection(page, 1)
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             assert frame.locator("html").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+            check_block_size(page, frame, mobile)
             hit_point(tiles.first)
             for button in buttons.values():
                 hit_point(button)
