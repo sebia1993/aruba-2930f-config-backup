@@ -444,6 +444,39 @@ def test_unsupported_model_is_blocked_before_running_config() -> None:
     assert "show running-config" not in factory.sessions[0].calls
 
 
+def test_jl320a_stack_backup_preserves_member_and_module_configuration() -> None:
+    config = (
+        "Running configuration:\n; hpStack_WC Configuration Editor; Created on release #WC.16.10.0025\n"
+        'stacking\n  member 1 type "JL320A"\n  member 1 flexible-module A type JL081A\n  exit\n'
+        'hostname "switch"\ninterface 1/1\n   exit\n'
+    )
+    factory = ScriptedFactory(
+        lambda _index, target: ScriptedSession(
+            target,
+            responses={
+                "show version": "Image stamp:\nWC.16.10.0025\nBoot ROM Version: WC.17.02.0006",
+                "show modules": "Stack ID : 01000000-00000001\n1 STK Aruba JL325A 2p Stacking Module Up",
+                "show stacking": (
+                    "Stack ID : 01000000-00000001\nMbr\nID Mac Address Model Pri Status\n"
+                    "*1 020000-000001 Aruba JL320A 2930M-24G-PoE+ Switch 128 Commander"
+                ),
+                "show running-config": config,
+            },
+        )
+    )
+    result = ArubaCollector(factory).collect_one(TARGET, CREDENTIALS)
+    assert result.status is DeviceStatus.SUCCESS
+    assert result.software_version == "WC.16.10.0025"
+    assert result.sku == "JL320A"
+    assert result.config_text == config.replace("\n", "\r\n")
+    assert [command for command in factory.sessions[0].calls if command.startswith("show ")] == [
+        "show version",
+        "show modules",
+        "show stacking",
+        "show running-config",
+    ]
+
+
 def test_pre_cancelled_batch_opens_no_sessions_and_preserves_target_order() -> None:
     targets = [DeviceTarget("192.0.2.3"), DeviceTarget("192.0.2.1")]
     cancelled = threading.Event()

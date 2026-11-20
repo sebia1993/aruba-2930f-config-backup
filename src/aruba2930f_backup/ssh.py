@@ -60,7 +60,9 @@ class CancellationSignal(Protocol):
 
 
 ConnectionBuilder = Callable[[DeviceTarget, Credentials, CollectionOptions, HostKeyStore], Any]
-_ALLOWED_SHOW_COMMANDS = frozenset({"show version", "show modules", "show running-config"})
+_ALLOWED_SHOW_COMMANDS = frozenset(
+    {"show version", "show modules", "show stacking", "show running-config"}
+)
 
 
 class NetmikoSessionFactory:

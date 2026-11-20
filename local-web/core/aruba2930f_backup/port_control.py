@@ -33,7 +33,7 @@ from .models import (
     HostKeyTrustState,
 )
 from .storage import default_output_directory
-from .validation import ARUBA_2930F_MODELS, validate_device_identity
+from .validation import SUPPORTED_MODELS, identify_connected_device
 
 _PORT_RE = re.compile(r"[1-9][0-9]*(?:/[1-9][0-9]*)?")
 
@@ -619,7 +619,9 @@ class PortControlService:
         version = session.send_show("show version")
         modules = session.send_show("show modules")
         resolved = resolve_switch_hostname(session)
-        identity = validate_device_identity(version, modules, hostname=resolved.hostname)
+        identity = identify_connected_device(
+            version, modules, lambda: session.send_show("show stacking"), hostname=resolved.hostname
+        )
         if admin_only:
             # Administrative disable addresses the port directly. An unavailable
             # status display is not evidence that the selected port is enabled or disabled.
@@ -670,7 +672,7 @@ class PortControlService:
         identity: DeviceIdentity,
         port: InterfaceState,
     ) -> PoEState:
-        known_model = ARUBA_2930F_MODELS.get(identity.sku or "")
+        known_model = SUPPORTED_MODELS.get(identity.sku or "")
         if (
             known_model is not None and "PoE" not in known_model
         ) or "SFP" in port.port_type.upper():

@@ -30,7 +30,7 @@ from .models import (
     HostKeyTrustState,
 )
 from .storage import default_output_directory
-from .validation import ARUBA_2930F_MODELS, hostname_from_prompt, validate_device_identity
+from .validation import SUPPORTED_MODELS, hostname_from_prompt, identify_connected_device
 
 _PORT_RE = re.compile(r"[1-9][0-9]*(?:/[1-9][0-9]*)?")
 
@@ -467,9 +467,10 @@ class PortControlService:
         interface: str,
         fingerprint: str,
     ) -> PortSnapshot:
-        identity = validate_device_identity(
+        identity = identify_connected_device(
             session.send_show("show version"),
             session.send_show("show modules"),
+            lambda: session.send_show("show stacking"),
             hostname=hostname_from_prompt(session.get_prompt()),
         )
         port = parse_interface_status(session.read_interfaces(), interface)
@@ -495,7 +496,7 @@ class PortControlService:
         identity: DeviceIdentity,
         port: InterfaceState,
     ) -> PoEState:
-        known_model = ARUBA_2930F_MODELS.get(identity.sku or "")
+        known_model = SUPPORTED_MODELS.get(identity.sku or "")
         if (
             known_model is not None and "PoE" not in known_model
         ) or "SFP" in port.port_type.upper():

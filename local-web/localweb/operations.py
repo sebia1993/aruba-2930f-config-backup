@@ -56,7 +56,7 @@ from aruba2930f_backup.storage import (
     device_config_path,
     write_config_atomic,
 )
-from aruba2930f_backup.validation import validate_device_identity
+from aruba2930f_backup.validation import identify_connected_device
 
 from .backup_destination import copy_backup_files, selected_directory
 from .backup_history import backup_history
@@ -989,7 +989,9 @@ class Operations:
                 if exc.code is not ErrorCode.COMMAND_REJECTED:
                     raise
                 modules = ""
-            validate_device_identity(version, modules)
+            identify_connected_device(
+                version, modules, lambda: session.send_show("show stacking", cancel_event=cancel)
+            )
             _abort_if_cancelled(cancel)
             yield session
         finally:

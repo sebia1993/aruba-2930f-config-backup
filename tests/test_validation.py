@@ -87,6 +87,141 @@ def test_show_version_exact_evidence_does_not_require_modules() -> None:
 
 
 @pytest.mark.parametrize(
+    "modules",
+    [
+        "Chassis: 2930M-24G-PoE+ JL320A    Serial Number: 12345\n"
+        "A Aruba 3810M/2930M 4-port SFP+ Module JL083A",
+        "Member 1\nChassis: Aruba JL320A 2930M-24G-PoE+ Switch\n"
+        "Member 2\nChassis: Aruba JL320A 2930M-24G-PoE+ Switch",
+    ],
+)
+def test_jl320a_chassis_and_running_image_are_identified(modules: str) -> None:
+    identity = validate_device_identity(
+        "Boot ROM Version: WC.17.02.0006\nImage stamp:\nWC.16.10.0025\nBoot Image: Primary",
+        modules,
+    )
+
+    assert identity.sku == "JL320A"
+    assert identity.model == "Aruba 2930M 24G PoE+ 1-slot"
+    assert identity.software_version == "WC.16.10.0025"
+
+
+@pytest.mark.parametrize(
+    "boot", ["Boot ROM Version: WC.17.02.0006", "Boot ROM Version:\nWC.17.02.0006"]
+)
+def test_jl320a_does_not_present_boot_rom_as_running_software(boot: str) -> None:
+    identity = validate_device_identity(f"Aruba JL320A 2930M-24G-PoE+ Switch\n{boot}")
+    assert identity.sku == "JL320A"
+    assert identity.software_version is None
+
+
+@pytest.mark.parametrize(
+    ("version", "modules"),
+    [
+        ("Boot ROM Version: WC.17.02.0006", ""),
+        ("WC.16.10.0025", "Chassis: Aruba 2930M-24G-PoE+"),
+        ("WC.16.10.0025", "A Aruba 2930M Module JL320A"),
+        ("WC.16.10.0025", "Aruba 2930M Switch Module JL320A"),
+        ("WC.16.10.0025", "Chassis: 2930M-48G JL321A\nA Aruba 2930M Module JL320A"),
+        ("Aruba 2930F Switch", "Chassis: 2930M-24G-PoE+ JL320A"),
+        ("Aruba JL320A 2930M Switch", "Chassis: Aruba 2930F JL255A"),
+        ("WC.16.10.0025", "Chassis: 2930F JL320A"),
+        ("WC.16.10.0025", "Chassis: 2930M-48G-PoE+ JL322A"),
+        ("WC.16.10.0025", "Chassis: 2930M-48G-PoE+ JL320A"),
+        ("WC.16.10.0025", "Chassis: 2930M-24G Switch JL320A"),
+        ("Aruba JL320A 2930M Switch", "Chassis: Unknown"),
+        ("WC.16.10.0025", "Chassis: 2930M-24G-PoE+ JL320A\nChassis: 2930M-48G JL321A"),
+        ("WC.16.10.0025", "Chassis: 2930M-24G-PoE+ JL320A\nChassis: 2930M-48G"),
+        ("WC.16.10.0025", "Chassis: 2930M-24G-PoE+ JL320A\nChassis: 2930M R0M67A"),
+    ],
+)
+def test_jl320a_requires_consistent_chassis_evidence(version: str, modules: str) -> None:
+    with pytest.raises(CollectionFailure) as captured:
+        validate_device_identity(version, modules)
+    assert captured.value.code is ErrorCode.MODEL_UNSUPPORTED
+
+
+_STACK_MODULES = (
+    "Status and Counters - Module Information\nStack ID : 01000000-00000001\n"
+    "Member\nID Slot Module Description Serial Number Status\n"
+    "1 STK Aruba JL325A 2p Stacking Module Up\n2 A Aruba JL081A 4p 10GbE XGT Module Up"
+)
+_STACK_HEADER = (
+    "Stack ID : 01000000-00000001\nStack Status : Active\nMbr\n"
+    "ID Mac Address Model Pri Status\n--- ------------- ----------------------------------- --- ----------\n"
+)
+_STACK_FIRST = "*1 020000-000001 Aruba JL320A 2930M-24G-PoE+ Switch 128 Commander\n"
+_STACK_SECOND = "2 020000-000002 Aruba JL320A 2930M-24G-PoE+ Switch 128 Standby"
+_UNFORMED_ID = "NO ID - will merge upon connectivity"
+_UNFORMED_MODULES = f"Stack ID : {_UNFORMED_ID}\n1 STK Aruba JL325A 2p Stacking Module Up"
+_UNFORMED_HEADER = _STACK_HEADER.replace("01000000-00000001", _UNFORMED_ID).replace(
+    "Active", "No Stack Formed"
+)
+
+
+def test_jl320a_unformed_stack_with_one_commander() -> None:
+    identity = validate_device_identity(
+        "Image stamp:\nWC.16.10.0025",
+        _UNFORMED_MODULES,
+        stacking_output=_UNFORMED_HEADER + _STACK_FIRST,
+    )
+    assert identity.sku == "JL320A"
+
+
+@pytest.mark.parametrize(
+    "inventory",
+    [
+        _UNFORMED_HEADER,
+        _UNFORMED_HEADER + _STACK_FIRST + _STACK_SECOND,
+        _UNFORMED_HEADER + _STACK_FIRST.replace("Commander", "Standby"),
+        _UNFORMED_HEADER.replace("No Stack Formed", "Active") + _STACK_FIRST,
+        _UNFORMED_HEADER.replace("Stack Status : No Stack Formed", "") + _STACK_FIRST,
+        _UNFORMED_HEADER.replace(_UNFORMED_ID, "01000000-00000001") + _STACK_FIRST,
+        _UNFORMED_HEADER + _STACK_FIRST.replace("JL320A", "JL321A"),
+    ],
+)
+def test_unformed_stack_rejects_inconsistent_evidence(inventory: str) -> None:
+    with pytest.raises(CollectionFailure) as captured:
+        validate_device_identity("WC.16.10.0025", _UNFORMED_MODULES, stacking_output=inventory)
+    assert captured.value.code is ErrorCode.MODEL_UNSUPPORTED
+
+
+def test_jl320a_stack_identity_uses_all_members_instead_of_accessory_skus() -> None:
+    identity = validate_device_identity(
+        "Image stamp:\nWC.16.10.0025",
+        _STACK_MODULES,
+        stacking_output=_STACK_HEADER + _STACK_FIRST + _STACK_SECOND,
+    )
+    assert identity.sku == "JL320A"
+
+
+@pytest.mark.parametrize(
+    "inventory",
+    [
+        "",
+        "Stacking is disabled.",
+        _STACK_HEADER,
+        _STACK_HEADER + _STACK_FIRST,
+        _STACK_HEADER + _STACK_FIRST + _STACK_SECOND.replace("JL320A", "JL321A"),
+        _STACK_HEADER + _STACK_FIRST + _STACK_SECOND.replace("JL320A", "R0M68A"),
+        _STACK_HEADER + _STACK_FIRST + _STACK_SECOND.replace("JL320A", "Unknown"),
+        _STACK_HEADER + _STACK_FIRST + "2 020000-000002 128 Missing",
+        _STACK_HEADER + _STACK_FIRST + _STACK_SECOND.replace("Standby", "Not Joined"),
+        _STACK_HEADER + _STACK_FIRST + _STACK_SECOND.replace("2 020000", "1 020000"),
+        _STACK_HEADER.replace("00000001", "00000099") + _STACK_FIRST + _STACK_SECOND,
+    ],
+)
+def test_partial_or_conflicting_stack_never_inherits_one_members_model(inventory: str) -> None:
+    with pytest.raises(CollectionFailure) as captured:
+        validate_device_identity(
+            "Aruba JL320A 2930M-24G-PoE+ Switch\nImage stamp:\nWC.16.10.0025",
+            _STACK_MODULES,
+            stacking_output=inventory,
+        )
+    assert captured.value.code is ErrorCode.MODEL_UNSUPPORTED
+
+
+@pytest.mark.parametrize(
     ("version", "modules", "expected_model"),
     [
         ("Aruba 2930F Switch", "", "Aruba 2930F"),
@@ -125,6 +260,16 @@ def test_module_and_transceiver_part_numbers_are_not_chassis_conflicts() -> None
     )
 
     assert identity.sku == "JL255A"
+
+
+def test_2930f_vsf_members_keep_their_chassis_identity() -> None:
+    identity = validate_device_identity(
+        "Image stamp:\nWC.16.10.0025",
+        "VSF Member 1: Aruba JL255A 2930F-24G-PoE+-4SFP+ Switch\n"
+        "*2 020000-000002 Aruba JL256A 2930F-48G-PoE+-4SFP+ Switch 128 Commander",
+    )
+    assert identity.sku == "JL255A, JL256A"
+    assert identity.model == "Aruba 2930F VSF"
 
 
 @pytest.mark.parametrize(

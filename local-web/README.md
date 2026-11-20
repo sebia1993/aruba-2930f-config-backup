@@ -1,4 +1,8 @@
-# Aruba 2930F 로컬 웹 1.25.0
+# Aruba 2930F 로컬 웹 1.26.0
+
+지원 장비는 Aruba 2930F와 **Aruba 2930M-24G-PoE+ (JL320A)**입니다. 장비에 SSH로 로그인하면 로컬 웹이 스위치 모델을 확인합니다. HPE에서 2930M의 `WC.17.02.0006`은 Boot ROM 버전으로 안내합니다. 실행 중인 ArubaOS-Switch 소프트웨어 버전은 장비의 `show version` 출력에서 별도로 확인할 수 있습니다. [HPE 2930M/F 버전 안내](https://arubanetworking.hpe.com/techdocs/AOS-Switch-RN/Content/16.10RN/WC/Upgrade%20information.htm)
+
+JL320A의 기본 포트는 독립형에서 `1`처럼 번호로 입력합니다. 스택에서는 로컬 웹이 모든 멤버의 모델을 자동으로 확인합니다. 모든 멤버가 JL320A로 확인되면 `1/1`, `2/1`처럼 멤버 번호와 포트 번호를 함께 입력할 수 있습니다.
 
 ## 실행
 

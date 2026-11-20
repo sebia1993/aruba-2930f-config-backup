@@ -10,6 +10,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 from math import isfinite
 
 from .diagnostics import diagnostic_code_for_result, diagnostic_detail_for_exception
@@ -33,6 +34,7 @@ from .models import (
 from .ssh import NetmikoSessionFactory, SSHSession, SSHSessionFactory
 from .validation import (
     hostname_from_running_config,
+    identify_connected_device,
     normalize_config_text,
     require_valid_prompt,
     validate_device_identity,
@@ -484,7 +486,11 @@ class ArubaCollector:
                 _raise_if_cancelled(cancellation)
 
                 _stage(on_event, target, CollectionStage.VALIDATING_MODEL, attempt)
-                identity = validate_device_identity(version_output, modules_output)
+                identity = identify_connected_device(
+                    version_output,
+                    modules_output,
+                    partial(session.send_show, "show stacking", cancel_event=cancellation),
+                )
 
                 failure_phase = DiagnosticPhase.CONFIG_COLLECTION
                 _stage(on_event, target, CollectionStage.READING_CONFIG, attempt)
