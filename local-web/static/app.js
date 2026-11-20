@@ -779,7 +779,7 @@ function syncMonitorChecks() {
   if (!ui.liveId || viewer?.source().liveId!==ui.liveId) return;
   const available=window.portTools.availableControlTargets();
   const selected=available.filter(target=>ui.selected.has(controlPortKey(target)));
-  const stale=ui.rows.filter(row=>!freshControlRow(row)).map(targetFromRow);
+  const stale=ui.rows.filter(row=>!freshControlRow(row)).map(row=>({...targetFromRow(row),link:row.link_status}));
   viewer.setControlSelection(ui.liveId,selected,stale,available);
 }
 function renderPorts() {
@@ -941,6 +941,8 @@ function markControlRowsUsed(targets) {
   for (const row of ui.rows) if (used.has(portKey(row))) {
     row.controlUsed=true;
     row.powerObserved=false;
+    row.link_status='';
+    row.link_observed_at='';
   }
   renderPorts();
 }

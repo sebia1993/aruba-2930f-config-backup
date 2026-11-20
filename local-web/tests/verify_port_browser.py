@@ -128,6 +128,7 @@ def exercise(page, switch):
     expect(page.locator(".matrix-tile")).to_have_count(1)
     expect(page.locator(".matrix-tile")).to_have_attribute("data-state", "unclassified")
     expect(page.locator(".matrix-tile")).to_have_attribute("data-phase", "pending")
+    expect(page.locator(".matrix-tile .tile-link")).to_have_text("—")
     expect(page.locator("#matrixViewer")).to_be_hidden()
     expect(page.locator(".matrix-tile")).to_be_visible()
     page.locator("#matrixSize").select_option("large")

@@ -521,6 +521,9 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(normal).to_have_attribute("aria-pressed", "false")
     expect(page.locator("#selectedCount")).to_have_text("선택 0개")
     failed_row = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[0]}/1"]')
+    # The post-control read can still observe the physical link when the PoE command is denied.
+    failed_tile = matrix_view.locator(f'#matrix [data-port-key="{addresses[0]}/1"]')
+    expect(failed_tile.locator(".tile-link")).to_have_text("↓ Down")
     ready_row = matrix_view.locator(f'#tbody tr[data-port-key="{addresses[1]}/1"]')
     expect(failed_row.get_by_role("checkbox")).to_be_disabled()
     expect(failed_row).not_to_contain_text("8.1 W")

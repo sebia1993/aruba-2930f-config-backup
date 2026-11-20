@@ -86,6 +86,7 @@ def refresh_without_result(page, port, final_state, selected_tile):
         tile = page.locator(f'.matrix-tile[data-key$="|{port}"]')
         expect(tile).to_have_attribute("data-phase", "stale")
         expect(tile.locator(".tile-ap-name")).to_have_count(0)
+        expect(tile.locator(".tile-link")).to_have_text("—")
         expect(tile).to_have_attribute("data-state", "unclassified")
         expect(page.locator("#matrixViewer")).to_be_hidden()
         tile.click()
@@ -244,6 +245,7 @@ def exercise(page, url, switch, _second, shots, _backup):
     expected = ["unpowered", "limited", "normal", "limited", "unclassified"]
     expect(result_tiles).to_have_count(5, timeout=90000)
     assert result_tiles.evaluate_all("tiles => tiles.map(tile => tile.dataset.state)") == expected
+    expect(result_tiles.first.locator(".tile-link")).to_have_text("↑ Up")  # Zero watts, live link.
     for selector, value in (
         ("mUnpowered", "1"),
         ("mLimited", "2"),
@@ -295,6 +297,7 @@ def exercise(page, url, switch, _second, shots, _backup):
         expect(current).to_have_attribute("data-state", "unclassified")
         expect(current.locator(".tile-ap-name")).to_have_count(0)
         expect(tiles.nth(1).locator(".tile-ap-name")).to_have_text("matrix-ap-2")
+        expect(tiles.nth(1).locator(".tile-link")).to_have_text("↑ Up")
         expect(tiles.nth(1)).to_have_attribute("data-state", "limited")
         expect(page.locator("#queryTargets")).not_to_be_editable()
         expect(page.locator("#manageTargets")).to_be_disabled()
@@ -311,6 +314,7 @@ def exercise(page, url, switch, _second, shots, _backup):
     expect(page.locator("#matrixViewer")).to_be_visible()
     expect(page.locator("#matrixGroups")).to_be_hidden()
     expect(result_tiles.nth(2).locator(".tile-ap-name")).to_have_text("renamed-ap")
+    expect(result_tiles.nth(2).locator(".tile-link")).to_have_text("↓ Down")
     expected[2] = "unpowered"
     red, amber = (power_filter(matrix, state) for state in ("unpowered", "limited"))
     red.click()

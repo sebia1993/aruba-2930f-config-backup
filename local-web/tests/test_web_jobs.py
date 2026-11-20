@@ -637,6 +637,9 @@ class JobTests(unittest.TestCase):
         self.assertEqual(applied["state"], "done")
         self.assertEqual(applied["result"]["results"][0]["status"], "verified")
         service.apply.assert_called_once()
+        self.assertEqual(
+            [r["link_status"] for r in self.jobs.workspace()["query"]["rows"]], ["Up", "", "Up"]
+        )
 
     def test_reviewed_poe_refreshes_matrix_without_creating_downloads(self):
         self.initial_query()
