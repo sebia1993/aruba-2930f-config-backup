@@ -26,11 +26,13 @@ class GridSwitch(NeighborSwitch):
         self.neighbors.update({str(port): [] for port in range(15, 20)})
         self.neighbors["7"] = [(LONG_NAME, "Aruba AP-535", "")]
         self.neighbors["8"] = [("i-WW", "ArubaOS", "bridge")]
+        self.read_held = Event()
         self.release_read = Event()
         self.release_read.set()
 
     def _respond(self, channel, command):
-        if command == "show lldp info remote-device 13":
+        if command == "show lldp info remote-device 13" and not self.release_read.is_set():
+            self.read_held.set()
             self.release_read.wait(35)
         return super()._respond(channel, command)
 
@@ -214,6 +216,7 @@ def exercise(page, url, switch, second, shots, _backup):
     try:
         open_port_controls(page)
         page.locator("#refreshPorts").click()
+        assert switch.read_held.wait(15), "Expected the single-port refresh to reach LLDP"
         outer = page.locator('.matrix-tile[data-key$="|13"][data-phase="loading"]')
         expect(outer).to_be_visible(timeout=15000)
         pending = page.locator(".matrix-tiles").filter(has=outer)
