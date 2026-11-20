@@ -21,6 +21,7 @@ class CableSwitch(PowerMatrixSwitch):
         super().__init__()
         self.readings = {"1": "11m", "2": "12m", "9": "99m"}
         self.test_reply = "confirm"
+        self.pending_reads = 0
         self.format_unknown = False
         self.final_pair_ready = Event()
         self.final_pair_ready.set()
@@ -55,7 +56,10 @@ class CableSwitch(PowerMatrixSwitch):
         with self._lock:
             self.commands.append(command)
         if command.startswith("test "):
-            if self.test_reply != "confirm":
+            if self.test_reply == "reject":
+                channel.sendall("\r\n".join([command, "Invalid input: test", self.prompt]).encode())
+                return False
+            if self.test_reply in {"table", "completion"}:
                 self.tested.append(port)
                 self.readings[port] = "27m"
                 if self.test_reply == "table":
@@ -83,8 +87,19 @@ class CableSwitch(PowerMatrixSwitch):
                 self.readings[port] = "17m"
                 self.confirmed.set()
                 self.release_result.wait(12)
+                if self.test_reply == "disconnect":
+                    self.readings[port] = "31m"
+                    self.pending_reads = 1
+                    channel.get_transport().close()
+                    return False
+                if self.test_reply == "echo-uppercase":
+                    channel.sendall(b"Y")
             channel.sendall(b"\r\n" + self.prompt.encode())
         else:
+            if self.pending_reads:
+                self.pending_reads -= 1
+                channel.sendall("\r\n".join([command, "Test in progress", self.prompt]).encode())
+                return False
             if port not in self.readings:
                 channel.sendall(
                     "\r\n".join([command, "No results available", self.prompt]).encode()
@@ -215,6 +230,33 @@ def exercise(page, url, switch, other, shots, _backup):
         assert not any(cmd.startswith(("test cable-", "show cable-")) for cmd in commands(before))
     finally:
         switch.reject_clear = False
+
+    # A test may start and affect the link even if the completion prompt never
+    # arrives. Recover only with show, without repeating clear, test or confirmation.
+    for mode, length in (("disconnect", "31m"), ("echo-uppercase", "17m"), ("reject", None)):
+        switch.test_reply = mode
+        before = len(switch.commands)
+        confirmations = len(switch.confirmations)
+        try:
+            start()
+            if length is None:
+                failure = results.locator('[data-stage="test"][data-status="failed"]')
+                expect(failure).to_be_visible(timeout=60000)
+                expect(results.locator("table")).to_have_count(0)
+                assert commands(before) == sequence(1)[:-1]
+                assert len(switch.confirmations) == confirmations
+            else:
+                card = results.locator('[data-stage="show"][data-status="measured"]')
+                expect(card).to_contain_text(length, timeout=60000)
+                sent = sequence(1)
+                if mode == "disconnect":
+                    sent.append("show cable-diagnostics 1")
+                    if shots:
+                        card.screenshot(path=shots / "cable-confirmation-recovery.png")
+                assert commands(before) == sent
+                assert switch.confirmations[confirmations:] == [b"y"]
+        finally:
+            switch.test_reply = "confirm"
 
     ports.click()
     expect(ports).to_have_attribute("aria-current", "page")

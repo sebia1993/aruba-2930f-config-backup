@@ -3,12 +3,18 @@
 import itertools
 import tempfile
 import unittest
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from threading import Event
 from unittest.mock import Mock, call
 
-from localweb.cable import CableSession, UncertainTest, diagnose_ports, parse_result
+from localweb.cable import (
+    CableSession,
+    UncertainTest,
+    UnconfirmedCableRequest,
+    diagnose_ports,
+    parse_result,
+)
 from localweb.operations import Operations, _groups
 
 from aruba2930f_backup.models import (
@@ -106,6 +112,36 @@ class CableTests(unittest.TestCase):
             self.writes(), ["test cable-diagnostics 1\n", "y\n", "show cable-diagnostics 1\n"]
         )
 
+    def test_uppercase_confirmation_and_repeated_manager_prompts_leave_only_device_output(self):
+        for acknowledgement in (
+            "Y\r\nfixture#",
+            "Yfixture#",
+            "yfixture#fixture#",
+            "Yfixture#\r\nfixture#",
+            "y\r\nfixture#\r\nfixture#",
+            "Y\r\nCable diagnostics completed.\r\nfixture# \r\nfixture#",
+        ):
+            with self.subTest(acknowledgement=acknowledgement):
+                self.channel.reset_mock()
+                self.feed(
+                    "test cable-diagnostics 1\nThis command will cause a loss of link\nContinue (y/n)?",
+                    "",
+                    acknowledgement,
+                    "",
+                    "show cable-diagnostics 1\n" + table("1") + "\nfixture#",
+                    "",
+                )
+                response = self.session.test_cable("1", self.cancel)
+                self.assertEqual(
+                    response,
+                    "Cable diagnostics completed." if "completed" in acknowledgement else "",
+                )
+                self.assertEqual(self.session.read_cable("1", self.cancel)["status"], "complete")
+                self.assertEqual(
+                    self.writes(),
+                    ["test cable-diagnostics 1\n", "y\n", "show cable-diagnostics 1\n"],
+                )
+
     def test_clear_requires_verified_config_and_return_to_original_exec(self):
         self.feed(
             "fixture# configure terminal\nfixture(config)#",
@@ -158,9 +194,40 @@ class CableTests(unittest.TestCase):
         self.feed(
             "test cable-diagnostics 1\nThis command will cause a loss of link\nContinue (y/n)?"
         )
-        with self.assertRaises(UncertainTest):
+        with self.assertRaises(UnconfirmedCableRequest):
             self.session.test_cable("1", self.cancel)
         self.assertEqual(self.writes(), ["test cable-diagnostics 1\n", "y\n"])
+
+    def test_only_missing_confirmed_response_qualifies_for_readonly_recovery(self):
+        question = (
+            "test cable-diagnostics 1\nThis command will cause a loss of link\nContinue (y/n)?"
+        )
+        for received, failure in (
+            ("Y", UnconfirmedCableRequest),
+            ("Y\nTest in progress", UnconfirmedCableRequest),
+            ("Y\nPermission denied", CollectionFailure),
+            ("Y\nTest failed: invalid port", CollectionFailure),
+            ("Y\nThis port does not support cable diagnostics", CollectionFailure),
+            ("Y\nProceed?", UncertainTest),
+            ("Y\nforeign#", UncertainTest),
+            ("Yotherfixture#", UncertainTest),
+            ("Y\nFirmware upgrade in progress", UncertainTest),
+            ("Test in progress on port 2", UncertainTest),
+            ("Y\nUnknown response.", UncertainTest),
+        ):
+            with self.subTest(received=received):
+                self.channel.reset_mock()
+                self.channel.read_channel.side_effect = [question, "", received, EOFError()]
+                with self.assertRaises(failure) as raised:
+                    self.session.test_cable("1", self.cancel)
+                self.assertIs(type(raised.exception), failure)
+                self.assertEqual(self.writes(), ["test cable-diagnostics 1\n", "y\n"])
+
+    def test_blank_synchronized_show_means_no_result_yet(self):
+        self.feed("show cable-diagnostics 1\r\nfixture#", "")
+        reading = self.session.read_cable("1", self.cancel)
+        self.assertEqual((reading["status"], reading["pairs"]), ("empty", []))
+        self.assertEqual(self.writes(), ["show cable-diagnostics 1\n"])
 
     def test_shell_input_and_cancelled_request_are_never_written(self):
         for operation in (self.session.read_cable, self.session.test_cable):
@@ -483,6 +550,85 @@ class CableTests(unittest.TestCase):
         )
         first.test_cable.assert_called_once()
         first.read_cable.assert_not_called()
+
+    def test_lost_confirmation_reconnects_to_same_target_for_current_readback(self):
+        groups = _groups({"targets": "127.0.0.1:2202 1,2"})
+        target = groups[0].target
+        original, recovered = Mock(), Mock()
+        original.test_cable.side_effect = UnconfirmedCableRequest
+        recovered.test_cable.return_value = ""
+        recovered.read_cable.side_effect = [
+            parse_result("No results", "1"),
+            parse_result(table("1", "7m"), "1"),
+            parse_result(table("2", "2m"), "2"),
+        ]
+        sessions = iter((original, recovered))
+        lifetimes = []
+
+        @contextmanager
+        def connect(endpoint):
+            self.assertEqual(endpoint, target)
+            session = next(sessions)
+            lifetimes.append(("open", session))
+            try:
+                yield session
+            finally:
+                lifetimes.append(("close", session))
+
+        cancel = Mock(spec=Event)
+        cancel.wait.return_value = cancel.is_set.return_value = False
+        rows = diagnose_ports(groups, connect, cancel, Mock())["rows"]
+        self.assertEqual(
+            lifetimes,
+            [("open", original), ("close", original), ("open", recovered), ("close", recovered)],
+        )
+        self.assertEqual([r["status"] for r in rows], ["measured", "measured"])
+        self.assertEqual(rows[0]["pairs"][0]["distance"], "7m")
+        self.assertEqual(
+            original.method_calls, [call.clear_cable(cancel), call.test_cable("1", cancel)]
+        )
+        self.assertEqual(
+            recovered.method_calls,
+            [
+                call.read_cable("1", cancel),
+                call.read_cable("1", cancel),
+                call.test_cable("2", cancel),
+                call.read_cable("2", cancel),
+            ],
+        )
+
+    def test_recovery_failure_or_cancellation_never_retests_or_uses_old_results(self):
+        groups = _groups({"targets": "127.0.0.1:2202 1,2"})
+        for stop in (True, False):
+            with self.subTest(stop=stop):
+                cancel = Event()
+                session = Mock()
+
+                def lost(*_args, stop=stop, cancel=cancel):
+                    if stop:
+                        cancel.set()
+                    raise UnconfirmedCableRequest
+
+                session.test_cable.side_effect = lost
+                connect = Mock(
+                    side_effect=[
+                        nullcontext(session),
+                        CollectionFailure(ErrorCode.HOST_KEY_REJECTED, "SSH 지문 변경"),
+                    ]
+                )
+                rows = diagnose_ports(groups, connect, cancel, Mock())["rows"]
+                self.assertEqual(connect.call_count, 1 if stop else 2)
+                self.assertEqual(
+                    [r["status"] for r in rows],
+                    ["cancelled", "cancelled"] if stop else ["uncertain", "skipped"],
+                )
+                self.assertTrue(all(not row["pairs"] for row in rows))
+                if not stop:
+                    self.assertEqual(rows[0]["stage"], "show")
+                    self.assertIn("SSH 지문 변경", rows[0]["message"])
+                self.assertEqual(
+                    session.method_calls, [call.clear_cable(cancel), call.test_cable("1", cancel)]
+                )
 
     def test_cancel_before_show_prevents_any_pairs_publication(self):
         session = Mock()
