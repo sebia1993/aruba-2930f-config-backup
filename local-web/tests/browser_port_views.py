@@ -43,6 +43,36 @@ def assert_table_fits(page, frame):
     )
 
 
+def check_restored_switch_groups(page, frame, addresses):
+    # Older workspaces may have assigned different site names to ports on one switch.
+    marker = "retired-site-field"
+
+    def legacy_workspace(route):
+        response = route.fetch()
+        workspace = response.json()
+        for row in workspace["query"]["rows"]:
+            row["site"] = f"{marker}-{row['interface']}"
+        route.fulfill(response=response, json=workspace)
+
+    page.route("**/api/workspace", legacy_workspace, times=1)
+    page.reload()
+    matrix = frame.locator("#matrix")
+    expect(matrix.locator("[data-port-key]")).to_have_count(6)
+    expect(matrix.get_by_role("group")).to_have_count(2)
+    for address, count in zip(addresses, (5, 1), strict=True):
+        group = matrix.get_by_role("group", name=re.compile(re.escape(address)))
+        expect(group.locator("[data-port-key]")).to_have_count(count)
+        expect(group.locator(f'[data-port-key="{address}/1"]')).to_have_count(1)
+    expect(frame.locator("#site, [aria-label*='사업장']")).to_have_count(0)
+    expect(frame.locator("body")).not_to_contain_text("사업장")
+    expect(frame.locator("body")).not_to_contain_text(marker)
+    search = frame.locator("#search")
+    search.fill(marker)
+    expect(matrix.locator("[data-port-key]")).to_have_count(0)
+    frame.locator("#clearFilters").click()
+    expect(matrix.locator("[data-port-key]")).to_have_count(6)
+
+
 def exercise(page, url, switch, second, shots, _backup):
     switch.ap_names["2"] = LONG_AP
     addresses = [f"127.0.0.1:{fixture.port}" for fixture in (switch, second)]
@@ -59,6 +89,7 @@ def exercise(page, url, switch, second, shots, _backup):
     rows = frame.locator("#tbody tr[data-port-key]")
     expect(tiles).to_have_count(6, timeout=90000)
     expect(page.locator("#queryPorts")).to_be_enabled()
+    check_restored_switch_groups(page, frame, addresses)
     assert_presentation(page, frame, "matrix")
     expect(frame.get_by_role("button", name="여러 포트 선택", exact=True)).to_have_count(0)
     select_all = page.locator("#matrixSelectAll")
