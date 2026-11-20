@@ -29,6 +29,14 @@
     }
   }
 
+  function linkIndicator(value) {
+    switch (linkLabel(value)) {
+      case 'Up': return {state: 'up', label: '↑ Up'};
+      case 'Down': return {state: 'down', label: '↓ Down'};
+      default: return {state: 'unknown', label: '—'};
+    }
+  }
+
   function measurement(value) {
     if (typeof value === 'string' && /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())) {
       const number = Number(value);
@@ -111,5 +119,5 @@
     return result('normal', '스위치에서 전력 공급과 LLDP 이웃 AP 이름을 확인했습니다.');
   }
 
-  globalThis.PowerMatrix = Object.freeze({labels, classify, linkLabel, readFailure, accessPointName});
+  globalThis.PowerMatrix = Object.freeze({labels, classify, linkLabel, linkIndicator, readFailure, accessPointName});
 })();

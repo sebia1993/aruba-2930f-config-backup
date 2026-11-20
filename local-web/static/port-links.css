@@ -1,0 +1,18 @@
+/* Shared physical-link colors for both matrix views, independent of PoE. */
+:root {
+  --link-up: #66d497;
+  --link-down: #ff98a5;
+  --link-unknown: #a9becd;
+}
+:root[data-theme=light] {
+  --link-up: #167044;
+  --link-down: #a6233a;
+  --link-unknown: #526c7f;
+}
+:is(.port-tile,.matrix-tile)[data-link=up] {--link-color:var(--link-up)}
+:is(.port-tile,.matrix-tile)[data-link=down] {--link-color:var(--link-down)}
+:is(.port-tile,.matrix-tile)[data-link=unknown] {--link-color:var(--link-unknown)}
+.tile-link {
+  display:block;background:var(--surface);color:var(--link-color);white-space:nowrap;
+  font-size:11px;font-weight:650;line-height:1.2;text-align:center;
+}

@@ -341,14 +341,14 @@ class Jobs:
                 (r.group.target.ip, r.group.target.port, r.interface)
                 for r in self.operations.last_results
             }
-            rows = [
-                dict(
-                    row,
-                    controlUsed=bool(row.get("controlUsed"))
-                    or (row["ip"], int(row["ssh_port"]), row["interface"]) not in available,
-                )
-                for row in view["rows"]
-            ]
+            rows = []
+            for saved in view["rows"]:
+                row = dict(saved, controlUsed=bool(saved.get("controlUsed")))
+                key = row["ip"], int(row["ssh_port"]), row["interface"]
+                if key not in available:
+                    # A control consumed this observation and there is no replacement read.
+                    row.update(controlUsed=True, link_status="", link_observed_at="")
+                rows.append(row)
             workspace["query"] = {"rows": rows}
             return workspace
 

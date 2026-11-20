@@ -494,18 +494,25 @@
         head.append(label,elem('small',count+'포트'));group.append(head);
         const grid=elem('div',undefined,'matrix-tiles');group.append(grid);grids.set(addr,grid);nodes.push(group);
       }
-      const tile=button(item.port,()=>selectItem(item),'matrix-tile');
+      const tile=button('',()=>selectItem(item),'matrix-tile');
+      const face=elem('span',item.port,'tile-face');
+      const linkValue=item.view.phase==='observed' ? item.row?.link_status :
+        item.view.phase==='stale' ? item.record?.link_status : null;
+      const link=PowerMatrix.linkIndicator(linkValue);
       tile.dataset.key=item.key;tile.dataset.state=item.state;tile.dataset.phase=item.view.phase;
+      tile.dataset.link=link.state;
       if (item.view.failure) {
         tile.dataset.readFailed='true';
         const mark=elem('span','!','port-failure-mark');
         mark.setAttribute('aria-hidden','true');
-        tile.append(mark);
+        face.append(mark);
       }
-      if (item.view.apName) tile.append(elem('span',item.view.apName,'tile-ap-name'));
+      if (item.view.apName) face.append(elem('span',item.view.apName,'tile-ap-name'));
+      tile.append(face,elem('span',link.label,'tile-link'));
       tile.setAttribute('aria-pressed',String(ui.selected.has(item.key)));
       tile.classList.toggle('focused-port',focused===item.key);
-      tile.title=[addr+' / '+item.port,item.view.failure?'조회 실패':'',item.view.label,item.view.power.watts!=null ? item.view.power.watts+' W' : '',item.view.apName].filter(Boolean).join(' · ');
+      const linkText=link.state==='unknown' ? '미조회' : PowerMatrix.linkLabel(linkValue);
+      tile.title=[addr+' / '+item.port,item.view.failure?'조회 실패':'',item.view.label,item.view.power.watts!=null ? item.view.power.watts+' W' : '',item.view.apName,'링크 '+linkText].filter(Boolean).join(' · ');
       tile.setAttribute('aria-label',tile.title); grids.get(addr).append(tile);
     }
     $('matrixGroups').replaceChildren(...nodes);
@@ -575,7 +582,7 @@
           }));
           ui.rows=ui.rows.map(row=>{
             if (!loading.has(portKey(row))) return row;
-            if (keepMatrix) return {...row,controlUsed:true,refreshInvalidated:true};
+            if (keepMatrix) return {...row,controlUsed:true,refreshInvalidated:true,link_status:'',link_observed_at:''};
             const {ip,ssh_port,interface:port,label}=row;
             return {ip,ssh_port,interface:port,label,status:'refresh_pending',controlUsed:true,refreshInvalidated:true};
           });

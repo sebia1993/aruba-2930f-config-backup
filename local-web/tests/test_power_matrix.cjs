@@ -7,6 +7,15 @@ const ap = {system_name: '서쪽 회의실', model: 'AP-535', system_description
 const row = {status: 'ok', complete: true, watts: 1.2, poe_enabled: true,
   poe_status: 'Delivering', lldp_status: 'ok', lldp_neighbors: [ap]};
 
+test('tile borders and captions follow only the physical link observation', () => {
+  const {linkIndicator} = globalThis.PowerMatrix;
+  for (const [raw, state, label] of [
+    ['Up', 'up', '↑ Up'], [' down ', 'down', '↓ Down'], ['UP', 'up', '↑ Up'],
+    ['확인 불가', 'unknown', '—'], [undefined, 'unknown', '—'], ['', 'unknown', '—'],
+    ['Disabled', 'unknown', '—'], ['Down Up', 'unknown', '—'],
+  ]) assert.deepEqual(linkIndicator(raw), {state, label});
+});
+
 test('retry reasons use the failing read and exclude valid empty or unfinished observations', () => {
   const failedPort = readFailure({status:'failed', message:'SSH 연결 시간 초과', error_code:'CONNECT_TIMEOUT'});
   assert.match(failedPort, /SSH 연결 시간 초과/);

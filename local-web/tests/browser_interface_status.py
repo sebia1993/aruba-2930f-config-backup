@@ -1,9 +1,12 @@
 """Compare physical link, independent of PoE, through the live query and refresh actions."""
 
+import re
+import sys
 from datetime import datetime
 
 from browser_power_matrix import PowerMatrixSwitch
 from browser_qa import enter_ssh_credentials, open_port_controls, run_browser_case
+from browser_unified_controls import resize_workspace
 from playwright.sync_api import expect
 from verify_http_ssh import interface_status_table
 
@@ -84,9 +87,17 @@ def assert_live_readings(page, switch, expected, *, poe_failed=None):
     page.locator("#matrixView").click()
     for port, link in expected.items():
         tile = matrix_view.locator(f'#matrix [data-port-key="{endpoint}/{port}"]')
+        caption = {"Up": "↑ Up", "Down": "↓ Down", "확인 불가": "—"}[link]
+        expect(tile.get_by_text(caption, exact=True)).to_be_visible()
+        expect(tile).to_have_accessible_name(
+            re.compile("링크 " + (r"미(조회|확인)" if link == "확인 불가" else link))
+        )
         expect(tile).to_have_attribute(
             "data-state", "unclassified" if port == poe_failed else "normal"
         )
+        if port == poe_failed:
+            expect(tile.locator(".port-failure-mark")).to_be_visible()
+        border = tile.evaluate("el => getComputedStyle(el).borderTopColor")
         tile.click()
         link_field = matrix_view.locator("#detail .dfield").filter(
             has=matrix_view.get_by_text("관측 당시 링크", exact=True)
@@ -97,11 +108,57 @@ def assert_live_readings(page, switch, expected, *, poe_failed=None):
         if port != poe_failed:
             # Opening an eligible tile also checks it. Leave later refreshes with a clean selection.
             expect(tile).to_have_attribute("aria-pressed", "true")
+            expect(tile).to_have_css("border-top-color", border)
             tile.click()
             expect(tile).to_have_attribute("aria-pressed", "false")
 
 
-def exercise(page, url, switch, _other, _shots, _backup):
+def verify_link_layout(page, shots):
+    frame = page.frame_locator("#matrixViewer")
+    tiles = frame.locator("#matrix [data-port-key]")
+    original_size = page.viewport_size
+    original_theme = page.locator("html").get_attribute("data-theme")
+    if page.locator("#controlPanel").evaluate("panel => panel.open"):
+        page.locator("#controlHeading").click()
+    for theme in ("light", "dark"):
+        if page.locator("html").get_attribute("data-theme") != theme:
+            page.locator("#themeToggle").click()
+        expect(frame.locator("html")).to_have_attribute("data-theme", theme)
+        for width, height in ((1366, 768), (320, 568)):
+            resize_workspace(page, width, height)
+            colors = {}
+            for tile in tiles.all():
+                ap = tile.locator(".tile-ap-name")
+                link = tile.locator(".tile-link")
+                expect(link).to_be_visible()
+                assert (
+                    ap.bounding_box()["y"] + ap.bounding_box()["height"]
+                    <= link.bounding_box()["y"] + 1
+                )
+                assert link.evaluate("""label => {
+                    const range = document.createRange();
+                    range.selectNodeContents(label);
+                    const text = range.getBoundingClientRect();
+                    const box = label.closest('button').getBoundingClientRect();
+                    return text.left >= box.left && text.right <= box.right &&
+                        text.top >= box.top && text.bottom <= box.bottom + 1;
+                }""")
+                border = tile.evaluate("el => getComputedStyle(el).borderTopColor")
+                red, green, _blue = map(int, re.findall(r"\d+", border)[:3])
+                direction = link.inner_text()
+                assert green > red if direction == "↑ Up" else red > green, (theme, border)
+                colors[direction] = border
+            assert len(colors) == 2
+            assert frame.locator("html").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+            if shots:
+                tiles.first.scroll_into_view_if_needed()
+                page.screenshot(path=shots / f"link-matrix-{width}-{theme}.png")
+    resize_workspace(page, original_size["width"], original_size["height"])
+    if page.locator("html").get_attribute("data-theme") != original_theme:
+        page.locator("#themeToggle").click()
+
+
+def exercise(page, url, switch, _other, shots, _backup):
     page.goto(url)
     page.locator('nav a[href="#ports"]').click()
     page.locator("#queryTargets").fill(f"127.0.0.1:{switch.port} 1,10,2/1")
@@ -111,6 +168,7 @@ def exercise(page, url, switch, _other, _shots, _backup):
     assert switch.commands.count("show interfaces brief") == 1
     assert switch.commands.count("show interfaces status") == 1
     assert_live_readings(page, switch, dict(switch.links))
+    verify_link_layout(page, shots)
 
     switch.links = {"1": "Down", "10": "Up"}  # The VSF port is missing from this fresh table.
     for index, expected in enumerate(
@@ -154,7 +212,13 @@ def exercise(page, url, switch, _other, _shots, _backup):
 
 
 if __name__ == "__main__":
-    run_browser_case(exercise, switch_factory=InterfaceStatusSwitch)
+    engine = sys.argv[1] if len(sys.argv) > 1 else "chromium"
+    run_browser_case(
+        exercise,
+        switch_factory=InterfaceStatusSwitch,
+        browser_engine=engine,
+        touch=engine == "webkit",
+    )
     print(
         "PASS interface status: conflicting brief values, VSF, refresh, missing row and CLI denial"
     )
