@@ -124,7 +124,8 @@ def exercise(page, url, switch, _other, _shots, _backup):
         page.frame_locator("#matrixViewer").locator("#device").select_option(
             f"127.0.0.1:{switch.port}"
         )
-        page.locator("#refreshSwitch").click()
+        page.get_by_role("button", name="전체 선택", exact=True).click()
+        page.get_by_role("button", name="선택 3포트 재조회", exact=True).click()
         expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
         assert switch.commands.count("show interfaces status") == index
         assert_live_readings(page, switch, expected)

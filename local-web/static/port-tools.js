@@ -248,8 +248,7 @@
   }
   function currentKey() {
     if (!ui.liveId) return focused;
-    const scope=currentScope();
-    const current=scope ? scope.current : monitor()?.selected();
+    const current=monitor()?.selected();
     return current ? portKey({ip:current.ip,ssh_port:current.sshPort,interface:current.port}) : '';
   }
   function currentAddress() {
@@ -278,19 +277,27 @@
     for (const key of selected) if (!visible.has(key)) hidden++;
     return hidden;
   }
-  function refreshTargets(bySwitch) {
-    const device=currentAddress(), current=currentKey();
-    if (current) focused=current;
-    const lines=[];
-    for(const g of inventory()) {
-      const addr=address(g);
-      const ports=g.interfaces.filter(p=>bySwitch ? device===addr :
-        (ui.selected.size ? ui.selected.has(addr+'|'+p) : current===addr+'|'+p));
-      if (ports.length) lines.push(addr+' '+ports.join(','));
+  function selectedRefreshGroups() {
+    const current=ui.selected.size ? '' : currentKey();
+    if (!ui.selected.size && !current) return [];
+    const selected=[];
+    for (const group of inventory()) {
+      const addr=address(group);
+      const interfaces=group.interfaces.filter(port=>{
+        const key=addr+'|'+port;
+        return ui.selected.size ? ui.selected.has(key) : key===current;
+      });
+      if (interfaces.length) selected.push({...group,interfaces});
     }
-    if (!lines.length) notify(bySwitch?'스위치 필터 또는 포트 상세에서 장비를 선택하세요.':'재조회할 포트를 체크하거나 상세 보기를 여세요.',true);
-    return lines.join('\n') || null;
+    return selected;
   }
+  $('refreshPorts').onclick=()=>{
+    const selected=selectedRefreshGroups();
+    if (!selected.length) return;
+    focused=currentKey() || focused;
+    const targets=selected.map(group=>address(group)+' '+group.interfaces.join(',')).join('\n');
+    runSsh('ports.refresh',{targets},result=>receivePorts(result,true));
+  };
   function observation(key, record) {
     const fresh = live.get(key);
     const waiting = loading.has(key) && !fresh;
@@ -431,7 +438,10 @@
       if (!matchedGroups.has(addr)) matchedGroups.set(addr,[]);
       matchedGroups.get(addr).push(item.key);
     }
-    if (failureView && focused && !visible.some(item=>item.key===focused)) focused='';
+    if (failureView && focused && !visible.some(item=>item.key===focused)) {
+      focused='';
+      updateControlTarget();
+    }
     let unobserved=0;
     const candidates=failureView ? visible : matches;
     for (const item of candidates) {
@@ -558,7 +568,7 @@
         if (action==='ports.query') {
           fullQuery={text:body.targets,accepted:false};
         } else if (body?.targets) {
-          // Refresh requests are built by refreshTargets from canonical endpoints and port lists.
+          // Each partial refresh names its registered endpoints and exact port lists.
           loading=new Set(body.targets.split('\n').flatMap(line=>{
             const [addr,ports]=line.split(' ');
             return ports.split(',').map(port=>addr+'|'+port);
@@ -628,6 +638,6 @@
     return reconciled.concat([...invalid.values()]);
   }
   window.portTools={showStartingMatrix,resumeQuery,endResumedQuery,targetDraftVersion,openTargetEditor,reconcileRows,renderMatrix,showInventory,currentKey,acceptQuery,recoverQuery,onJob,onProgress,availableControlTargets,scopeKeys,hiddenSelectedCount,unobservedTargets,cableScope,
-    hasInventory:()=>groups.length>0 || ui.rows.length>0,refreshTargets,restoreInventory,matchesInventory};
+    hasInventory:()=>groups.length>0 || ui.rows.length>0,selectedRefreshCount:()=>targetCount(selectedRefreshGroups()),restoreInventory,matchesInventory};
   updatePortActions();sync();
 })();

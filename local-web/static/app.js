@@ -750,16 +750,19 @@ function updateControlTarget() {
   $('selectedCount').textContent='선택 '+selectedCount+'개';
   updateHiddenSelectedCount(targets);
   $('quickActions').hidden=!targets.length || ($('operation').value==='disable' && !matrixControlTargets('poe_off').length);
-  $('liveScope').hidden=!!currentInspection() || !(ui.liveId || displayingInventory());
+  const refresh=$('refreshPorts');
+  const refreshCount=!currentInspection() && (ui.liveId || displayingInventory())
+    ? window.portTools?.selectedRefreshCount() || 0 : 0;
+  refresh.hidden=!refreshCount;
+  refresh.textContent='선택 '+refreshCount+'포트 재조회';
   const inspect=$('inspectSingle');
   const strip=$('portActionStrip');
-  strip.toggleAttribute('data-idle',!ui.selected.size && !ui.tileRow && !currentInspection() && !observed);
   const container=observed ? strip : $('singleControls');
-  if (inspect.parentElement!==container) container.insertBefore(inspect,observed ? $('liveScope') : null);
+  if (inspect.parentElement!==container) container.insertBefore(inspect,observed ? refresh : null);
   inspect.hidden=batch && !observed;
   if (observed) inspect.title=observed.ip+':'+observed.sshPort+' / 포트 '+observed.port;
   else inspect.removeAttribute('title');
-  strip.hidden=!observed && target.hidden && $('selectionSummary').hidden && $('quickActions').hidden && $('liveScope').hidden;
+  strip.hidden=!observed && target.hidden && $('selectionSummary').hidden && $('quickActions').hidden && refresh.hidden;
 }
 function syncMonitorChecks() {
   const viewer=monitor();
@@ -843,10 +846,6 @@ form('queryLoginForm', async () => {
   queryCredentials.close();
   onConnected?.();
 });
-function refreshTargets(bySwitch) {
-  const targets=window.portTools.refreshTargets(bySwitch);
-  if (targets) runSsh('ports.refresh',{targets},result=>receivePorts(result,true));
-}
 function retryFailedPorts(key=null) {
   const liveId=ui.liveId;
   withSshAccount(()=>{
@@ -866,8 +865,6 @@ function retryFailedPorts(key=null) {
   });
 }
 $('retryFailedPorts').onclick=()=>retryFailedPorts();
-$('refreshPorts').onclick = () => refreshTargets(false);
-$('refreshSwitch').onclick = () => refreshTargets(true);
 function updateMatrixSelectAll() {
   const toggle=$('matrixSelectAll'), scope=$('selectionScope');
   const keys=ui.busy ? [] : (window.portTools?.scopeKeys() || []);

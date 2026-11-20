@@ -679,7 +679,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     if (!row) { box.replaceChildren(node('div','표시할 포트가 없습니다.','empty')); return; }
     if (row.unobserved) {
       box.replaceChildren(node('div',row.hostname,'detail-name'),node('div',endpoint(row)+' · 포트 '+row.port,'detail-address'),
-        node('p',row.reason,'detail-foot'),node('p','체크한 포트가 없으면 ‘선택 포트 재조회’로 이 포트를 조회할 수 있습니다.','detail-foot'));
+        node('p',row.reason,'detail-foot'),node('p','체크한 포트가 없으면 ‘선택 1포트 재조회’로 이 포트를 조회할 수 있습니다.','detail-foot'));
       return;
     }
     const badges=node('div',null,'badges');

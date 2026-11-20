@@ -7,7 +7,6 @@ from browser_power_matrix import PowerMatrixSwitch
 from browser_qa import (
     enter_ssh_credentials,
     expect_hidden_selection,
-    open_port_controls,
     power_filter,
     run_browser_case,
 )
@@ -81,6 +80,7 @@ def exercise(page, url, switch, second, shots, _backup):
     page.locator('nav a[href="#ports"]').click()
     matrix_button, list_button = page.locator("#matrixView"), page.locator("#listView")
     expect(list_button).to_be_hidden()
+    expect(page.locator("#refreshSwitch")).to_have_count(0)
     page.locator("#queryTargets").fill(f"{addresses[0]} 1-5\n{addresses[1]} 1")
     page.locator("#queryPorts").click()
     enter_ssh_credentials(page, switch)
@@ -92,6 +92,7 @@ def exercise(page, url, switch, second, shots, _backup):
     check_restored_switch_groups(page, frame, addresses)
     assert_presentation(page, frame, "matrix")
     expect(frame.get_by_role("button", name="여러 포트 선택", exact=True)).to_have_count(0)
+    expect(page.locator("#refreshPorts")).to_be_hidden()
     select_all = page.locator("#matrixSelectAll")
     expect(select_all).to_have_accessible_name("전체 선택")
     before = [len(fixture.commands) for fixture in (switch, second)]
@@ -124,6 +125,8 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(long_tile).to_have_attribute("aria-pressed", "false")
     first_tile.click()
     expect(first_row.locator("input")).to_be_checked()
+    refresh = page.locator("#refreshPorts")
+    expect(refresh).to_have_accessible_name("선택 1포트 재조회")
 
     for width, height in SIZES:
         resize_workspace(page, width, height)
@@ -233,17 +236,33 @@ def exercise(page, url, switch, second, shots, _backup):
     expect(rows).to_have_count(6)
     assert [len(fixture.commands) for fixture in (switch, second)] == before
 
-    other_row.locator(".row-select").click()
-    open_port_controls(page)
-    page.locator("#refreshPorts").click()
+    first_row.get_by_role("checkbox").check()
+    other_row.get_by_role("checkbox").check()
+    frame.locator("#device").select_option(addresses[0])
+    expect_hidden_selection(page, 1)
+    expect(refresh).to_have_text("선택 2포트 재조회")
+    expect(refresh).to_have_accessible_name("선택 2포트 재조회")
+    refresh.click()
     expect(page.locator("#statusText")).to_contain_text("재조회 완료", timeout=90000)
     assert_presentation(page, frame, "list")
+    for fixture, start, port in zip((switch, second), before, ("3", "1"), strict=True):
+        commands = fixture.commands[start:]
+        assert [cmd for cmd in commands if cmd.startswith("show power-over-ethernet ")] == [
+            f"show power-over-ethernet {port}"
+        ], commands
+    before = [len(fixture.commands) for fixture in (switch, second)]
     with page.expect_request(
         lambda request: request.url.endswith("/api/jobs") and request.method == "POST"
     ):
         page.locator("#queryPorts").click()
     expect(page.locator("#statusText")).to_contain_text("포트 조회 완료", timeout=90000)
     assert_presentation(page, frame, "matrix")
+    for fixture, start, ports in zip((switch, second), before, (range(1, 6), [1]), strict=True):
+        commands = fixture.commands[start:]
+        assert {cmd for cmd in commands if cmd.startswith("show power-over-ethernet ")} == {
+            f"show power-over-ethernet {port}" for port in ports
+        }, commands
+    frame.locator("#device").select_option("")
     expect(tiles).to_have_count(6)
     check_paged_select_all(page, frame, switch, second, addresses, shots)
     assert all("configure terminal" not in fixture.commands for fixture in (switch, second))
