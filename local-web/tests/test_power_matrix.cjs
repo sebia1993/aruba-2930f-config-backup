@@ -169,6 +169,16 @@ test('multiple LLDP neighbors keep their reported names but cannot be attributed
   assert.match(classify(current).reason, /3대/);
 });
 
+test('tile descriptions retain every reported name and count even unnamed neighbors', () => {
+  const describe = neighbors => PowerMatrix.neighborDescription(
+    PowerMatrix.neighborIdentity({...row, lldp_neighbors: neighbors})
+  );
+  assert.equal(describe([]), '');
+  assert.equal(describe([ap]), 'AP 이름 · ' + ap.system_name);
+  assert.match(describe([ap, {system_name: 'Desk'}]), /이웃 2대 · 서쪽 회의실 \/ Desk$/);
+  assert.match(describe([{}, {}]), /이웃 2대 · 이름 없음$/);
+});
+
 test('empty, unnamed, failed and stale LLDP observations keep distinct provenance', () => {
   const info = fields => PowerMatrix.neighborIdentity({...row, ...fields});
   assert.equal(info({lldp_neighbors: []}).neighborCount, 0);

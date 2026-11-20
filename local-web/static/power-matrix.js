@@ -105,6 +105,37 @@
     return neighborIdentity(row).apName;
   }
 
+  function neighborDescription(identity) {
+    if (identity?.names.length) return identity.label + ' · ' + identity.names.join(' / ');
+    return identity?.neighborCount > 1 ? identity.label + ' · 이름 없음' : '';
+  }
+
+  const segments = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('ko') : null;
+
+  function tileCaption(identity) {
+    if (!identity || (!identity.names.length && !(identity.neighborCount > 1))) return null;
+    const caption = document.createElement('span');
+    if (identity.neighborCount > 1) {
+      caption.className = 'tile-caption tile-neighbor-count';
+      caption.textContent = '이웃 ' + identity.neighborCount + '대';
+      return caption;
+    }
+
+    caption.className = 'tile-caption ' + (identity.apName ? 'tile-ap-name' : 'tile-neighbor-name');
+    const name = identity.names[0];
+    const characters = segments ? Array.from(segments.segment(name), item => item.segment) : Array.from(name);
+    // Let CSS shorten the leading part only when the available space requires it.
+    const split = characters.length - Math.min(6, Math.ceil(characters.length / 2));
+    const head = document.createElement('span');
+    head.className = 'tile-name-head';
+    head.textContent = characters.slice(0, split).join('');
+    const tail = document.createElement('span');
+    tail.className = 'tile-name-tail';
+    tail.textContent = characters.slice(split).join('');
+    caption.append(head, tail);
+    return caption;
+  }
+
   function supplyProblem(row) {
     const status = token(row.assessment_status);
     if (['warning', 'off', 'searching', 'error', 'unsupported'].includes(status)) {
@@ -152,5 +183,7 @@
     return result('normal', '스위치에서 전력 공급과 LLDP 이웃 AP 이름을 확인했습니다.');
   }
 
-  globalThis.PowerMatrix = Object.freeze({labels, classify, linkLabel, linkIndicator, readFailure, accessPointName, neighborIdentity});
+  globalThis.PowerMatrix = Object.freeze({
+    labels, classify, linkLabel, linkIndicator, readFailure, accessPointName, neighborIdentity, neighborDescription, tileCaption
+  });
 })();

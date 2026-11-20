@@ -1,4 +1,4 @@
-/* Shared physical-link colors for both matrix views, independent of PoE. */
+/* Both port views share the same grid and physical-link indicators. */
 :root {
   --link-up: #66d497;
   --link-down: #ff98a5;
@@ -12,7 +12,76 @@
 :is(.port-tile,.matrix-tile)[data-link=up] {--link-color:var(--link-up)}
 :is(.port-tile,.matrix-tile)[data-link=down] {--link-color:var(--link-down)}
 :is(.port-tile,.matrix-tile)[data-link=unknown] {--link-color:var(--link-unknown)}
+
+:is(.embedded .device-ports,.matrix-group) {container:port-group / inline-size}
+:is(.embedded .port-grid,.matrix-tiles) {
+  --columns:12;
+  --gap:4px;
+  --zoom-offset:calc(var(--cell-size) - 52px);
+  /* auto-fill retains unused tracks in a partial row or a filtered switch. */
+  --column-width:calc((100% + var(--gap)) / var(--columns) - var(--gap) + 2 * var(--zoom-offset) - 0.1px);
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,max(54px,var(--column-width))),1fr));
+  gap:var(--gap);
+}
+@container port-group (max-width:820px) {
+  :is(.embedded .port-grid,.matrix-tiles) {--columns:8}
+}
+@container port-group (max-width:560px) {
+  :is(.embedded .port-grid,.matrix-tiles) {--columns:4}
+}
+@media(max-width:560px), (pointer:coarse) {
+  :is(.embedded .port-grid,.matrix-tiles) {
+    --zoom-offset:calc(var(--cell-size) - 56px);
+  }
+}
+:is(.embedded .port-grid,.matrix-tiles) > button {
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  grid-template-rows:minmax(0,1fr) 15px;
+  align-items:stretch;
+  width:100%;
+  min-width:0;
+  height:var(--cell-size);
+  box-sizing:border-box;
+}
+:is(.tile-power,.tile-face) {
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  grid-template-rows:minmax(0,1fr) 15px;
+  align-items:center;
+  justify-items:center;
+  min-width:0;
+  padding:1px 2px;
+}
+.tile-port {display:inline-flex;align-items:center;justify-content:center;gap:2px;white-space:nowrap;font-variant-numeric:tabular-nums}
+:is(.tile-ap-name,.tile-neighbor-name,.tile-neighbor-count) {
+  grid-row:2;
+  display:flex;
+  justify-content:center;
+  align-items:baseline;
+  width:100%;
+  min-width:0;
+  overflow:hidden;
+  white-space:nowrap;
+  font-size:11px;
+  font-weight:600;
+  line-height:1.25;
+}
+.tile-neighbor-name::before {content:"이웃 · " / "";flex:none;white-space:pre;font-weight:400}
+.tile-name-head {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:pre}
+.tile-name-tail {
+  display:flex;
+  justify-content:flex-end;
+  flex:0 0 auto;
+  max-width:100%;
+  overflow:hidden;
+  white-space:pre;
+}
+.tile-name-head:not(:empty) + .tile-name-tail {max-width:calc(100% - 1.3em)}
+.tile-neighbor-name .tile-name-tail {max-width:calc(100% - 2.6em)}
+.tile-neighbor-name .tile-name-head:not(:empty) + .tile-name-tail {max-width:calc(100% - 3.9em)}
 .tile-link {
   display:block;background:var(--surface);color:var(--link-color);white-space:nowrap;
-  font-size:11px;font-weight:650;line-height:1.2;text-align:center;
+  border-radius:0 0 3px 3px;font-size:11px;font-weight:650;line-height:15px;text-align:center;
 }
