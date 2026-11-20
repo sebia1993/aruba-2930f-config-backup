@@ -382,8 +382,9 @@ function selectObservedPort(message) {
   clearInspection();
   ui.tileRow=ui.selected.size ? null : row;
   $('controlMode').value='batch'; $('controlMode').onchange();
+  if (message.reveal) monitor().revealPowerPort(row.key);
 }
-function selectObservedBatch() {
+function selectObservedBatch(selectedKey) {
   if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
   const batch=monitor()?.batch();
   if (!batch?.liveId || batch.liveId!==ui.liveId || !Array.isArray(batch.rows)) return;
@@ -395,6 +396,7 @@ function selectObservedBatch() {
   ui.selected=new Set(keys);
   $('controlMode').value='batch'; $('controlMode').onchange();
   renderPorts();
+  if (selectedKey) monitor().revealPowerPort(selectedKey);
 }
 function postMatrix(keepView=false,periodic=false) {
   const viewer=monitor(), id=ui.liveId;
@@ -410,7 +412,7 @@ window.addEventListener('message',e=>{
         retryFailedPorts(controlPortKey(row));
       }
     }
-    if (e.data.type==='aruba-port-checks') selectObservedBatch();
+    if (e.data.type==='aruba-port-checks') selectObservedBatch(e.data.selectedKey);
     if (e.data.type==='aruba-port-context') {
       if (ui.tileRow!==monitor()?.selected()) ui.tileRow=null;
       if (!currentInspection()) clearInspection();

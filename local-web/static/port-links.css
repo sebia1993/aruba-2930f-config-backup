@@ -20,6 +20,17 @@
 .unmeasured-actions:has(>#quickActions:not([hidden])) {
   display:inline-flex;align-items:center;gap:6px;min-width:0;grid-column:1/-1;
 }
+.embedded section[aria-labelledby=matrixTitle]:has(#quickActions:not([hidden])) {overflow:clip}
+.embedded:has(#quickActions:not([hidden])) {scroll-padding-top:var(--power-toolbar-height,0px)}
+.embedded .metrics:has(#quickActions:not([hidden])) {
+  position:sticky;top:calc(0px - var(--power-toolbar-offset,0px));z-index:3;background:var(--surface);
+}
+@media(max-width:560px),(pointer:coarse) {
+  /* On phones the table header and the power toolbar share the iframe scrollport. */
+  .embedded section[aria-labelledby=matrixTitle]:has(#quickActions:not([hidden])) .resulttable thead {
+    top:var(--power-toolbar-height,0px);
+  }
+}
 #quickActions {display:inline-flex;align-items:center;gap:4px;min-width:0}
 #quickActions button {
   display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:44px;min-height:44px;

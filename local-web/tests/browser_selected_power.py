@@ -140,11 +140,19 @@ def exercise(page, url, switch, second, shots, _backup):
         ("poe_on", "0 W", "8.1 W", "interface 1 power-over-ethernet", "+8.1 W"),
     ):
         if mobile:
+            # The previous power result takes space away from the scrollable port list.
+            if operation == "poe_on":
+                tile.scroll_into_view_if_needed()
             page.touchscreen.tap(*hit_point(tile))
         else:
             tile.focus()
             tile.press("Space")
         expect(tile).to_have_attribute("aria-pressed", "true")
+        button = quick_power_group(page).locator(
+            "#quickOff" if operation == "poe_off" else "#quickOn"
+        )
+        expect(button).to_be_enabled()
+        hit_point(button)
         with click_quick_poe(page, operation, [(first, "1")], touch=mobile):
             expect_power_result(page, first, before, after, delta=delta)
         expect_no_quick_power(page)
