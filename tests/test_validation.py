@@ -97,13 +97,13 @@ def test_show_version_exact_evidence_does_not_require_modules() -> None:
 )
 def test_jl320a_chassis_and_running_image_are_identified(modules: str) -> None:
     identity = validate_device_identity(
-        "Boot ROM Version: WC.17.02.0006\nImage stamp:\nWC.16.10.0025\nBoot Image: Primary",
+        "Boot ROM Version: WC.17.02.0006\nImage stamp:\nWC.16.10.0009\nBoot Image: Primary",
         modules,
     )
 
     assert identity.sku == "JL320A"
     assert identity.model == "Aruba 2930M 24G PoE+ 1-slot"
-    assert identity.software_version == "WC.16.10.0025"
+    assert identity.software_version == "WC.16.10.0009"
 
 
 @pytest.mark.parametrize(

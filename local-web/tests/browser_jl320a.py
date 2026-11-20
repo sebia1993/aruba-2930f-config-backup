@@ -32,7 +32,7 @@ class JL320ASwitch(CableSwitch):
         if command == "show version":
             lines = [
                 "Image stamp:",
-                "                WC.16.10.0025",
+                "                WC.16.10.0009",
                 "Boot Image:     Primary",
                 "Boot ROM Version:    WC.17.02.0006",
             ]
@@ -96,7 +96,7 @@ def exercise(page, url, switch, other, shots, backup_directory):
     (row,) = page.evaluate("ui.rows")
     assert row["status"] == "ok", (row["status"], row.get("error_code"), row.get("message"))
     assert row["sku"] == "JL320A" and "2930M" in row["model"], (row["sku"], row["model"])
-    assert row["software_version"] == "WC.16.10.0025", row["software_version"]
+    assert row["software_version"] == "WC.16.10.0009", row["software_version"]
     assert row["interface"] == "1/1" and row["link_status"] == "Up"
     frame = page.frame_locator("#matrixViewer")
     tile = frame.locator("#matrix [data-port-key]")
