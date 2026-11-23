@@ -866,8 +866,9 @@ class Jobs:
                     error = "작업 결과 반영 중 오류가 발생했습니다. 대상 상태를 다시 조회하세요."
                     state, result = "failed", None
                     self.port_view = None
+                    # Any outstanding approval may depend on the invalid readback.
                     with suppress(Exception):
-                        self.controls.invalidate(observations_changed=True)
+                        self.controls.invalidate()
                     if manual:
                         outcome = (
                             "uncertain",
