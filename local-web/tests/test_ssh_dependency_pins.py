@@ -3,7 +3,6 @@
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_LOCK = ROOT.parent / "requirements-lock.txt"
 WEB_LOCK = ROOT / "requirements-runtime.txt"
