@@ -14,6 +14,7 @@ from threading import Event, RLock, Thread
 from aruba2930f_backup.models import CollectionFailure
 
 from .controls import Controls
+from .manual_queue import ManualRequest, manual_outcome
 from .monitoring import PortMonitoring
 from .operations import Operations, TargetInputError, _groups
 from .port_tools import group_targets
@@ -107,7 +108,9 @@ def _without_excerpts(rows):
 
 
 class Busy(Exception):
-    pass
+    def __init__(self, message, conflicts=()):
+        super().__init__(message)
+        self.conflicts = list(conflicts)
 
 
 class Jobs:
@@ -126,11 +129,26 @@ class Jobs:
             if "folder" not in {col[1] for col in db.execute("PRAGMA table_info(downloads)")}:
                 db.execute("ALTER TABLE downloads ADD COLUMN folder TEXT")
             db.execute(
+                "CREATE TABLE IF NOT EXISTS manual_aliases (id TEXT PRIMARY KEY, job TEXT NOT NULL)"
+            )
+            db.execute(
+                "UPDATE jobs SET state='cancelled',finished=?,summary=? WHERE state='queued'",
+                (now(), "서버가 다시 시작되어 대기 중이던 예약을 취소했습니다."),
+            )
+            db.execute(
+                "UPDATE jobs SET state='uncertain',finished=?,summary=? WHERE state='running' "
+                "AND action IN ('control.quick-execute','cable.test')",
+                (now(), "서버가 작업 중 종료되었습니다. 수동으로 포트 상태를 확인하세요."),
+            )
+            db.execute(
                 "UPDATE jobs SET state='interrupted',finished=?,summary=? WHERE state='running'",
                 (now(), "이전 실행 중 서버가 종료되었습니다."),
             )
         self.lock = RLock()
         self.recent = OrderedDict()
+        self.manual = {}
+        self.pending = OrderedDict()
+        self.busy_workspace = None
         self.port_view = None
         self.active = None
         self.closing = False
@@ -213,77 +231,251 @@ class Jobs:
         with self.lock:
             if self.active:
                 raise Busy("작업을 마치거나 취소한 후 서버를 종료하세요.")
+            self.invalidate_pending("서버 종료로 예약을 취소했습니다.")
             self.monitor = None
             self.closing = True
+
+    def manual_queue(self):
+        with self.lock:
+            items = []
+            for key, entry in self.recent.items():
+                if key not in self.manual:
+                    continue
+                request, queued = self.manual[key]
+                items.append(
+                    {
+                        "id": key,
+                        "action": request.action,
+                        "operation": request.operation,
+                        "targets": request.public_targets(),
+                        "wasQueued": queued,
+                        "state": entry.get("_manual_state", entry["state"]),
+                        "message": entry.get("_manual_message", ""),
+                        "started": entry["started"],
+                        "finished": entry["finished"],
+                    }
+                )
+            return {"items": items}
+
+    def invalidate_pending(self, reason):
+        with self.lock:
+            self._cancel_reservations(tuple(self.pending), reason)
+
+    def _cancel_reservations(self, keys, reason):
+        if not keys:
+            return
+        finished = now()
+        try:
+            with closing(sqlite3.connect(self.db)) as db, db:
+                db.executemany(
+                    "UPDATE jobs SET state='cancelled',finished=?,summary=? WHERE id=?",
+                    ((finished, reason, key) for key in keys),
+                )
+        except sqlite3.Error:
+            # Queued rows left on disk are cancelled on startup. Drop all in-memory
+            # reservations even when the journal is temporarily unwritable.
+            reason += " 작업 이력에 취소를 기록하지 못했습니다."
+        for key in keys:
+            self.pending.pop(key)
+            self.recent[key].update(
+                state="cancelled", finished=finished, error=reason, _manual_message=reason
+            )
+        self._trim_recent()
+
+    def _trim_recent(self):
+        terminal = [
+            key for key, job in self.recent.items() if job["state"] not in ("queued", "running")
+        ]
+        for key in terminal[:-MAX_RESULTS]:
+            self.recent.pop(key)
+            self.manual.pop(key, None)
+
+    def _start_worker(self, key, action, body, persist, queued=False):
+        self.active = key
+        self.cancel_event = Event()
+        self.operations.reset_job_progress()
+        self.recent[key]["state"] = "running"
+        Thread(
+            target=self._run,
+            args=(key, action, body, self.cancel_event, persist, queued),
+            daemon=True,
+        ).start()
+
+    def _next_manual(self):
+        while self.pending and not self.active:
+            key = next(iter(self.pending))
+            if self.closing or self.pending[key] is not self.operations.credentials:
+                self._cancel_reservations((key,), "SSH 세션이 변경되어 예약을 취소했습니다.")
+                continue
+            request, _ = self.manual[key]
+            try:
+                with closing(sqlite3.connect(self.db)) as db, db:
+                    changed = db.execute(
+                        "UPDATE jobs SET state='running' WHERE id=? AND state='queued'", (key,)
+                    )
+                    if changed.rowcount != 1:
+                        raise sqlite3.DatabaseError("missing reservation")
+            except sqlite3.Error:
+                self.invalidate_pending(
+                    "실행 시작을 이력에 기록할 수 없어 대기 중인 예약을 취소했습니다."
+                )
+                return
+            self.pending.pop(key)
+            self.busy_workspace = self.workspace()
+            self._start_worker(key, request.action, request.body(key), True, queued=True)
+
+    def _deduplicate(self, key, request, repeat_message):
+        with closing(sqlite3.connect(self.db)) as db, db:
+            alias = db.execute("SELECT job FROM manual_aliases WHERE id=?", (key,)).fetchone()
+            previous = alias[0] if alias else key
+            if previous in self.manual:
+                existing, _ = self.manual[previous]
+                if request and existing.signature == request.signature:
+                    return previous
+                raise Busy(repeat_message)
+            if (
+                alias
+                or key in self.recent
+                or db.execute("SELECT 1 FROM jobs WHERE id=?", (key,)).fetchone()
+            ):
+                raise Busy(repeat_message)
+            if not request:
+                return None
+            conflicts = []
+            partial_overlap = False
+            for other_id, (other, _) in self.manual.items():
+                if self.recent[other_id]["state"] not in ("queued", "running"):
+                    continue
+                if request.signature == other.signature:
+                    db.execute("INSERT INTO manual_aliases VALUES(?,?)", (key, other_id))
+                    return other_id
+                if request.action == other.action and not set(request.targets).isdisjoint(
+                    other.targets
+                ):
+                    conflicts.append(other_id)
+                    if request.operation == other.operation:
+                        partial_overlap = True
+            if partial_overlap:
+                raise Busy(
+                    "이미 예약했거나 실행 중인 작업과 대상 포트가 일부 겹칩니다. 겹치지 않는 포트만 선택하거나 기존 예약을 취소하세요.",
+                    conflicts,
+                )
+            if conflicts:
+                raise Busy(
+                    "같은 포트에 반대 방향의 PoE 요청이 있습니다. 대기 중인 예약은 취소 후 다시 신청하고, 실행 중인 작업은 완료를 기다리세요.",
+                    conflicts,
+                )
+        return None
 
     def submit(self, action, body, *, monitored=False):
         if not isinstance(action, str) or action not in ACTIONS or not isinstance(body, dict):
             raise ValueError("작업 이름과 입력 형식을 확인하세요.")
         with self.lock:
-            if self.closing or self.active:
-                if self.active and self.monitor and self.monitor.job == self.active:
-                    raise Busy("자동 전력 조회가 진행 중입니다. 조회 완료 후 다시 실행하세요.")
-                raise Busy("다른 작업이 실행 중이거나 서버가 종료 중입니다.")
+            if self.closing:
+                raise Busy("서버가 종료 중입니다.")
             repeat_message = {
                 "control.quick-execute": DUPLICATE_POE_REQUEST,
-                "cable.test": "이미 접수한 케이블 진단입니다. 진행 중인 작업의 완료를 기다려 주세요.",
+                "cable.test": "이미 접수한 케이블 진단입니다. 작업 이력을 확인하세요.",
             }.get(action)
+            request = None
+            queued = False
             if repeat_message:
                 key = body.get("requestId")
                 if not isinstance(key, str) or re.fullmatch(r"[0-9a-f]{32}", key) is None:
                     raise ValueError("작업 요청 식별자가 올바르지 않습니다.")
-                if key in self.recent:
-                    raise Busy(repeat_message)
+                # Immediate legacy callers receive validation errors through their job.
+                # A deferred job must have an exact, confirmed target set before acceptance.
+                try:
+                    request = ManualRequest.parse(action, body)
+                except ValueError:
+                    if self.active and self.monitor and self.monitor.job == self.active:
+                        raise
+                existing = self._deduplicate(key, request, repeat_message)
+                if existing:
+                    return existing
+                if self.active and request:
+                    queued = bool(
+                        self.active in self.manual
+                        or self.pending
+                        or (self.monitor and self.monitor.job == self.active)
+                    )
             else:
                 key = secrets.token_hex(16)
+            if self.active and not queued:
+                raise Busy("다른 작업이 실행 중입니다. 완료 후 다시 실행하세요.")
+            if queued and self.operations.credentials is None:
+                raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
             started = now()
+            state = "queued" if queued else "running"
             persist = action in PERSIST and not monitored
             if persist:
                 with closing(sqlite3.connect(self.db)) as db, db:
-                    try:
-                        db.execute(
-                            "INSERT INTO jobs VALUES(?,?,?,?,?,?,?)",
-                            (key, action, "running", started, None, "", "[]"),
-                        )
-                    except sqlite3.IntegrityError:
-                        if repeat_message:
-                            raise Busy(repeat_message) from None
-                        raise
+                    db.execute(
+                        "INSERT INTO jobs VALUES(?,?,?,?,?,?,?)",
+                        (key, action, state, started, None, "", "[]"),
+                    )
             self.recent[key] = dict(
                 id=key,
                 action=action,
-                state="running",
+                state=state,
                 started=started,
                 finished=None,
                 error="",
                 result=None,
             )
             if action == "cable.test":
-                response_key = body.pop("responseKey", None)
+                response_key = body.get("responseKey")
                 if isinstance(response_key, str) and re.fullmatch(r"[0-9a-f]{32}", response_key):
                     self.recent[key]["_response_key"] = response_key
-            while len(self.recent) > MAX_RESULTS:
-                self.recent.popitem(last=False)
-            self.active = key
-            self.cancel_event = Event()
-            self.operations.reset_job_progress()
-            Thread(
-                target=self._run, args=(key, action, body, self.cancel_event, persist), daemon=True
-            ).start()
+            if request:
+                self.manual[key] = (request, queued)
+            if queued:
+                self.pending[key] = self.operations.credentials
+            else:
+                self.busy_workspace = self.workspace() if (monitored or request) else None
+                body = request.body(key) if request else dict(body)
+                body.pop("responseKey", None)
+                self._start_worker(key, action, body, persist)
+            self._trim_recent()
             return key
 
-    def cancel(self, key):
+    def submit_receipt(self, action, body):
+        with self.lock:
+            key = self.submit(action, body)
+            return {
+                "id": key,
+                "state": self.recent[key]["state"],
+                "wasQueued": key in self.manual and self.manual[key][1],
+            }
+
+    def cancel(self, key, *, queued_only=False):
         with self.lock:
             if key not in self.recent:
                 raise KeyError(key)
+            if key in self.pending:
+                self._cancel_reservations((key,), "운영자가 실행 전에 예약을 취소했습니다.")
+                return {"requested": True}
+            if queued_only:
+                return {"requested": False}
             if key == self.active:
                 self.cancel_event.set()
             return {"requested": key == self.active}
 
     def get(self, key, after=0, *, response_key=None):
         with self.lock:
+            if key not in self.recent:
+                with closing(sqlite3.connect(self.db)) as db:
+                    alias = db.execute(
+                        "SELECT job FROM manual_aliases WHERE id=?", (key,)
+                    ).fetchone()
+                if alias:
+                    key = alias[0]
             item = self.recent[key].copy()
+            if key in self.manual:
+                item["wasQueued"] = self.manual[key][1]
             owner_key = item.pop("_response_key", None)
+            item.pop("_manual_state", None)
+            item.pop("_manual_message", None)
             progress = self.operations.progress_snapshot() if self.active == key else {}
             if self.active == key and item["action"] in {"ports.query", "ports.refresh"}:
                 progress.update(self.operations.query_progress(after))
@@ -310,27 +502,35 @@ class Jobs:
             return dict(item, progress=progress)
 
     def history(self):
-        with closing(sqlite3.connect(self.db)) as db:
+        with self.lock, closing(sqlite3.connect(self.db)) as db:
             db.row_factory = sqlite3.Row
             rows = db.execute(
                 "SELECT * FROM jobs WHERE action != 'ports.export' ORDER BY rowid DESC LIMIT 200"
             )
-            return [
-                dict(
-                    dict(row),
-                    files=[
-                        item
-                        for item in json.loads(row["files"])
-                        if Path(item["name"]).suffix.lower() in EXTENSIONS
-                    ],
-                )
-                for row in rows
-            ]
+            history = []
+            for row in rows:
+                item = dict(row)
+                item["files"] = [
+                    file
+                    for file in json.loads(row["files"])
+                    if Path(file["name"]).suffix.lower() in EXTENSIONS
+                ]
+                if item["state"] == "queued" and item["id"] not in self.pending:
+                    # A write fault may leave the database behind an in-memory cancellation.
+                    job = self.recent.get(item["id"], {})
+                    item.update(
+                        state="cancelled",
+                        finished=job.get("finished"),
+                        summary=job.get("error")
+                        or "예약을 취소했습니다. 이력에 취소를 기록하지 못했습니다.",
+                    )
+                history.append(item)
+            return history
 
     def workspace(self):
         with self.lock:
             if self.active:
-                return {"busy": True}
+                return {**(self.busy_workspace or {}), "busy": True}
             workspace = {"groups": self.operations.inventory_view()}
             if self.operations.query_target_text is not None and self.operations.credentials:
                 workspace["targetText"] = self.operations.query_target_text
@@ -449,9 +649,10 @@ class Jobs:
                 return folder.resolve()
         return file.parent
 
-    def _run(self, key, action, body, cancel, persist):
+    def _run(self, key, action, body, cancel, persist, queued=False):
         result, error, state = None, "", "done"
         failure_code = None
+        uncertain_failure = False
         try:
             if action in {
                 "ports.query",
@@ -466,10 +667,14 @@ class Jobs:
                     observations_changed=action in {"ports.query", "ports.refresh"}
                 )
             service = self.controls if action.startswith("control.") else self.operations
-            result = service.dispatch(action, body, cancel)
+            if queued and action == "control.quick-execute":
+                result = self.controls.dispatch_queued(action, body, cancel)
+            else:
+                result = service.dispatch(action, body, cancel)
             if cancel.is_set():
                 state = "cancelled"
         except (ValueError, CollectionFailure) as exc:
+            uncertain_failure = getattr(exc, "control_outcome_unknown", False)
             if isinstance(exc, CollectionFailure):
                 failure_code = exc.code
             error = getattr(exc, "safe_message", None) or str(exc)
@@ -487,10 +692,24 @@ class Jobs:
                 error = error[:450]
             state = "cancelled" if cancel.is_set() else "failed"
         except Exception:
+            uncertain_failure = True
             error = "작업을 마치지 못했습니다. 대상 및 접속 설정을 확인하세요."
             state = "cancelled" if cancel.is_set() else "failed"
         finally:
             body.clear()
+        manual = self.manual.get(key)
+        outcome = (
+            manual_outcome(
+                manual[0],
+                state,
+                result,
+                error,
+                uncertain_failure,
+                cable_progress=self.operations.cable_progress,
+            )
+            if manual
+            else None
+        )
         files, registrations = [], []
         finished = now()
         try:
@@ -505,7 +724,7 @@ class Jobs:
                     result["files"] = files
             if persist:
                 labels = {"done": "완료", "failed": "실패", "cancelled": "취소됨"}
-                summary = labels[state]
+                history_state, summary = outcome[:2] if outcome else (state, labels[state])
                 if result:
                     rows = result.get("results", result.get("rows", []))
                     if action == "control.quick-execute":
@@ -528,7 +747,13 @@ class Jobs:
                     )
                     db.execute(
                         "UPDATE jobs SET state=?,finished=?,summary=?,files=? WHERE id=?",
-                        (state, finished, summary, json.dumps(files, ensure_ascii=False), key),
+                        (
+                            history_state,
+                            finished,
+                            summary,
+                            json.dumps(files, ensure_ascii=False),
+                            key,
+                        ),
                     )
         except OSError, sqlite3.Error, ValueError, KeyError:
             error, state, result = (
@@ -536,11 +761,18 @@ class Jobs:
                 "failed",
                 None,
             )
+            if manual:
+                outcome = manual_outcome(manual[0], state, None, error, True)
             if persist:
                 with suppress(sqlite3.Error), closing(sqlite3.connect(self.db)) as db, db:
                     db.execute(
                         "UPDATE jobs SET state=?,finished=?,summary=?,files='[]' WHERE id=?",
-                        (state, finished, error, key),
+                        (
+                            outcome[0] if outcome else state,
+                            finished,
+                            outcome[1] if outcome else error,
+                            key,
+                        ),
                     )
         finally:
             with self.lock:
@@ -612,4 +844,18 @@ class Jobs:
                 ):
                     self.monitor = None
                 self.recent[key].update(state=state, finished=finished, result=result, error=error)
-                self.active = self.cancel_event = None
+                self.active = self.cancel_event = self.busy_workspace = None
+                if outcome:
+                    display, message, uncertain = outcome
+                    self.recent[key].update(_manual_state=display, _manual_message=message)
+                    overlapping = tuple(
+                        waiting
+                        for waiting in self.pending
+                        if not uncertain.isdisjoint(self.manual[waiting][0].targets)
+                    )
+                    self._cancel_reservations(
+                        overlapping,
+                        "앞선 작업 결과가 불확실해 예약을 취소했습니다. 해당 포트를 조회한 뒤 다시 신청하세요.",
+                    )
+                self._trim_recent()
+                self._next_manual()

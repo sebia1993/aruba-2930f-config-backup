@@ -25,7 +25,7 @@
     if (active) {
       const scope=Number.isInteger(state.portCount) ? '전체 '+state.portCount+'포트' : (state.jobId ? '전체 포트 수 확인 중' : '전체 포트 수 미확인');
       info.push(scope+' · '+state.intervalMinutes+'분 간격');
-      if (state.jobId) info.push('조회 중');
+      if (state.jobId) info.push('조회 중 · 수동 작업은 예약 가능');
       if (state.lastSuccess) info.push('마지막 성공 '+time(state.lastSuccess));
       if (!state.jobId && state.nextAt) info.push('다음 '+time(state.nextAt));
       if (state.error) info.push((state.suspended?'모니터링 일시 중지':'갱신 지연')+' · '+state.error);
@@ -42,7 +42,9 @@
       firstView=true;
       startText='';
     }
+    const changedReading=!!state.jobId!==!!next.jobId;
     state=next;
+    if (changedReading && window.manualQueue?.hasWork) updateControlTarget();
     notice='';
     syncState();
   }
@@ -171,7 +173,7 @@
   }
   window.powerMonitoring={
     sync:syncState,connect:snapshot=>{if (snapshot) accept(snapshot);},
-    ready,wake,foregroundStarted:()=>{generation++;},
+    ready,wake,isReading:()=>!!state.jobId,foregroundStarted:()=>{generation++;},
   };
   document.addEventListener('visibilitychange',()=>{if (!document.hidden) wake();});
   window.addEventListener('aruba-server-stopped',()=>{

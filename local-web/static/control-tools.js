@@ -73,13 +73,15 @@
     }
   }
   function requestQuick(operation) {
-    if (ui.busy || !ui.token || quickActions.hidden || !controlContextMatches(null) || $('controlMode').value!=='batch') return;
+    if (manualInputBlocked() || !ui.token || quickActions.hidden || !controlContextMatches(null) || $('controlMode').value!=='batch') return;
     const targets = matrixControlTargets(operation);
     if (!targets.length) return notify('빠른 제어를 실행할 포트를 선택하세요.',true);
     if (targets.length > 300) return notify('최대 300포트까지 한 번에 처리할 수 있습니다.',true);
-    clearQuickResult();
-    finishProgress();
-    $('controlResult').replaceChildren(); $('controlResult').hidden = true;
+    if (!window.manualQueue.hasWork()) {
+      clearQuickResult();
+      finishProgress();
+      $('controlResult').replaceChildren(); $('controlResult').hidden = true;
+    }
     const requestId = crypto.randomUUID().replaceAll('-','');
     runSsh('control.quick-execute',{operation,targets,requestId},(result,cancelled)=>showQuickResult(result,cancelled));
   }

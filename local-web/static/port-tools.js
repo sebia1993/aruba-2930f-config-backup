@@ -391,7 +391,7 @@
     if (neighborLabel) facts.push(neighborLabel);
     if (row?.observed_at) facts.push('포트 관측 시각 ' + dateText(row.observed_at));
     const checkLabel = elem('label','', 'inline-check'), check = elem('input'); check.type='checkbox';
-    check.dataset.matrixCheck = key; check.checked = ui.selected.has(key); check.disabled = ui.busy;
+    check.dataset.matrixCheck = key; check.checked = ui.selected.has(key); check.disabled = manualInputBlocked();
     check.onchange = ()=>{if(check.checked)ui.selected.add(key);else ui.selected.delete(key);renderPorts();};
     checkLabel.append(check,document.createTextNode('이 포트 체크'));
     area.replaceChildren(title,powerBadge(view),elem('span',facts.join(' · ')),checkLabel);
@@ -410,15 +410,16 @@
       if (!g) continue;
       const keys=groupCheckKeys(g).filter(key=>available.has(key));
       const count=keys.filter(key=>ui.selected.has(key)).length;
-      node.checked=count>0 && count===keys.length; node.indeterminate=count>0&&!node.checked; node.disabled=ui.busy || !keys.length;
+      node.checked=count>0 && count===keys.length; node.indeterminate=count>0&&!node.checked; node.disabled=manualInputBlocked() || !keys.length;
     }
     const check=matrix.querySelector('[data-matrix-check]');
-    if (check) { check.checked=ui.selected.has(check.dataset.matrixCheck);check.disabled=ui.busy || !available.has(check.dataset.matrixCheck); }
+    if (check) { check.checked=ui.selected.has(check.dataset.matrixCheck);check.disabled=manualInputBlocked() || !available.has(check.dataset.matrixCheck); }
   }
   function selectItem(item) {
     directCableTarget=false;
     focused=item.key;
-    const selectable=!ui.busy && !item.view.failure && !['loading','stale'].includes(item.view.phase);
+    const selectable=!manualInputBlocked() && !item.view.failure && item.view.phase!=='stale' &&
+      (item.view.phase!=='loading' || window.manualQueue?.hasWork?.());
     if (selectable && availableControlTargets().some(target=>controlPortKey(target)===item.key)) {
       if (ui.selected.has(item.key)) ui.selected.delete(item.key); else ui.selected.add(item.key);
       $('controlMode').value='batch';

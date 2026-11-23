@@ -7,7 +7,8 @@
   const stages={clear:'결과 초기화',test:'테스트 실행',show:'결과 조회'};
   const pairOrder=['1-2','3-6','4-5','7-8'];
   const cards=new Map();
-  let displayedScope, activeRun, resumedRun;
+  let displayedScope, resumedRun;
+  const localRuns=new Map();
   const reloadKey='aruba2930f.cable.pendingReload';
   const portKey=row=>endpoint(row)+'|'+row.interface;
   const groupKeys=groups=>new Set(groups.flatMap(group=>group.interfaces.map(port=>endpoint(group)+'|'+port)));
@@ -15,7 +16,7 @@
   // Carry only a pending job ID across this tab's reload. The server keeps the
   // actual measurements and can tell whether a later inspection superseded it.
   window.addEventListener('pagehide',()=>{
-    const run=activeRun || (ui.jobId===resumedRun?.id ? resumedRun : null);
+    const run=localRuns.get(ui.jobId) || (ui.jobId===resumedRun?.id ? resumedRun : null);
     if (!run || !ui.busy || (ui.jobId && ui.jobId!==run.id) ||
         run.scope!==window.portTools.cableScope().targets) return;
     try { sessionStorage.setItem(reloadKey,JSON.stringify({id:run.id,at:Date.now()})); } catch {}
@@ -57,7 +58,10 @@
     $('cableScope').textContent=scope.label+(count ? ' · '+scope.groups.length+'대 / '+count+'포트' : '');
     $('cableTargets').textContent=(scope.groups ? describe(scope.groups) : scope.targets) ||
       '포트·PoE 관리에서 스위치 주소와 포트를 지정하세요.';
-    $('cableTest').disabled=ui.busy || !ui.token || !scope.targets;
+    // This form owns the live result of its immediate foreground diagnosis.
+    // A final pair can be displayed before that worker has released the switch.
+    const runningHere=ui.jobId && (localRuns.has(ui.jobId) || ui.jobId===resumedRun?.id);
+    $('cableTest').disabled=manualInputBlocked() || !!runningHere || !ui.token || !scope.targets;
   }
   function pairTable(row,pairs) {
     const table=elem('table'), headings=table.createTHead().insertRow();
@@ -83,8 +87,8 @@
     }
     return table;
   }
-  function updateReading(row,resumed) {
-    const key=portKey(row), previous=cards.get(key);
+  function readingCard(row,resumed,previous) {
+    const key=portKey(row);
     const card=elem('section',undefined,'cable-reading');
     card.dataset.portKey=key;
     card.dataset.stage=row.stage || '';
@@ -105,6 +109,11 @@
       details.open=!!previous?.querySelector('details')?.open;
       card.append(details);
     }
+    return card;
+  }
+  function updateReading(row,resumed) {
+    const key=portKey(row), previous=cards.get(key);
+    const card=readingCard(row,resumed,previous);
     const restoreFocus=previous?.querySelector('summary')===document.activeElement;
     if (previous) previous.replaceWith(card);
     else if (!cards.size) results.replaceChildren(card);
@@ -120,6 +129,7 @@
   }
   function showProgress(id,rows,resumed=false) {
     if (ui.jobId!==id || !Array.isArray(rows) || !rows.length) return;
+    const activeRun=localRuns.get(id);
     if (resumed) {
       if (!matchesResumedScope(rows)) return;
     } else if (activeRun?.id!==id || activeRun.scope!==window.portTools.cableScope().targets) return;
@@ -146,24 +156,31 @@
     if (!cards.size) results.replaceChildren(elem('p','표시할 측정값이 없습니다.','empty'));
   }
   function current(scope) {
-    return !page.hidden && !ui.busy && ui.token && scope.targets===window.portTools.cableScope().targets;
+    return !page.hidden && !manualInputBlocked() && ui.token && scope.targets===window.portTools.cableScope().targets;
   }
   function execute(scope,targets,groups) {
     withSshAccount(async ()=>{
       if (!current(scope)) return;
       const requestId=crypto.randomUUID().replaceAll('-','');
-      activeRun={id:requestId,scope:scope.targets,ports:groupKeys(groups)};
+      const activeRun={id:requestId,scope:scope.targets,ports:groupKeys(groups)};
+      localRuns.set(requestId,activeRun);
       const body={targets,confirmed:true,requestId,responseKey:crypto.randomUUID().replaceAll('-','')};
       resetResults('대상 포트의 새 측정 결과를 기다리고 있습니다.');
       let received=false;
-      await run('cable.test',body,(result,cancelled)=>{
+      const submission=await run('cable.test',body,(result,cancelled)=>{
         received=true;
         if (window.portTools.cableScope().targets===scope.targets) {
           const rows=(result.rows || []).filter(row=>activeRun.ports.has(portKey(row)));
           showResult({rows},cancelled);
         } else resetResults('진단 대상이 변경되었습니다. 현재 대상으로 진단을 실행하세요.');
       });
-      activeRun=null;
+      localRuns.delete(requestId);
+      if (submission?.background) {
+        if (scope.targets===window.portTools.cableScope().targets) {
+          resetResults(submission.submitted ? '수동 작업 대기열에서 진단 상태와 결과를 확인하세요.' : '수동 작업 대기열의 접수 안내를 확인하세요.');
+        }
+        return;
+      }
       if (!received) {
         const message=$('statusText').textContent || '케이블 진단 결과를 확인할 수 없습니다.';
         if (cards.size && window.portTools.cableScope().targets===scope.targets) {
@@ -171,7 +188,7 @@
           results.prepend(elem('p',message,'warning'));
         } else resetResults(message);
       }
-    });
+    },true);
   }
   $('cableEdit').addEventListener('click',()=>{
     setQueryExpanded(true);
@@ -183,7 +200,10 @@
     resetResults('이번 진단의 측정값이 없습니다.');
     let groups=scope.groups;
     // Use the same range/TSV parser as monitoring before showing the exact affected ports.
-    if (!groups) await run('targets.preview',{targets:scope.targets},result=>{ groups=result.groups; });
+    if (!groups) {
+      try { ({groups}=await api('/api/targets/preview',{targets:scope.targets})); }
+      catch (error) { resetResults(error.message); return; }
+    }
     if (!groups?.length || !current(scope)) return;
     if (groups.some(group=>!group.interfaces.length || group.interfaces.some(port=>!controlPortSupported(port)))) {
       resetResults('포트·PoE 관리에서 진단할 숫자 포트를 지정하거나 조회 결과에서 선택하세요.');
@@ -191,7 +211,7 @@
     }
     const count=groups.reduce((sum,g)=>sum+g.interfaces.length,0);
     const targets=groups.map(g=>endpoint(g)+' '+g.interfaces.join(',')).join('\n');
-    const confirm=button('확인 후 진단 실행',()=>{
+    const confirm=button(window.manualQueue?.hasWork?.() ? '확인 후 진단 예약' : '확인 후 진단 실행',()=>{
       dialog.close();
       if (current(scope)) execute(scope,targets,groups);
     },'primary');
@@ -202,6 +222,6 @@
       elem('pre',describe(groups),'cable-targets'),confirm
     ]);
   };
-  window.cableTools={sync:syncCable,showProgress,showResult,jobOnOpen};
+  window.cableTools={sync:syncCable,showProgress,showResult,readingCard,jobOnOpen};
   syncCable();
 })();

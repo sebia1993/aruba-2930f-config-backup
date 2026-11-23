@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
 
-VERSION = "1.29.0"
+VERSION = "1.30.0"
 STATIC = {
     "/": "index.html",
     "/matrix": "matrix.html",
@@ -48,6 +48,7 @@ STATIC = {
             "control-tools.js",
             "cable-tools.js",
             "monitoring.js",
+            "manual-queue.js",
         )
     },
 }
@@ -219,6 +220,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._fail(503, "전력 추이를 읽지 못했습니다. 데이터 폴더를 확인하세요.")
             elif path == "/api/workspace":
                 self._json(app.jobs.workspace())
+            elif path == "/api/manual-queue":
+                self._json(app.jobs.manual_queue())
             elif path == "/api/monitor":
                 self._json(app.jobs.monitor_status())
             elif re.fullmatch("/api/jobs/" + KEY, path):
@@ -286,7 +289,11 @@ class Handler(BaseHTTPRequestHandler):
                 app.sharing.close()
                 self._json({"active": False})
             elif path == "/api/jobs":
-                self._json({"id": app.jobs.submit(data.get("action"), data.get("body"))}, 202)
+                self._json(app.jobs.submit_receipt(data.get("action"), data.get("body")), 202)
+            elif path == "/api/targets/preview":
+                from localweb.operations import parse_target_preview
+
+                self._json(parse_target_preview(data))
             elif path == "/api/monitor/start":
                 try:
                     status = app.jobs.start_monitor(data)
@@ -296,7 +303,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/monitor/stop":
                 self._json(app.jobs.stop_monitor(data.get("monitorId")))
             elif re.fullmatch("/api/jobs/" + KEY + "/cancel", path):
-                self._json(app.jobs.cancel(path.split("/")[3]))
+                self._json(
+                    app.jobs.cancel(path.split("/")[3], queued_only=data.get("queuedOnly") is True)
+                )
             elif path == "/api/open-folder":
                 handle = data.get("fileId")
                 if not isinstance(handle, str) or not re.fullmatch(KEY, handle):
@@ -321,7 +330,11 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._fail(404, "요청한 작업을 찾을 수 없습니다.")
         except Busy as exc:
-            self._fail(409, str(exc))
+            conflicts = getattr(exc, "conflicts", ())
+            if conflicts:
+                self._json({"error": str(exc), "conflicts": conflicts}, 409)
+            else:
+                self._fail(409, str(exc))
         except ValueError, UnicodeError, RecursionError:
             self._fail(400, "요청한 작업과 입력 형식을 확인하세요.")
         except KeyError:
@@ -379,6 +392,7 @@ class LocalServer(ThreadingHTTPServer):
                 return
             if time.monotonic() < self._close_after:
                 return
+            self.jobs.invalidate_pending("마지막 브라우저 연결이 종료되어 예약을 취소했습니다.")
             self.jobs.stop_monitor()
             try:
                 self.jobs.claim_shutdown()
@@ -393,6 +407,9 @@ class LocalServer(ThreadingHTTPServer):
     def server_close(self):
         with self._browser_lock:
             self._stopping = True
+            # The socket constructor may close before the app has attached its job manager.
+            if hasattr(self, "jobs"):
+                self.jobs.invalidate_pending("서버가 종료되어 예약을 취소했습니다.")
             for connection in self._browsers:
                 with suppress(OSError):
                     connection.shutdown(socket.SHUT_RDWR)
