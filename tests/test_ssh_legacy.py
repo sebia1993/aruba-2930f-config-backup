@@ -70,3 +70,38 @@ def test_detected_legacy_endpoint_does_not_persist_between_sessions() -> None:
     assert session_legacy_ssh.allowed(target)
     session_legacy_ssh.clear()
     assert not session_legacy_ssh.allowed(target)
+
+
+def test_both_windows_distributions_keep_the_reviewed_paramiko_pin() -> None:
+    """A major SSH dependency update must be deliberately reviewed in both builds."""
+    root = Path(__file__).resolve().parents[1]
+    desktop = (root / "requirements-lock.txt").read_text(encoding="utf-8")
+    web = (root / "local-web" / "requirements-runtime.txt").read_text(encoding="utf-8")
+
+    def pinned(lines: str) -> list[str]:
+        return [
+            line.strip()
+            for line in lines.splitlines()
+            if line.strip().lower().startswith("paramiko")
+            and not line.lstrip().startswith("#")
+        ]
+
+    assert pinned(desktop) == ["paramiko==4.0.0"]
+    assert pinned(web) == pinned(desktop)
+
+
+def test_legacy_ssh_downgrade_never_opens_sha1_key_exchange() -> None:
+    """The narrow host-key fallback must not silently enable unsafe KEX."""
+    target = DeviceTarget("192.0.2.50", 22)
+    session_legacy_ssh.clear()
+    try:
+        initial = disabled_sha1_rsa_algorithms(target)
+        assert initial == {"keys": ["ssh-rsa"], "pubkeys": ["ssh-rsa"]}
+        session_legacy_ssh.allow(target)
+        fallback = disabled_sha1_rsa_algorithms(target)
+        assert fallback == {"pubkeys": ["ssh-rsa"]}
+        assert "kex" not in fallback
+        assert "ciphers" not in fallback
+        assert "ssh-rsa" in fallback["pubkeys"]
+    finally:
+        session_legacy_ssh.clear()
