@@ -27,6 +27,7 @@
       info.push(scope+' · '+state.intervalMinutes+'분 간격');
       if (state.jobId) info.push('조회 중 · 수동 작업은 예약 가능');
       if (state.lastSuccess) info.push('마지막 성공 '+time(state.lastSuccess));
+      if (state.skippedRounds > 0) info.push('건너뛴 조회 '+state.skippedRounds+'회');
       if (!state.jobId && state.nextAt) info.push('다음 '+time(state.nextAt));
       if (state.error) info.push((state.suspended?'모니터링 일시 중지':'갱신 지연')+' · '+state.error);
     }

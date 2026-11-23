@@ -31,3 +31,9 @@
 Aruba 2930F/2930M WC.16.08.0021에서 `rsa-sha2-256`, `rsa-sha2-512`, 추가 SHA-2 기반 키 교환 지원이 도입됐습니다. WC.16.01.0008은 더 이전 버전이므로 구형 호스트키 알고리즘을 요구할 수 있습니다. 실제 활성화된 알고리즘은 `show ip ssh`로 확인해 주세요.
 
 https://arubanetworking.hpe.com/techdocs/AOS-Switch-RN/Content/16.08RN/WC/Enhancements.htm
+
+## Paramiko 5.0 업그레이드 검토 (2026-11-23)
+- 데스크톱 `requirements-lock.txt`와 로컬 웹 `requirements-runtime.txt`는 현재 Paramiko `4.0.0`에 고정돼 있습니다.
+- Dependabot PR [#28](https://github.com/sebia1993/aruba-2930f-config-backup/pull/28), [#59](https://github.com/sebia1993/aruba-2930f-config-backup/pull/59)는 Paramiko 5.0.0 변경으로, upstream에서 SHA-1 기반 키 교환 알고리즘과 GSSAPI 지원을 제거합니다. 이것만으로 개별 장비의 협상 가능 여부를 단정할 수는 없습니다.
+- 현재 자동 호환 경로는 *서버 호스트키의 ssh-rsa 서명*만 제한적으로 허용하며 **KEX·cipher의 보안 하향은 허용하지 않습니다**. 따라서 두 PR을 바로 병합하지 않고 현대식 접속, 인증 전 호스트키 재협상, 변경 지문 차단, 지원하지 않는 KEX의 실패 처리를 각각 독립 테스트한 뒤 업그레이드를 판단해야 합니다.
+- 자동 테스트만으로 Paramiko 5.0 장비 호환성 확보를 선언하지 않습니다.
