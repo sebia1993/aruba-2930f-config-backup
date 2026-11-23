@@ -259,20 +259,27 @@ class Jobs:
 
     def invalidate_pending(self, reason):
         with self.lock:
-            for key in tuple(self.pending):
-                self._cancel_pending(key, reason)
+            self._cancel_reservations(tuple(self.pending), reason)
 
-    def _cancel_pending(self, key, reason):
+    def _cancel_reservations(self, keys, reason):
+        if not keys:
+            return
         finished = now()
-        with closing(sqlite3.connect(self.db)) as db, db:
-            db.execute(
-                "UPDATE jobs SET state='cancelled',finished=?,summary=? WHERE id=?",
-                (finished, reason, key),
+        try:
+            with closing(sqlite3.connect(self.db)) as db, db:
+                db.executemany(
+                    "UPDATE jobs SET state='cancelled',finished=?,summary=? WHERE id=?",
+                    ((finished, reason, key) for key in keys),
+                )
+        except sqlite3.Error:
+            # Queued rows left on disk are cancelled on startup. Drop all in-memory
+            # reservations even when the journal is temporarily unwritable.
+            reason += " 작업 이력에 취소를 기록하지 못했습니다."
+        for key in keys:
+            self.pending.pop(key)
+            self.recent[key].update(
+                state="cancelled", finished=finished, error=reason, _manual_message=reason
             )
-        self.pending.pop(key)
-        self.recent[key].update(
-            state="cancelled", finished=finished, error=reason, _manual_message=reason
-        )
         self._trim_recent()
 
     def _trim_recent(self):
@@ -298,11 +305,21 @@ class Jobs:
         while self.pending and not self.active:
             key = next(iter(self.pending))
             if self.closing or self.pending[key] is not self.operations.credentials:
-                self._cancel_pending(key, "SSH 세션이 변경되어 예약을 취소했습니다.")
+                self._cancel_reservations((key,), "SSH 세션이 변경되어 예약을 취소했습니다.")
                 continue
             request, _ = self.manual[key]
-            with closing(sqlite3.connect(self.db)) as db, db:
-                db.execute("UPDATE jobs SET state='running' WHERE id=?", (key,))
+            try:
+                with closing(sqlite3.connect(self.db)) as db, db:
+                    changed = db.execute(
+                        "UPDATE jobs SET state='running' WHERE id=? AND state='queued'", (key,)
+                    )
+                    if changed.rowcount != 1:
+                        raise sqlite3.DatabaseError("missing reservation")
+            except sqlite3.Error:
+                self.invalidate_pending(
+                    "실행 시작을 이력에 기록할 수 없어 대기 중인 예약을 취소했습니다."
+                )
+                return
             self.pending.pop(key)
             self.busy_workspace = self.workspace()
             self._start_worker(key, request.action, request.body(key), True, queued=True)
@@ -436,7 +453,7 @@ class Jobs:
             if key not in self.recent:
                 raise KeyError(key)
             if key in self.pending:
-                self._cancel_pending(key, "운영자가 실행 전에 예약을 취소했습니다.")
+                self._cancel_reservations((key,), "운영자가 실행 전에 예약을 취소했습니다.")
                 return {"requested": True}
             if queued_only:
                 return {"requested": False}
@@ -446,6 +463,13 @@ class Jobs:
 
     def get(self, key, after=0, *, response_key=None):
         with self.lock:
+            if key not in self.recent:
+                with closing(sqlite3.connect(self.db)) as db:
+                    alias = db.execute(
+                        "SELECT job FROM manual_aliases WHERE id=?", (key,)
+                    ).fetchone()
+                if alias:
+                    key = alias[0]
             item = self.recent[key].copy()
             if key in self.manual:
                 item["wasQueued"] = self.manual[key][1]
@@ -478,22 +502,30 @@ class Jobs:
             return dict(item, progress=progress)
 
     def history(self):
-        with closing(sqlite3.connect(self.db)) as db:
+        with self.lock, closing(sqlite3.connect(self.db)) as db:
             db.row_factory = sqlite3.Row
             rows = db.execute(
                 "SELECT * FROM jobs WHERE action != 'ports.export' ORDER BY rowid DESC LIMIT 200"
             )
-            return [
-                dict(
-                    dict(row),
-                    files=[
-                        item
-                        for item in json.loads(row["files"])
-                        if Path(item["name"]).suffix.lower() in EXTENSIONS
-                    ],
-                )
-                for row in rows
-            ]
+            history = []
+            for row in rows:
+                item = dict(row)
+                item["files"] = [
+                    file
+                    for file in json.loads(row["files"])
+                    if Path(file["name"]).suffix.lower() in EXTENSIONS
+                ]
+                if item["state"] == "queued" and item["id"] not in self.pending:
+                    # A write fault may leave the database behind an in-memory cancellation.
+                    job = self.recent.get(item["id"], {})
+                    item.update(
+                        state="cancelled",
+                        finished=job.get("finished"),
+                        summary=job.get("error")
+                        or "예약을 취소했습니다. 이력에 취소를 기록하지 못했습니다.",
+                    )
+                history.append(item)
+            return history
 
     def workspace(self):
         with self.lock:
@@ -667,7 +699,16 @@ class Jobs:
             body.clear()
         manual = self.manual.get(key)
         outcome = (
-            manual_outcome(manual[0], state, result, error, uncertain_failure) if manual else None
+            manual_outcome(
+                manual[0],
+                state,
+                result,
+                error,
+                uncertain_failure,
+                cable_progress=self.operations.cable_progress,
+            )
+            if manual
+            else None
         )
         files, registrations = [], []
         finished = now()
@@ -807,11 +848,14 @@ class Jobs:
                 if outcome:
                     display, message, uncertain = outcome
                     self.recent[key].update(_manual_state=display, _manual_message=message)
-                    for waiting in tuple(self.pending):
-                        if not uncertain.isdisjoint(self.manual[waiting][0].targets):
-                            self._cancel_pending(
-                                waiting,
-                                "앞선 작업 결과가 불확실해 예약을 취소했습니다. 해당 포트를 조회한 뒤 다시 신청하세요.",
-                            )
+                    overlapping = tuple(
+                        waiting
+                        for waiting in self.pending
+                        if not uncertain.isdisjoint(self.manual[waiting][0].targets)
+                    )
+                    self._cancel_reservations(
+                        overlapping,
+                        "앞선 작업 결과가 불확실해 예약을 취소했습니다. 해당 포트를 조회한 뒤 다시 신청하세요.",
+                    )
                 self._trim_recent()
                 self._next_manual()

@@ -8,7 +8,7 @@
   const keys=new Map();
   let conflictIds=new Set();
   let items=[], displayed='', timer, initialized=false, requestNumber=0;
-  let repairWorkspace=false, refreshingWorkspace=false;
+  let workspaceGeneration=0, appliedGeneration=0, refreshingWorkspace=false;
 
   function message(text) {
     notice.textContent=text;
@@ -89,16 +89,17 @@
   }
   // Apply the current server snapshot, never an old reservation's observations.
   async function repair() {
-    if (!repairWorkspace || refreshingWorkspace || ui.busy || !ui.appReady) return;
+    if (workspaceGeneration===appliedGeneration || refreshingWorkspace || ui.busy || !ui.appReady) return;
+    const generation=workspaceGeneration;
     refreshingWorkspace=true;
     try {
       const workspace=await api('/api/workspace');
-      if (workspace.busy || ui.busy) return;
-      repairWorkspace=false;
+      if (workspace.busy || ui.busy || generation!==workspaceGeneration) return;
       if (workspace.query?.rows && window.portTools.matchesInventory(workspace.groups || [])) {
         const rows=workspace.query.rows;
         receivePorts(workspace.query,true,new Set(rows.map(portKey)),true);
       }
+      appliedGeneration=generation;
     } catch { /* Try the authoritative workspace again after reconnecting. */ }
     finally { refreshingWorkspace=false; }
   }
@@ -110,7 +111,7 @@
       const next=snapshot.items, previous=new Map(items.map(item=>[item.id,item]));
       if (next.some(item=>!pending(item) && item.id!==ui.jobId &&
           (pending(previous.get(item.id) || {}) || (initialized && item.wasQueued && !previous.has(item.id))))) {
-        repairWorkspace=true;
+        ++workspaceGeneration;
       }
       const wasBusy=hasWork();
       items=next;

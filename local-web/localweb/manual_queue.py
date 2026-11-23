@@ -53,7 +53,36 @@ class ManualRequest:
         }
 
 
-def manual_outcome(request, state, result, error, uncertain_failure):
+def _row_address(row):
+    return (
+        row.get("ip"),
+        row.get("sshPort", row.get("ssh_port", 22)),
+        row.get("port", row.get("interface")),
+    )
+
+
+def _interrupted_tests(rows, progress):
+    # Cancelled siblings share stage="test" even when only one command was attempted.
+    candidates = {
+        _row_address(row)
+        for row in rows
+        if row.get("status") == "cancelled" and row.get("stage") in {"test", "show"}
+    }
+    if not candidates:
+        return set()
+    attempted = set()
+    cursor = 0
+    while True:
+        page = progress(cursor)
+        if not page["cableRows"]:
+            return candidates & attempted
+        for event in page["cableRows"]:
+            if event.get("stage") in {"test", "show"} and event.get("status") == "pending":
+                attempted.add(_row_address(event))
+        cursor = page["cursor"]
+
+
+def manual_outcome(request, state, result, error, uncertain_failure, *, cable_progress=None):
     """Return display state and the exact ports whose following actions must stop."""
     all_ports = set(request.targets)
     if result is None:
@@ -67,16 +96,19 @@ def manual_outcome(request, state, result, error, uncertain_failure):
     rows = result.get("results", result.get("rows", []))
     by_address = {(d.ip, d.port, p): (d, p) for d, p in request.targets}
     statuses = set()
+    interrupted = (
+        _interrupted_tests(rows, cable_progress) if request.action == "cable.test" else set()
+    )
     uncertain = set()
     for row in rows:
         status = row.get("status")
         statuses.add(status)
-        if status in {"unverified", "result_unknown", "uncertain", "partial"}:
-            key = (
-                row.get("ip"),
-                row.get("sshPort", row.get("ssh_port", 22)),
-                row.get("port", row.get("interface")),
-            )
+        key = _row_address(row)
+        if (
+            status in {"unverified", "result_unknown", "uncertain", "partial"}
+            or key in interrupted
+            or (row.get("stage") == "show" and status in {"unrecognized", "failed"})
+        ):
             if key in by_address:
                 uncertain.add(by_address[key])
             else:

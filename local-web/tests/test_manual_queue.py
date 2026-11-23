@@ -1,14 +1,17 @@
 """Manual reservations share the monitor's device slot and never replay a write."""
 
+import sqlite3
 import tempfile
 import threading
 import time
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, closing, nullcontext
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+from localweb.cable import diagnose_ports
 from localweb.jobs import Busy, Jobs
+from localweb.operations import _groups
 
 from aruba2930f_backup.models import Credentials
 
@@ -65,7 +68,10 @@ class ManualQueueTests(unittest.TestCase):
         self.release_read.set()
         self.release_manual.set()
         until = time.monotonic() + 5
-        while self.jobs.active and time.monotonic() < until:
+        while time.monotonic() < until:
+            with self.jobs.lock:
+                if self.jobs.active is None:
+                    return
             time.sleep(0.005)
 
     @staticmethod
@@ -133,6 +139,41 @@ class ManualQueueTests(unittest.TestCase):
         self.assertFalse(next_receipt["wasQueued"])
         self.assertFalse(self.jobs.get(next_receipt["id"])["wasQueued"])
 
+    def test_alias_recovers_canonical_cable_and_protects_owner_excerpt(self):
+        first = self.cable("1")
+        retry = dict(self.cable("2"), responseKey="8" * 32)
+        canonical = self.jobs.submit("cable.test", first)
+        self.assertEqual(self.jobs.submit("cable.test", retry), canonical)
+        alias = retry["requestId"]
+        details = {
+            "rows": [
+                {
+                    "ip": "192.0.2.1",
+                    "ssh_port": 22,
+                    "interface": "3",
+                    "status": "measured",
+                    "responseExcerpt": "PRIVATE-CLI",
+                }
+            ]
+        }
+        with patch.object(self.jobs.operations, "dispatch", return_value=details) as run:
+            self.finish()
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(self.jobs.get(alias)["id"], canonical)
+        self.assertTrue(self.jobs.get(alias)["wasQueued"])
+        self.assertNotIn(
+            "responseExcerpt",
+            self.jobs.get(alias, response_key=retry["responseKey"])["result"]["rows"][0],
+        )
+        self.assertEqual(
+            self.jobs.get(alias, response_key=first["responseKey"])["result"]["rows"][0][
+                "responseExcerpt"
+            ],
+            "PRIVATE-CLI",
+        )
+        with self.assertRaises(KeyError):
+            Jobs(self.root).get(alias)
+
     def test_opposite_overlap_requires_cancel_and_new_submit(self):
         first = self.jobs.submit("control.quick-execute", self.power("1", ("1", "2")))
         later = self.power("2", ("2",), "poe_on")
@@ -146,6 +187,27 @@ class ManualQueueTests(unittest.TestCase):
         self.assertEqual(self.jobs.get(replacement)["state"], "done")
         self.assertEqual(len(self.log), 1)
 
+    def test_dequeue_without_durable_history_cancels_reservations_without_sending(self):
+        first = self.jobs.submit("control.quick-execute", self.power("1"))
+        second = self.jobs.submit("cable.test", self.cable("2"))
+        with closing(sqlite3.connect(self.jobs.db)) as db, db:
+            # Simulate a journal that still reads, but refuses all queued state updates.
+            db.execute("""CREATE TRIGGER no_queue_writes BEFORE UPDATE OF state ON jobs
+                          WHEN OLD.state='queued' BEGIN SELECT RAISE(FAIL, 'read only'); END""")
+        self.finish()
+        for key in (first, second):
+            self.assertEqual(self.jobs.get(key)["state"], "cancelled")
+            self.assertIn("기록", self.jobs.get(key)["error"])
+        self.assertFalse(self.jobs.pending)
+        self.assertIsNone(self.jobs.active)
+        self.assertFalse(self.log)
+        self.assertEqual({job["state"] for job in self.jobs.history()}, {"cancelled"})
+        # Recovery of the journal never dispatches the previously accepted reservations.
+        with closing(sqlite3.connect(self.jobs.db)) as db, db:
+            db.execute("DROP TRIGGER no_queue_writes")
+        recovered = Jobs(self.root)
+        self.assertEqual({job["state"] for job in recovered.history()}, {"cancelled"})
+
     def test_queued_only_cancel_never_interrupts_a_promoted_job(self):
         promoted = self.jobs.submit("control.quick-execute", self.power("1"))
         queued = self.jobs.submit("cable.test", self.cable("2"))
@@ -156,6 +218,33 @@ class ManualQueueTests(unittest.TestCase):
         self.assertTrue(self.jobs.cancel(queued, queued_only=True)["requested"])
         self.assertTrue(self.jobs.cancel(promoted)["requested"])
         self.assertTrue(self.jobs.cancel_event.is_set())
+
+    def test_cancel_after_cable_send_holds_only_the_attempted_port(self):
+        ops = self.jobs.operations
+        session = Mock()
+
+        def interrupt_test(action, body, cancel):
+            def sent(port, _cancel):
+                cancel.set()
+                return ""
+
+            session.test_cable.side_effect = sent
+            ops._start_progress("케이블 검사", 2)
+            return diagnose_ports(
+                _groups(body), lambda _: nullcontext(session), cancel, ops._progress
+            )
+
+        with patch.object(ops, "dispatch", side_effect=interrupt_test):
+            cable = self.jobs.submit("cable.test", self.cable("1", "1,2"))
+            after_first = self.jobs.submit("control.quick-execute", self.power("2", ("1",)))
+            after_second = self.jobs.submit("control.quick-execute", self.power("3", ("2",)))
+            self.finish()
+        self.assertEqual(session.test_cable.call_count, 1)
+        self.assertEqual(self.jobs.get(cable)["state"], "cancelled")
+        history = next(i for i in self.jobs.history() if i["id"] == cable)
+        self.assertEqual(history["state"], "uncertain")
+        self.assertEqual(self.jobs.get(after_first)["state"], "cancelled")
+        self.assertEqual(self.jobs.get(after_second)["state"], "done")
 
     def test_uncertain_port_stops_overlapping_reservation_only(self):
         self.status = "unverified"

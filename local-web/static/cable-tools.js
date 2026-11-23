@@ -58,10 +58,10 @@
     $('cableScope').textContent=scope.label+(count ? ' · '+scope.groups.length+'대 / '+count+'포트' : '');
     $('cableTargets').textContent=(scope.groups ? describe(scope.groups) : scope.targets) ||
       '포트·PoE 관리에서 스위치 주소와 포트를 지정하세요.';
-    // The final port reading can arrive before its job releases the switch.
-    // Let a second measurement of the same scope start after completion.
-    const sameRunning=ui.jobId && localRuns.get(ui.jobId)?.scope===scope.targets;
-    $('cableTest').disabled=manualInputBlocked() || !!sameRunning || !ui.token || !scope.targets;
+    // This form owns the live result of its immediate foreground diagnosis.
+    // A final pair can be displayed before that worker has released the switch.
+    const runningHere=ui.jobId && (localRuns.has(ui.jobId) || ui.jobId===resumedRun?.id);
+    $('cableTest').disabled=manualInputBlocked() || !!runningHere || !ui.token || !scope.targets;
   }
   function pairTable(row,pairs) {
     const table=elem('table'), headings=table.createTHead().insertRow();

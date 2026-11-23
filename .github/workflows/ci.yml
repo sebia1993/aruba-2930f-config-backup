@@ -109,8 +109,8 @@ jobs:
           $env:PYTHONPATH = (Resolve-Path ./core).Path
           python -m unittest discover -s tests -p 'test_*.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'Local web tests failed.' }
-          node --test tests/test_power_matrix.cjs
-          if ($LASTEXITCODE -ne 0) { throw 'Port power matrix tests failed.' }
+          node --test tests/test_power_matrix.cjs tests/test_manual_queue_ui.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Port matrix or reservation view tests failed.' }
 
       - name: Exercise manual reservations in a Windows browser
         working-directory: local-web
@@ -203,6 +203,10 @@ jobs:
             echo "::error::The release tag already exists."
             exit 1
           fi
+          subject=$(gh api "repos/$REPO/commits/$GITHUB_SHA" --jq '.commit.message | split("\n")[0]')
+          summary=${subject#*] }
           gh release create "$tag" "$zip" "$sidecar" --repo "$REPO" --target "$GITHUB_SHA" \
             --title "Aruba 2930F 로컬 웹 v$version" \
-            --notes "Windows x64용 ZIP을 압축 해제한 뒤 Start-Local-Web.cmd를 실행하세요. 함께 게시된 SHA-256 파일로 다운로드를 검증할 수 있습니다."
+            --notes "$summary
+
+          Windows x64용 ZIP을 압축 해제한 뒤 Start-Local-Web.cmd를 실행하세요. 함께 게시된 SHA-256 파일로 다운로드를 검증할 수 있습니다."
