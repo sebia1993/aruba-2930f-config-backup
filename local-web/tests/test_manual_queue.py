@@ -426,9 +426,7 @@ class ManualQueueTests(unittest.TestCase):
         records = {item["id"]: item for item in self.jobs.history()}
         self.assertEqual(set(records), set(keys))
         self.assertTrue(all(records[key]["state"] == "done" for key in keys))
-        self.assertTrue(
-            all(item["state"] == "done" for item in self.jobs.manual_queue()["items"])
-        )
+        self.assertTrue(all(item["state"] == "done" for item in self.jobs.manual_queue()["items"]))
         self.assertFalse(self.jobs.pending)
         self.assertIsNone(self.jobs.active)
 
