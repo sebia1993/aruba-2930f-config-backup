@@ -816,47 +816,73 @@ class Jobs:
                 plan = (
                     self.monitor if monitored and self.monitor and self.monitor.job == key else None
                 )
-                if result is not None:
-                    self._record_power(sampled_rows(result), plan, result)
-                if action == "ports.query":
-                    if result and "rows" in result:
-                        self._store_port_view(result, monitored=monitored)
-                    elif self.operations.query_started:
-                        self._record_power(
-                            self.operations.invalidate_failed_refresh(cancel.is_set()), plan, result
-                        )
-                        self.port_view = None
-                elif action in {
-                    "ports.refresh",
-                    "control.quick",
-                    "control.quick-execute",
-                    "control.apply",
-                }:
-                    if result and "rows" in result:
-                        self._store_port_view(result, monitored=monitored)
-                    elif state != "done":
-                        invalid = self.operations.invalidate_failed_refresh(cancel.is_set())
-                        if invalid or (action == "ports.refresh" and self.operations.query_started):
-                            self._record_power(invalid, plan, result)
-                            previous = self.port_view["rows"] if self.port_view else []
-                            registered = {
-                                (group["ip"], group["ssh_port"], port)
-                                for group in self.operations.inventory_view()
-                                for port in group["interfaces"]
-                            }
-                            rows = {
-                                (r["ip"], int(r["ssh_port"]), r["interface"]): r
-                                for r in [*previous, *invalid]
-                            }
-                            self._store_port_view(
-                                {"rows": [row for key, row in rows.items() if key in registered]},
-                                monitored=monitored,
+                try:
+                    if result is not None:
+                        self._record_power(sampled_rows(result), plan, result)
+                    if action == "ports.query":
+                        if result and "rows" in result:
+                            self._store_port_view(result, monitored=monitored)
+                        elif self.operations.query_started:
+                            self._record_power(
+                                self.operations.invalidate_failed_refresh(cancel.is_set()), plan, result
                             )
-                elif (
-                    action in {"session.open", "session.close", "targets.apply", "hostkey.forget"}
-                    and state == "done"
-                ):
+                            self.port_view = None
+                    elif action in {
+                        "ports.refresh",
+                        "control.quick",
+                        "control.quick-execute",
+                        "control.apply",
+                    }:
+                        if result and "rows" in result:
+                            self._store_port_view(result, monitored=monitored)
+                        elif state != "done":
+                            invalid = self.operations.invalidate_failed_refresh(cancel.is_set())
+                            if invalid or (action == "ports.refresh" and self.operations.query_started):
+                                self._record_power(invalid, plan, result)
+                                previous = self.port_view["rows"] if self.port_view else []
+                                registered = {
+                                    (group["ip"], group["ssh_port"], port)
+                                    for group in self.operations.inventory_view()
+                                    for port in group["interfaces"]
+                                }
+                                rows = {
+                                    (r["ip"], int(r["ssh_port"]), r["interface"]): r
+                                    for r in [*previous, *invalid]
+                                }
+                                self._store_port_view(
+                                    {"rows": [row for key, row in rows.items() if key in registered]},
+                                    monitored=monitored,
+                                )
+                    elif (
+                        action in {"session.open", "session.close", "targets.apply", "hostkey.forget"}
+                        and state == "done"
+                    ):
+                        self.port_view = None
+
+                except Exception:
+                    # A device command can finish even when its readback or
+                    # workspace/history projection is malformed. Never strand
+                    # the single device slot or replay a possibly sent write.
+                    error = "작업 결과 반영 중 오류가 발생했습니다. 대상 상태를 다시 조회하세요."
+                    state, result = "failed", None
                     self.port_view = None
+                    with suppress(Exception):
+                        self.controls.invalidate(observations_changed=True)
+                    if manual:
+                        outcome = (
+                            "uncertain",
+                            "작업 후 상태를 확인하지 못했습니다. 해당 포트를 직접 조회한 뒤 다시 신청하세요.",
+                            set(manual[0].targets),
+                        )
+                    if persist:
+                        with suppress(sqlite3.Error), closing(sqlite3.connect(self.db)) as db, db:
+                            db.execute(
+                                "UPDATE jobs SET state=?,finished=?,summary=?,files='[]' WHERE id=?",
+                                (outcome[0] if outcome else state,
+                                 finished,
+                                 outcome[1] if outcome else error,
+                                 key),
+                            )
                 plan = self.monitor
                 if plan and plan.job == key:
                     plan.finished(
