@@ -878,10 +878,12 @@ class Jobs:
                         with suppress(sqlite3.Error), closing(sqlite3.connect(self.db)) as db, db:
                             db.execute(
                                 "UPDATE jobs SET state=?,finished=?,summary=?,files='[]' WHERE id=?",
-                                (outcome[0] if outcome else state,
-                                 finished,
-                                 outcome[1] if outcome else error,
-                                 key),
+                                (
+                                    outcome[0] if outcome else state,
+                                    finished,
+                                    outcome[1] if outcome else error,
+                                    key,
+                                ),
                             )
                 plan = self.monitor
                 if plan and plan.job == key:
