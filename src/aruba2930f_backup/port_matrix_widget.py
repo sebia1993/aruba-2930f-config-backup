@@ -140,11 +140,11 @@ class PortMatrixModel(QAbstractTableModel):
         self._row_by_key = {key: i for i, key in enumerate(self._visible)}
         self.endResetModel()
 
-    def set_loading(self, keys: tuple[PortKey, ...]) -> None:
+    def clear_observations(self, keys: tuple[PortKey, ...], *, loading: bool) -> None:
         for key in keys:
             group = self._groups.get(key[0])
             if group is not None and key in self._ports:
-                self._put(key, make_matrix_port(group, key[1], loading=True))
+                self._put(key, make_matrix_port(group, key[1], loading=loading))
 
     def update_observation(self, result: PoEQueryResult) -> None:
         key = (result.group.target.endpoint, result.interface)
@@ -371,7 +371,15 @@ class PortMatrixPanel(QWidget):
         self._refresh_timer.start()
 
     def mark_loading(self, keys: tuple[PortKey, ...]) -> None:
-        self.model.set_loading(keys)
+        self._clear_observations(keys, loading=True)
+
+    def invalidate_port(self, key: PortKey) -> None:
+        self._clear_observations((key,), loading=False)
+
+    def _clear_observations(self, keys: tuple[PortKey, ...], *, loading: bool) -> None:
+        self.model.clear_observations(keys, loading=loading)
+        if self._current in keys:
+            self._show_details()
         self._refresh_timer.start()
 
     def update_result(self, result: PoEQueryResult) -> None:

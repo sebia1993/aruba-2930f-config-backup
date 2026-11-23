@@ -609,6 +609,7 @@ class NetworkManagerWindow(QMainWindow):
         port.matrixTargetsChanged.connect(self.port_matrix.set_targets)
         port.matrixQueryStarted.connect(self.port_matrix.mark_loading)
         port.matrixPortObserved.connect(self.port_matrix.update_result)
+        port.matrixPortInvalidated.connect(self.port_matrix.invalidate_port)
         port.matrixVisibilityChanged.connect(self.port_matrix.filter_to)
         port.result_tree.currentItemChanged.connect(self._port_table_selected)
         self.port_matrix.set_targets(tuple(port._groups))

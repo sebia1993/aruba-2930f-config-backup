@@ -217,6 +217,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
     matrixTargetsChanged = Signal(object)
     matrixQueryStarted = Signal(object)
     matrixPortObserved = Signal(object)
+    matrixPortInvalidated = Signal(object)
     matrixVisibilityChanged = Signal(object)
 
     def __init__(
@@ -1354,6 +1355,15 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         endpoint, interface, phase = cast(tuple[str, str, str], value)
         self.progress_panel.mark_stage(endpoint, interface, phase)
 
+    def _invalidate_control_observation(self, key: tuple[str, str]) -> None:
+        self._results.pop(key, None)
+        item = self._items.get(key)
+        if item is not None:
+            item.setText(1, "재조회 필요")
+            item.setText(2, "—")
+            item.setText(3, "재조회 필요")
+        self.matrixPortInvalidated.emit(key)
+
     @Slot(object)
     def _batch_progress(self, value: object) -> None:
         index, result = cast(tuple[int, BatchResult], value)
@@ -1378,10 +1388,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 BatchStatus.UNVERIFIED,
             ):
                 # Never present a pre-mutation AP identity or power value as current.
-                item.setText(1, "재조회 필요")
-                item.setText(2, "—")
-                item.setText(3, "재조회 필요")
-                self._results.pop(key, None)
+                self._invalidate_control_observation(key)
         self.batch_status.setText(
             f"일괄 작업: {self._batch_count}/{len(self._batch_plan.targets) if self._batch_plan else '?'}개 처리 · "
             f"현재 결과 {result.status.value} · {result.message}"
@@ -1441,12 +1448,9 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         if plan is not None:
             for target in plan.targets:
                 key = (target.target.endpoint, target.interface)
-                self._results.pop(key, None)
+                self._invalidate_control_observation(key)
                 item = self._items.get(key)
                 if item is not None:
-                    item.setText(1, "재조회 필요")
-                    item.setText(2, "—")
-                    item.setText(3, "재조회 필요")
                     item.setText(5, "일괄 작업 실패 · 결과 불확실")
                     item.setToolTip(5, "작업 이력을 확인하고 수동 재조회하세요.")
         self._batch_outcome = None
@@ -1764,11 +1768,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             dialog.deleteLater()
             # A single-port action may have changed the device since query.
             key = (snapshot.target.endpoint, snapshot.interface)
-            self._results.pop(key, None)
+            self._invalidate_control_observation(key)
             if key in self._items:
-                self._items[key].setText(1, "재조회 필요")
-                self._items[key].setText(2, "—")
-                self._items[key].setText(3, "재조회 필요")
                 self._items[key].setText(5, "단일 제어 종료 · 재조회 필요")
             self._batch_plan = None
             self._update_control_buttons()

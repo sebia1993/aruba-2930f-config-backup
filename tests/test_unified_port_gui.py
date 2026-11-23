@@ -177,6 +177,91 @@ def test_batch_execution_clears_stale_ap_and_power_until_requery(
     dialog.close()
 
 
+@pytest.mark.parametrize(
+    "outcome",
+    [*BatchStatus, "worker_failure", "single_dialog"],
+)
+def test_matrix_and_open_details_follow_control_invalidation(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch, outcome: BatchStatus | str
+) -> None:
+    from aruba2930f_backup.manager_gui import NetworkManagerWindow
+    from aruba2930f_backup.port_control_gui import PortControlDialog
+    from aruba2930f_backup.port_status_mapper import MatrixState
+
+    window = NetworkManagerWindow()
+    port = window.port_page
+    matrix = window.port_matrix
+    group = PoETarget(TARGET, ("1", "2", "3"))
+    port._build_results((group,))
+    for interface in group.interfaces:
+        port._on_result(queried(interface))
+    first, second, untouched = [(TARGET.endpoint, interface) for interface in group.interfaces]
+    checked = {first, second} if outcome == "worker_failure" else {first}
+    port._set_checked_keys(checked)
+    matrix.select_port(first, open_details=True)
+    other_reading = matrix.model.port(untouched)
+    assert "AP-1" in matrix.details_text.text()
+    if outcome == "single_dialog":
+        monkeypatch.setattr(PortControlDialog, "exec", lambda _self: QDialog.DialogCode.Rejected)
+        port._open_single_control()
+    else:
+        port._prepare_batch()
+        assert port._batch_plan
+        if outcome == "worker_failure":
+            port._batch_failed("결과 이력 기록 실패")
+        else:
+            assert isinstance(outcome, BatchStatus)
+            port._batch_progress((0, BatchResult(port._batch_plan.targets[0], outcome, "결과")))
+    assert port._checked_port_keys == checked
+    assert matrix.model.key_at(matrix.view.currentIndex()) == first
+    assert matrix.model.port(untouched) is other_reading
+    if outcome in (BatchStatus.UNCHANGED, BatchStatus.PAUSED, BatchStatus.CANCELLED):
+        assert first in port._results and matrix.model.port(first).state is MatrixState.NORMAL
+        assert "AP-1" in matrix.details_text.text()
+    else:
+        for key in checked:
+            assert key not in port._results
+            reading = matrix.model.port(key)
+            assert reading.state is MatrixState.UNKNOWN
+            assert reading.observed_at == ""
+            assert reading.ap == "미수집"
+        assert "AP-1" not in matrix.details_text.text()
+        assert "13.2 W" not in matrix.details_text.text()
+        port._on_result(queried("1"))
+        assert matrix.model.port(first).state is MatrixState.NORMAL
+        assert "AP-1" in matrix.details_text.text()
+    window.close()
+
+
+def test_refresh_clears_open_matrix_details_while_waiting(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aruba2930f_backup.manager_gui import NetworkManagerWindow
+    from aruba2930f_backup.poe_query_gui import PoEQueryDialog
+    from aruba2930f_backup.port_status_mapper import MatrixState
+
+    window = NetworkManagerWindow()
+    port = window.port_page
+    group = PoETarget(TARGET, ("1", "2"))
+    port._build_results((group,))
+    for interface in group.interfaces:
+        port._on_result(queried(interface))
+    key = (TARGET.endpoint, "1")
+    matrix = window.port_matrix
+    matrix.select_port(key, open_details=True)
+    assert "AP-1" in matrix.details_text.text()
+    window._ssh_credentials.configure("operator", "fixture")
+    port.result_tree.setCurrentItem(port._items[key])
+    monkeypatch.setattr(PoEQueryDialog, "_start", lambda *_args: None)
+    port._refresh_port()
+    assert matrix.model.port(key).state is MatrixState.LOADING
+    assert "AP-1" not in matrix.details_text.text()
+    assert "13.2 W" not in matrix.details_text.text()
+    port._on_result(queried("1"))
+    assert "AP-1" in matrix.details_text.text()
+    window.close()
+
+
 def test_unified_tree_accepts_300_switches_with_14400_ports(app: QApplication) -> None:
     dialog = UnifiedPortManagementDialog(username="operator", password="test-password")
     groups = tuple(
