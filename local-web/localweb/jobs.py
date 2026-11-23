@@ -229,9 +229,7 @@ class Jobs:
                 or time.monotonic() < plan.due
             ):
                 return
-            occupied = bool(
-                self.active or self.pending or self.controls.awaiting_confirmation()
-            )
+            occupied = bool(self.active or self.pending or self.controls.awaiting_confirmation())
             plan.advance_to_next_slot(skipped=occupied)
             if occupied:
                 # A queued manual action always wins the next device slot.
