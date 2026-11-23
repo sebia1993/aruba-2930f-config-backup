@@ -411,6 +411,26 @@ class JobTests(unittest.TestCase):
         self.assertEqual(self.finished(self.jobs.submit("session.close", {}))["state"], "done")
         self.assertEqual(registered(), {(explicit, "4")})
 
+    def test_accelerated_24_hour_monitor_cadence_does_not_drift(self):
+        with patch("localweb.monitoring.time.monotonic", return_value=100.0) as clock:
+            plan = PortMonitoring("job", (), "", 1)
+            for minute in range(1, 1441):
+                clock.return_value = 100.0 + minute * 60
+                skipped = minute % 10 == 0
+                plan.advance_to_next_slot(skipped=skipped)
+                if not skipped:
+                    plan.finished(
+                        str(minute),
+                        {"rows": [{"status": "ok", "watts": 8.0}]},
+                        "",
+                        str(minute),
+                        None,
+                    )
+            self.assertEqual(plan.slot, 1440)
+            self.assertEqual(plan.skipped_rounds, 144)
+            self.assertEqual(plan.due, 100.0 + 1441 * 60)
+            self.assertLessEqual(plan.due - clock.return_value, 60)
+
     def test_monitor_schedule_is_anchored_to_start_and_skips_overruns(self):
         with patch("localweb.monitoring.time.monotonic", return_value=100.0) as clock:
             plan = PortMonitoring("job", (), "", 1, job="job")
@@ -426,6 +446,7 @@ class JobTests(unittest.TestCase):
             clock.return_value = 295.0
             plan.finished("next", {}, "SSH timeout", "second", None)
             self.assertEqual(plan.due, 340)
+            self.assertEqual(plan.skipped_rounds, 2)
             self.assertFalse(plan.suspended)
 
     def test_monitor_shared_start_serial_reads_and_exact_endpoints(self):
@@ -608,6 +629,7 @@ class JobTests(unittest.TestCase):
                 self.jobs.monitor.due = time.monotonic() - 0.5
                 self.jobs.tick_monitor()
                 self.assertEqual(self.jobs.active, key)
+                self.assertEqual(self.jobs.monitor_status()["skippedRounds"], 1)
                 self.assertGreater(self.jobs.monitor.due, time.monotonic() + 58)
                 self.assertFalse(self.jobs.stop_monitor()["active"])
             finally:

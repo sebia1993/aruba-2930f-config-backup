@@ -45,6 +45,7 @@
     li.append(heading,state,scope);
     if (item.message) li.append(elem('span',item.message,'queue-message'));
     if (item.state==='queued') {
+      li.append(elem('span','대기 10분을 넘기면 자동 취소됩니다.','queue-message'));
       const action=button('예약 취소',()=>cancel(item.id));
       action.dataset.queueAction='cancel'; li.append(action);
     } else if (!pending(item)) {

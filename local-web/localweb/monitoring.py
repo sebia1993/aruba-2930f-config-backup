@@ -20,6 +20,7 @@ class PortMonitoring:
     error: str = ""
     suspended: bool = False
     slot: int = 0
+    skipped_rounds: int = 0
     port_count: int | None = field(init=False)
     due: float = field(init=False)
     next_at: str | None = None
@@ -32,13 +33,15 @@ class PortMonitoring:
             else sum(len(g.interfaces) for g in self.groups)
         )
 
-    def advance_to_next_slot(self):
+    def advance_to_next_slot(self, *, skipped=False):
         current = time.monotonic()
         period = self.minutes * 60
         if self.due <= current:
             # Advance from the original cadence even if a long read or sleep missed several slots.
             elapsed_slots = int((current - self.due) // period) + 1
             self.slot += elapsed_slots
+            if skipped:
+                self.skipped_rounds += elapsed_slots
             self.due += elapsed_slots * period
         self.next_at = (datetime.now(UTC) + timedelta(seconds=self.due - current)).isoformat(
             timespec="milliseconds"
@@ -89,4 +92,4 @@ class PortMonitoring:
                 self.error = f"{failed}개 포트의 전력 조회가 지연됐습니다."
             else:
                 self.last_success = finished
-        self.advance_to_next_slot()
+        self.advance_to_next_slot(skipped=True)
