@@ -419,7 +419,7 @@
     directCableTarget=false;
     focused=item.key;
     const selectable=!manualInputBlocked() && !item.view.failure && item.view.phase!=='stale' &&
-      (item.view.phase!=='loading' || window.manualQueue?.hasWork());
+      (item.view.phase!=='loading' || window.manualQueue?.hasWork?.());
     if (selectable && availableControlTargets().some(target=>controlPortKey(target)===item.key)) {
       if (ui.selected.has(item.key)) ui.selected.delete(item.key); else ui.selected.add(item.key);
       $('controlMode').value='batch';

@@ -793,7 +793,7 @@ function updateControlTarget() {
   quickActions.hidden = !lastFilter || !batch || !(ui.selected.size || targets.length);
   quickOff.disabled = quickOn.disabled = quickActions.hidden || manualInputBlocked() || !ui.token || !powerEligible;
   for (const [button,name] of [[quickOff,'Power OFF'],[quickOn,'Power ON']]) {
-    const label=name+(window.manualQueue?.hasWork() ? ' 예약' : ' 즉시 실행');
+    const label=name+(window.manualQueue?.hasWork?.() ? ' 예약' : ' 즉시 실행');
     button.setAttribute('aria-label',label);
     button.title=label;
   }
@@ -1206,17 +1206,18 @@ async function start() {
     let resumed;
     const queuedJobs=await window.manualQueue.refresh();
     window.manualQueue.ready();
-    const resumeId=window.cableTools?.jobOnOpen(bootstrap) || bootstrap.busyJob;
-    const resumedManual=queuedJobs.find(item=>item.id===resumeId);
-    if (resumeId && resumeId!==bootstrap.monitor?.jobId && !resumedManual?.wasQueued) {
-      if (resumedManual) {
-        const saved=await api('/api/workspace');
-        if (saved.groups?.length) {
-          window.portTools.restoreInventory(saved.groups,saved.targetText,true);
-          if (saved.query) { receivePorts(saved.query); setQueryWorkspace(saved.query.rows.some(portObserved)); }
-          route();
-        }
+    const resumedManual=queuedJobs.find(item=>item.id===bootstrap.busyJob);
+    if (resumedManual && !resumedManual.wasQueued) {
+      const saved=await api('/api/workspace');
+      if (saved.groups?.length) {
+        window.portTools.restoreInventory(saved.groups,saved.targetText,true);
+        if (saved.query) { receivePorts(saved.query); setQueryWorkspace(saved.query.rows.some(portObserved)); }
+        route();
       }
+    }
+    // Bind the reload marker to the restored cable scope before the next navigation.
+    const resumeId=window.cableTools?.jobOnOpen(bootstrap) || bootstrap.busyJob;
+    if (resumeId && resumeId!==bootstrap.monitor?.jobId && !resumedManual?.wasQueued) {
       ui.manualForeground=!!resumedManual;
       ui.busy = true; ui.jobId = resumeId; sync();
       setJobProgress({});

@@ -44,7 +44,7 @@
     }
     const changedReading=!!state.jobId!==!!next.jobId;
     state=next;
-    if (changedReading && window.manualQueue) updateControlTarget();
+    if (changedReading && window.manualQueue?.hasWork) updateControlTarget();
     notice='';
     syncState();
   }

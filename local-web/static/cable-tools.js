@@ -211,7 +211,7 @@
     }
     const count=groups.reduce((sum,g)=>sum+g.interfaces.length,0);
     const targets=groups.map(g=>endpoint(g)+' '+g.interfaces.join(',')).join('\n');
-    const confirm=button(window.manualQueue?.hasWork() ? '확인 후 진단 예약' : '확인 후 진단 실행',()=>{
+    const confirm=button(window.manualQueue?.hasWork?.() ? '확인 후 진단 예약' : '확인 후 진단 실행',()=>{
       dialog.close();
       if (current(scope)) execute(scope,targets,groups);
     },'primary');
