@@ -61,7 +61,13 @@ class CancellationSignal(Protocol):
 
 ConnectionBuilder = Callable[[DeviceTarget, Credentials, CollectionOptions, HostKeyStore], Any]
 _ALLOWED_SHOW_COMMANDS = frozenset(
-    {"show version", "show modules", "show stacking", "show running-config"}
+    {
+        "show version",
+        "show modules",
+        "show stacking",
+        "show system information",
+        "show running-config",
+    }
 )
 
 

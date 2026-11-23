@@ -13,6 +13,7 @@ from functools import partial
 from typing import Protocol
 
 from .hostkeys import HostKeyProbe, HostKeyStore, ParamikoHostKeyProbe
+from .hostname_discovery import resolve_switch_hostname
 from .models import (
     CollectionFailure,
     CollectionOptions,
@@ -43,7 +44,7 @@ from .port_control import (
     parse_poe_status,
 )
 from .port_control_ssh import PortControlSSHSession
-from .validation import SUPPORTED_MODELS, hostname_from_prompt, identify_connected_device
+from .validation import SUPPORTED_MODELS, identify_connected_device
 
 
 class QuerySession(PortSession, Protocol):
@@ -262,11 +263,18 @@ class PoEQueryService:
             _bounded(cancel, session.set_terminal_width)
             version = _bounded(cancel, lambda: session.send_show("show version"))
             modules = _bounded(cancel, lambda: session.send_show("show modules"))
-            identity = identify_connected_device(
-                version,
-                modules,
-                lambda: _bounded(cancel, lambda: session.send_show("show stacking")),
-                hostname=hostname_from_prompt(_bounded(cancel, session.get_prompt)),
+            resolved = _bounded(
+                cancel,
+                lambda: resolve_switch_hostname(session, before_read=lambda: _check_cancel(cancel)),
+            )
+            identity = replace(
+                identify_connected_device(
+                    version,
+                    modules,
+                    lambda: _bounded(cancel, lambda: session.send_show("show stacking")),
+                    hostname=resolved.hostname,
+                ),
+                hostname_source=resolved.source,
             )
             # AOS-S show interfaces brief reports all local interfaces.
             # Reading it once per switch prevents hundreds of duplicate SSH

@@ -64,6 +64,7 @@ class Device:
         self.poe_format = "legacy"
         self.sku = "JL255A"
         self.hostname = "edge-lab"
+        self.system_name: str | None = None
         self.fingerprint = sha256_fingerprint(b"synthetic-port-control-key")
         self.mutations: list[tuple[str, str]] = []
         self.sessions: list[Session] = []
@@ -116,8 +117,18 @@ class Session:
     def send_show(self, command: str) -> str:
         if command == "show version":
             return f"Aruba {self.device.sku} 2930F Switch\nSoftware revision WC.16.11.0025"
-        assert command == "show modules"
-        return f"Chassis: Aruba 2930F {self.device.sku}"
+        if command == "show modules":
+            return f"Chassis: Aruba 2930F {self.device.sku}"
+        system_name = (
+            self.device.system_name if self.device.system_name is not None else self.device.hostname
+        )
+        if command == "show system information":
+            return (
+                f"Status and Counters - General System Information\nSystem Name : {system_name}\n"
+            )
+        if command == "show running-config":
+            return f'hostname "{system_name}"\n' if system_name else "vlan 1\n"
+        raise AssertionError(f"Unexpected show command: {command}")
 
     def read_interfaces(self) -> str:
         d = self.device
@@ -217,6 +228,87 @@ def test_each_action_changes_only_its_setting_and_is_verified(
     assert [row["status"] for row in records] == ["pending", "verified"]
     assert records[0]["interface"] == "24"
     assert CREDENTIALS.password not in result.audit_path.read_text()
+
+
+def test_port_preflight_uses_system_name_instead_of_prompt_alias(
+    setup: Any,
+) -> None:
+    service, device, _clock = setup
+    device.hostname = "alias-2930"
+    device.system_name = "ACTUAL-SW-2930"
+    device.poe_enabled = False
+    snapshot = inspect(service, device)
+    assert snapshot.hostname == "ACTUAL-SW-2930"
+    device.hostname = "different-alias"
+    result = service.apply(
+        snapshot,
+        PortAction.POE_ON,
+        CREDENTIALS,
+        confirmation=snapshot.confirmation_text,
+    )
+    assert result.status == "verified"
+    assert result.after.hostname == "ACTUAL-SW-2930"
+    assert device.mutations == [("24", "poe_on")]
+
+
+def test_poe_on_accepts_unknown_hostname_when_fingerprint_and_settings_match(
+    setup: Any,
+) -> None:
+    service, device, _clock = setup
+    device.poe_enabled = False
+    device.hostname = ""
+    snapshot = inspect(service, device)
+    assert snapshot.hostname == "확인 불가"
+    # A subsequent SSH session may provide a parseable prompt hostname.
+    device.hostname = "edge-lab"
+    result = service.apply(
+        snapshot,
+        PortAction.POE_ON,
+        CREDENTIALS,
+        confirmation=snapshot.confirmation_text,
+    )
+    assert result.status == "verified"
+    assert device.mutations == [("24", "poe_on")]
+
+
+def test_poe_on_does_not_accept_changed_known_hostname_or_settings(
+    setup: Any,
+) -> None:
+    service, device, _clock = setup
+    device.poe_enabled = False
+    snapshot = inspect(service, device)
+    device.hostname = "unexpected-host"
+    with pytest.raises((ValueError, CollectionFailure)):
+        service.apply(
+            snapshot,
+            PortAction.POE_ON,
+            CREDENTIALS,
+            confirmation=snapshot.confirmation_text,
+        )
+    assert device.mutations == []
+
+
+def test_poe_on_allows_missing_hostname_after_change_without_unverified(
+    setup: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, device, _clock = setup
+    device.poe_enabled = False
+    snapshot = inspect(service, device)
+    original = Session.change_port
+
+    def change_then_lose_hostname(self: Session, interface: str, action: str) -> None:
+        original(self, interface, action)
+        self.device.hostname = ""
+
+    monkeypatch.setattr(Session, "change_port", change_then_lose_hostname)
+    result = service.apply(
+        snapshot,
+        PortAction.POE_ON,
+        CREDENTIALS,
+        confirmation=snapshot.confirmation_text,
+    )
+    assert result.status == "verified"
+    assert device.mutations == [("24", "poe_on")]
 
 
 def test_already_desired_state_sends_no_change(setup: Any) -> None:

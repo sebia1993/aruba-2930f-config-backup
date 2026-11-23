@@ -213,6 +213,13 @@ class BatchConfirmationDialog(QDialog):
 class UnifiedPortManagementDialog(PoEQueryDialog):
     """Reuse the proven query UI; add an independent, fail-closed batch console."""
 
+    # Read-only view notifications. Existing checkbox/PoE controls own all writes.
+    matrixTargetsChanged = Signal(object)
+    matrixQueryStarted = Signal(object)
+    matrixPortObserved = Signal(object)
+    matrixPortInvalidated = Signal(object)
+    matrixVisibilityChanged = Signal(object)
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -342,6 +349,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         """An updated device inventory must never inherit stale checked ports."""
         if not hasattr(self, "_checked_port_keys"):
             super()._build_results(groups)
+            self.matrixTargetsChanged.emit(groups)
             return
         self._checked_port_keys.clear()
         with QSignalBlocker(self.result_tree):
@@ -353,6 +361,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                         0, Qt.CheckState.Unchecked
                     )
         self._clear_batch_plan("조회 대상 변경으로 포트 체크를 초기화했습니다.")
+        self.matrixTargetsChanged.emit(groups)
         self._selection_summary_timer.start()
 
     def _selection_locked(self) -> bool:
@@ -697,11 +706,15 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 item.setHidden(not shown)
                 visible = visible or shown
             parent.setHidden(not visible)
+        self.matrixVisibilityChanged.emit(
+            {key for key, item in self._items.items() if not item.isHidden()}
+        )
         self._selection_summary_timer.start()
 
     def _apply_result(self, value: object) -> None:
         super()._apply_result(value)
         result = cast(PoEQueryResult, value)
+        self.matrixPortObserved.emit(result)
         if self._thread is not None and result.complete:
             self.progress_panel.update_query(
                 self._run_total - len(self._pending),
@@ -1125,12 +1138,16 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                     parent.setCheckState(0, Qt.CheckState.Unchecked)
             self._checked_port_keys.clear()
         super()._invalidate()
+        # Never display a stale healthy tile after the operator edits IP/port targets.
+        self.matrixTargetsChanged.emit(())
         if hasattr(self, "plan_preview"):
             self.plan_preview.setText("입력 대상이 변경되어 작업 계획을 초기화했습니다.")
         if hasattr(self, "cycle_button"):
             self._update_cycle_controls()
 
-    def _start(self, groups: tuple[PoETarget, ...], credentials: Credentials) -> None:
+    def _start(
+        self, groups: tuple[PoETarget, ...], credentials: Credentials, full_query: bool = False
+    ) -> None:
         # A manual refresh invalidates frozen control plans. An ON plan must
         # remain recoverable via a fresh read of the *original verified OFF*
         # targets; never strand powered-off APs behind a disabled wizard.
@@ -1154,7 +1171,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             preflight=pending is not None,
             action=ACTION_TITLES[pending[0]] if pending is not None else "",
         )
-        super()._start(groups, credentials)
+        self.matrixQueryStarted.emit(tuple(self._progress_query_keys))
+        super()._start(groups, credentials, full_query)
 
     def _selected_rows(self) -> tuple[PoEQueryResult, ...]:
         """Only checked ports can enter a change plan; focus is for details."""
@@ -1337,6 +1355,15 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         endpoint, interface, phase = cast(tuple[str, str, str], value)
         self.progress_panel.mark_stage(endpoint, interface, phase)
 
+    def _invalidate_control_observation(self, key: tuple[str, str]) -> None:
+        self._results.pop(key, None)
+        item = self._items.get(key)
+        if item is not None:
+            item.setText(1, "재조회 필요")
+            item.setText(2, "—")
+            item.setText(3, "재조회 필요")
+        self.matrixPortInvalidated.emit(key)
+
     @Slot(object)
     def _batch_progress(self, value: object) -> None:
         index, result = cast(tuple[int, BatchResult], value)
@@ -1361,10 +1388,7 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
                 BatchStatus.UNVERIFIED,
             ):
                 # Never present a pre-mutation AP identity or power value as current.
-                item.setText(1, "재조회 필요")
-                item.setText(2, "—")
-                item.setText(3, "재조회 필요")
-                self._results.pop(key, None)
+                self._invalidate_control_observation(key)
         self.batch_status.setText(
             f"일괄 작업: {self._batch_count}/{len(self._batch_plan.targets) if self._batch_plan else '?'}개 처리 · "
             f"현재 결과 {result.status.value} · {result.message}"
@@ -1424,12 +1448,9 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
         if plan is not None:
             for target in plan.targets:
                 key = (target.target.endpoint, target.interface)
-                self._results.pop(key, None)
+                self._invalidate_control_observation(key)
                 item = self._items.get(key)
                 if item is not None:
-                    item.setText(1, "재조회 필요")
-                    item.setText(2, "—")
-                    item.setText(3, "재조회 필요")
                     item.setText(5, "일괄 작업 실패 · 결과 불확실")
                     item.setToolTip(5, "작업 이력을 확인하고 수동 재조회하세요.")
         self._batch_outcome = None
@@ -1747,11 +1768,8 @@ class UnifiedPortManagementDialog(PoEQueryDialog):
             dialog.deleteLater()
             # A single-port action may have changed the device since query.
             key = (snapshot.target.endpoint, snapshot.interface)
-            self._results.pop(key, None)
+            self._invalidate_control_observation(key)
             if key in self._items:
-                self._items[key].setText(1, "재조회 필요")
-                self._items[key].setText(2, "—")
-                self._items[key].setText(3, "재조회 필요")
                 self._items[key].setText(5, "단일 제어 종료 · 재조회 필요")
             self._batch_plan = None
             self._update_control_buttons()
