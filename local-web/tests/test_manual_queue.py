@@ -363,9 +363,7 @@ class ManualQueueTests(unittest.TestCase):
             calls.append(cursor)
             return {
                 "cursor": cursor,
-                "cableRows": [
-                    dict(rows[0], stage="test", status="pending")
-                ],
+                "cableRows": [dict(rows[0], stage="test", status="pending")],
             }
 
         self.assertEqual(
@@ -401,9 +399,7 @@ class ManualQueueTests(unittest.TestCase):
         self.assertEqual(items[first]["state"], "uncertain")
         self.assertEqual(items[overlap]["state"], "cancelled")
         self.assertEqual(items[unrelated]["state"], "done")
-        self.assertEqual([item[0] for item in self.log], [
-            "control.quick-execute", "cable.test"
-        ])
+        self.assertEqual([item[0] for item in self.log], ["control.quick-execute", "cable.test"])
         record = next(item for item in self.jobs.history() if item["id"] == first)
         self.assertEqual(record["state"], "uncertain")
 
@@ -424,9 +420,9 @@ class ManualQueueTests(unittest.TestCase):
         self.assertEqual(self.jobs.monitor_status()["skippedRounds"], 1)
         self.release_manual.set()
         self.finish()
-        self.assertEqual([item[1]["targets"][0]["port"] for item in self.log], [
-            str(i) for i in range(1, 13)
-        ])
+        self.assertEqual(
+            [item[1]["targets"][0]["port"] for item in self.log], [str(i) for i in range(1, 13)]
+        )
         self.assertEqual(
             [item["state"] for item in self.jobs.manual_queue()["items"]], ["done"] * 12
         )
