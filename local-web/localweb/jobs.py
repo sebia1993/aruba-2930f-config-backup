@@ -824,7 +824,9 @@ class Jobs:
                             self._store_port_view(result, monitored=monitored)
                         elif self.operations.query_started:
                             self._record_power(
-                                self.operations.invalidate_failed_refresh(cancel.is_set()), plan, result
+                                self.operations.invalidate_failed_refresh(cancel.is_set()),
+                                plan,
+                                result,
                             )
                             self.port_view = None
                     elif action in {
@@ -837,7 +839,9 @@ class Jobs:
                             self._store_port_view(result, monitored=monitored)
                         elif state != "done":
                             invalid = self.operations.invalidate_failed_refresh(cancel.is_set())
-                            if invalid or (action == "ports.refresh" and self.operations.query_started):
+                            if invalid or (
+                                action == "ports.refresh" and self.operations.query_started
+                            ):
                                 self._record_power(invalid, plan, result)
                                 previous = self.port_view["rows"] if self.port_view else []
                                 registered = {
@@ -850,11 +854,16 @@ class Jobs:
                                     for r in [*previous, *invalid]
                                 }
                                 self._store_port_view(
-                                    {"rows": [row for key, row in rows.items() if key in registered]},
+                                    {
+                                        "rows": [
+                                            row for key, row in rows.items() if key in registered
+                                        ]
+                                    },
                                     monitored=monitored,
                                 )
                     elif (
-                        action in {"session.open", "session.close", "targets.apply", "hostkey.forget"}
+                        action
+                        in {"session.open", "session.close", "targets.apply", "hostkey.forget"}
                         and state == "done"
                     ):
                         self.port_view = None
