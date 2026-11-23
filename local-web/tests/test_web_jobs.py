@@ -439,9 +439,7 @@ class JobTests(unittest.TestCase):
                 self.jobs, "_record_power", side_effect=RuntimeError("simulated store error")
             ),
         ):
-            started = self.jobs.start_monitor(
-                {"targets": "192.0.2.5 1-2", "intervalMinutes": 1}
-            )
+            started = self.jobs.start_monitor({"targets": "192.0.2.5 1-2", "intervalMinutes": 1})
             failed = self.finished(started["jobId"])
 
         self.assertEqual(failed["state"], "failed")
