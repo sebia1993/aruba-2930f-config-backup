@@ -82,8 +82,7 @@ def test_both_windows_distributions_keep_the_reviewed_paramiko_pin() -> None:
         return [
             line.strip()
             for line in lines.splitlines()
-            if line.strip().lower().startswith("paramiko")
-            and not line.lstrip().startswith("#")
+            if line.strip().lower().startswith("paramiko") and not line.lstrip().startswith("#")
         ]
 
     assert pinned(desktop) == ["paramiko==4.0.0"]
