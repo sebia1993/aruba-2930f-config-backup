@@ -91,6 +91,120 @@ def setup_dialog(qtbot: object) -> tuple[PoEQueryDialog, FakeService]:
     return dialog, service
 
 
+def test_only_full_query_reports_success_after_results_are_visible(
+    app: QApplication, qtbot: object
+) -> None:
+    dialog, _service = setup_dialog(qtbot)
+    dialog._replace_targets_rows((("192.0.2.1", "22", "1", ""),))
+    observed = []
+    dialog.full_query_succeeded.connect(
+        lambda: observed.append(
+            (dialog.is_busy, dialog.result_tree.topLevelItem(0).child(0).text(1))
+        )
+    )
+    dialog.collect_button.click()
+    qtbot.waitUntil(lambda: not dialog.is_busy)
+    dialog.result_tree.setCurrentItem(dialog.result_tree.topLevelItem(0).child(0))
+    # The exact same target set is possible for all three operations.
+    for refresh in (dialog.refresh_port_button, dialog.refresh_group_button):
+        refresh.click()
+        qtbot.waitUntil(lambda: not dialog.is_busy)
+    assert observed == [(False, "AP-1")]
+    dialog.collect_button.click()
+    qtbot.waitUntil(lambda: not dialog.is_busy)
+    assert observed == [(False, "AP-1"), (False, "AP-1")]
+
+
+@pytest.mark.parametrize("outcome", ["auth", "lldp", "incomplete", "worker_error"])
+def test_failed_full_query_does_not_report_success(
+    app: QApplication, qtbot: object, outcome: str
+) -> None:
+    from dataclasses import replace
+
+    from aruba2930f_backup.models import ErrorCode
+    from aruba2930f_backup.poe_power import LLDPObservation, LLDPStatus
+
+    dialog, service = setup_dialog(qtbot)
+    dialog._replace_targets_rows((("192.0.2.1", "22", "1,2", ""),))
+
+    def collect(
+        groups: Sequence[PoETarget],
+        credentials: Credentials,
+        *,
+        on_result: Callable[[PoEQueryResult], None],
+        **kwargs: object,
+    ) -> tuple[PoEQueryResult, ...]:
+        first = phase_result(groups[0])
+        on_result(first)
+        second = replace(first, interface="2")
+        if outcome == "worker_error":
+            on_result(second)
+            raise RuntimeError("Worker interrupted after publishing observations")
+        if outcome == "auth":
+            return (
+                PoEQueryResult(
+                    groups[0], "2", QueryStatus.FAILED, error_code=ErrorCode.AUTH_FAILED
+                ),
+            )
+        if outcome == "incomplete":
+            return (replace(second, complete=False),)
+        return (replace(second, lldp=LLDPObservation(LLDPStatus.FAILED)),)
+
+    service.collect = collect
+    completed = []
+    dialog.full_query_succeeded.connect(lambda: completed.append(True))
+    dialog.collect_button.click()
+    qtbot.waitUntil(lambda: not dialog.is_busy)
+    assert not completed
+
+
+def test_cancelled_full_query_does_not_report_success_after_observations_arrive(
+    app: QApplication, qtbot: object
+) -> None:
+    dialog, service = setup_dialog(qtbot)
+    dialog._replace_targets_rows((("192.0.2.1", "22", "1", ""),))
+    release = threading.Event()
+
+    def collect(
+        groups: Sequence[PoETarget],
+        credentials: Credentials,
+        *,
+        on_result: Callable[[PoEQueryResult], None],
+        **kwargs: object,
+    ) -> tuple[PoEQueryResult, ...]:
+        row = phase_result(groups[0])
+        on_result(row)
+        assert release.wait(3)
+        return (row,)
+
+    service.collect = collect
+    completed = []
+    dialog.full_query_succeeded.connect(lambda: completed.append(True))
+    dialog.collect_button.click()
+    try:
+        qtbot.waitUntil(lambda: bool(dialog._results))
+        dialog.stop_button.click()
+    finally:
+        release.set()
+    qtbot.waitUntil(lambda: not dialog.is_busy)
+    assert not completed
+
+
+def test_full_query_reports_success_after_coalesced_rows_are_rendered(
+    app: QApplication, qtbot: object
+) -> None:
+    dialog, _service = setup_dialog(qtbot)
+    dialog._replace_targets_rows(tuple((f"192.0.2.{n}", "22", "1", "") for n in range(1, 101)))
+    dialog._render_timer.setInterval(60_000)
+    rendered = []
+    dialog.full_query_succeeded.connect(
+        lambda: rendered.append(sum(item.text(1) == "AP-1" for item in dialog._items.values()))
+    )
+    dialog.collect_button.click()
+    qtbot.waitUntil(lambda: not dialog.is_busy)
+    assert rendered == [100]
+
+
 def test_target_pairing_merge_group_results_and_edit_invalidation(
     app: QApplication, qtbot: object
 ) -> None:

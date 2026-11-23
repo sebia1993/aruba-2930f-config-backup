@@ -52,16 +52,26 @@ class PortProgressPanel(QFrame):
         self.details_toggle.setCheckable(True)
         top.addWidget(self.details_toggle)
         outer.addLayout(top)
+        self._header_layout = top
+        self._body_layout = outer
 
-        self.stage = QLabel("전체 조회 또는 PoE 작업을 시작하면 진행 상황이 표시됩니다.", self)
+        self._compact = False
+        self._summary = QWidget(self)
+        summary = QVBoxLayout(self._summary)
+        summary.setContentsMargins(0, 0, 0, 0)
+        summary.setSpacing(4)
+        self.stage = QLabel(
+            "전체 조회 또는 PoE 작업을 시작하면 진행 상황이 표시됩니다.", self._summary
+        )
         self.stage.setWordWrap(True)
         self.stage.setObjectName("portProgressStage")
-        outer.addWidget(self.stage)
-        self.progress = QProgressBar(self)
+        summary.addWidget(self.stage)
+        self.progress = QProgressBar(self._summary)
         self.progress.setObjectName("portProgressBar")
         self.progress.setTextVisible(True)
         self.progress.hide()
-        outer.addWidget(self.progress)
+        summary.addWidget(self.progress)
+        outer.addWidget(self._summary)
         self.counts = QLabel("작업 대기", self)
         self.counts.setObjectName("portProgressCounts")
         self.counts.setWordWrap(True)
@@ -76,6 +86,20 @@ class PortProgressPanel(QFrame):
         self.details_tree.hide()
         outer.addWidget(self.details_tree)
         self.details_toggle.toggled.connect(self.details_tree.setVisible)
+        self.details_toggle.toggled.connect(self._show_summary)
+
+    def set_compact(self, compact: bool) -> None:
+        self._compact = compact
+        if compact:
+            self._header_layout.insertWidget(1, self.counts, 3)
+        else:
+            self._body_layout.insertWidget(
+                self._body_layout.indexOf(self.details_tree), self.counts
+            )
+        self._show_summary(self.details_toggle.isChecked())
+
+    def _show_summary(self, expanded: bool) -> None:
+        self._summary.setVisible(expanded or not self._compact)
 
     def _reset(self) -> None:
         self._mode = ""

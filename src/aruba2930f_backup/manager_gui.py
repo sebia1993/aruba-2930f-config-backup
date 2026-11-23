@@ -9,17 +9,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from zipfile import BadZipFile
 
 from openpyxl import load_workbook
-from PySide6.QtCore import Qt, QTimer, QUrl, Slot
-from PySide6.QtGui import QCloseEvent, QDesktopServices
+from PySide6.QtCore import QByteArray, QSize, Qt, QTimer, QUrl, Slot
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QFrame,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QStackedWidget,
+    QTabBar,
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -38,12 +40,16 @@ from PySide6.QtWidgets import (
 )
 
 from .batch_port_control import BatchControlError, journal_states
+from .developer_inspector import _fit_window_to_available_screen
 from .gui import MainWindow
 from .home_shortcuts import HomeShortcutButton
 from .models import Credentials
+from .port_matrix_widget import PortMatrixPanel
+from .port_status_mapper import PortKey
 from .session_credentials import SessionCredentialDialog, SessionCredentialStore
 from .ssh_legacy import session_legacy_ssh
 from .storage import default_output_directory
+from .ui_theme import selected_theme, set_theme
 from .unified_port_gui import UnifiedPortManagementDialog
 
 if TYPE_CHECKING:
@@ -171,8 +177,11 @@ class NetworkManagerWindow(QMainWindow):
         super().__init__(parent)
         self.setObjectName("networkManagerWindow")
         self.setWindowTitle("Aruba 2930F · 네트워크 통합 관리")
-        self.resize(1320, 840)
-        self.setMinimumSize(820, 540)
+        _fit_window_to_available_screen(
+            self, QSize(1320, 840), minimum_size=QSize(820, 540), margin=32, center_on_parent=True
+        )
+        self._compact_ports = False
+        self._port_header_states: dict[bool, QByteArray] = {}
         self._navigation_buttons: list[QPushButton] = []
         self._page_index = 0
         self._history_paths: dict[int, Path] = {}
@@ -218,7 +227,28 @@ class NetworkManagerWindow(QMainWindow):
         title_font.setPointSize(max(12, title_font.pointSize() + 4))
         title_font.setBold(True)
         self.page_title.setFont(title_font)
-        content_layout.addWidget(self.page_title)
+        heading_row = QHBoxLayout()
+        heading_row.setSpacing(7)
+        heading_row.addWidget(self.page_title, 1)
+        # One joined two-segment control, not two visually separated buttons.
+        self.theme_segmented_control = QFrame(content)
+        self.theme_segmented_control.setObjectName("themeSegmentedControl")
+        theme_segments = QHBoxLayout(self.theme_segmented_control)
+        theme_segments.setContentsMargins(2, 2, 2, 2)
+        theme_segments.setSpacing(0)
+        self.theme_light_button = QPushButton("라이트", self.theme_segmented_control)
+        self.theme_light_button.setObjectName("themeLight")
+        self.theme_dark_button = QPushButton("다크", self.theme_segmented_control)
+        self.theme_dark_button.setObjectName("themeDark")
+        for button in (self.theme_light_button, self.theme_dark_button):
+            button.setCheckable(True)
+            button.setMinimumSize(72, 34)
+            button.setToolTip("한 번 클릭하면 프로그램 전체 테마가 바뀝니다.")
+            theme_segments.addWidget(button)
+        self.theme_light_button.clicked.connect(lambda: self._apply_appearance("light"))
+        self.theme_dark_button.clicked.connect(lambda: self._apply_appearance("dark"))
+        heading_row.addWidget(self.theme_segmented_control)
+        content_layout.addLayout(heading_row)
         self.page_description = QLabel(content)
         self.page_description.setWordWrap(True)
         content_layout.addWidget(self.page_description)
@@ -269,6 +299,7 @@ class NetworkManagerWindow(QMainWindow):
         self.history_page = self._create_history()
         self.pages.addWidget(self.history_page)
         self.navigate(0)
+        self._apply_appearance(selected_theme(), persist=False)
 
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(650)
@@ -276,8 +307,6 @@ class NetworkManagerWindow(QMainWindow):
         self._status_timer.start()
         self.setStyleSheet(
             "QFrame#networkManagerSidebar { border: 1px solid palette(mid); border-radius: 8px; }"
-            " QPushButton:checked { background: palette(highlight);"
-            " color: palette(highlighted-text); font-weight: 600; }"
             " QLabel#managerPageTitle { padding: 2px 0; }"
         )
 
@@ -392,7 +421,9 @@ class NetworkManagerWindow(QMainWindow):
         search_group = port.search_input.parentWidget()
         control_group = port.batch_progress.parentWidget()
         quick_bar = port.quick_action_bar
-        assert search_group is not None and control_group is not None
+        assert isinstance(search_group, QGroupBox) and control_group is not None
+        self.port_search_group = search_group
+        search_group.setAccessibleName(search_group.title())
         details_scroll = port.findChild(QScrollArea, "poeDetailsScroll")
         if details_scroll is None:
             raise RuntimeError("Missing existing per-port details widget")
@@ -497,8 +528,6 @@ class NetworkManagerWindow(QMainWindow):
         # horizontal space. Keep the original read-only detail widget alive for
         # older standalone APIs, but never display it in this embedded view.
         details_scroll.hide()
-        # A안: a resizable vertical input/result stack; focus mode temporarily
-        # hides only the visual result pane, without discarding checked ports.
         self.port_result_panel = QWidget(port)
         self.port_result_panel.setObjectName("portResultPanel")
         result_layout = QVBoxLayout(self.port_result_panel)
@@ -511,7 +540,32 @@ class NetworkManagerWindow(QMainWindow):
         port.result_tree.setColumnWidth(2, 105)  # watts
         port.result_tree.setColumnWidth(3, 220)  # port administration and link
         port.result_tree.setColumnWidth(5, 190)  # PoE setting and delivery
-        result_layout.addWidget(port.result_tree, 1)
+        self.port_matrix = PortMatrixPanel(self.port_result_panel)
+        self.port_matrix.portActivated.connect(self._port_matrix_activated)
+        self.port_result_tabs = QTabBar(self.port_result_panel)
+        self.port_result_tabs.setObjectName("portResultTabs")
+        self.port_result_tabs.setAccessibleName("조회 결과 표시 방식")
+        self.port_result_tabs.addTab("결과 목록")
+        self.port_result_tabs.addTab("매트릭스")
+        self.port_result_tabs.setExpanding(False)
+        self.port_result_tabs.setVisible(False)
+        search_layout = search_group.layout()
+        assert isinstance(search_layout, QVBoxLayout)
+        search_row_item = search_layout.itemAt(0)
+        assert search_row_item is not None
+        search_row = search_row_item.layout()
+        assert isinstance(search_row, QHBoxLayout)
+        search_row.insertWidget(0, self.port_result_tabs)
+        self.port_view_splitter = QSplitter(Qt.Orientation.Vertical, self.port_result_panel)
+        self.port_view_splitter.setObjectName("portMatrixResultSplitter")
+        self.port_view_splitter.addWidget(self.port_matrix)
+        self.port_view_splitter.addWidget(port.result_tree)
+        self.port_view_splitter.setChildrenCollapsible(False)
+        self.port_view_splitter.setStretchFactor(0, 2)
+        self.port_view_splitter.setStretchFactor(1, 3)
+        self.port_view_splitter.setSizes([320, 280])
+        self.port_result_tabs.currentChanged.connect(self._show_port_result_view)
+        result_layout.addWidget(self.port_view_splitter, 1)
         self.port_input_result_splitter = QSplitter(Qt.Orientation.Vertical, port)
         self.port_input_result_splitter.setObjectName("portVerticalSplitter")
         # Preserve v0.8.0 integrations/tests that reference this splitter name.
@@ -527,7 +581,7 @@ class NetworkManagerWindow(QMainWindow):
         self._layout_port_control_buttons(control_group)
         self.port_advanced_toggle = QToolButton(port)
         self.port_advanced_toggle.setObjectName("portAdvancedControlToggle")
-        self.port_advanced_toggle.setText("고급 제어 · 기존 포트 Up/Down 및 계획 기능")
+        self.port_advanced_toggle.setText("고급 제어")
         self.port_advanced_toggle.setToolTip(
             "일반 PoE 작업은 아래 OFF/ON 두 버튼을 사용하세요. "
             "포트 Up/Down 및 기존 작업 계획은 필요할 때만 펼칩니다."
@@ -537,7 +591,7 @@ class NetworkManagerWindow(QMainWindow):
         self.port_advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.port_advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
         self.port_advanced_toggle.toggled.connect(self._toggle_port_advanced)
-        root.addWidget(self.port_advanced_toggle)
+        quick_actions.addWidget(self.port_advanced_toggle)
         self.port_advanced_scroll = QScrollArea(port)
         self.port_advanced_scroll.setObjectName("portAdvancedControls")
         self.port_advanced_scroll.setWidgetResizable(True)
@@ -550,6 +604,97 @@ class NetworkManagerWindow(QMainWindow):
         root.addWidget(quick_bar)
         root.addWidget(port.progress_bar)
         root.addWidget(port.status_label)
+        # Subscribe only to UI observations; existing query/PoE services are unchanged.
+        port.matrixTargetsChanged.connect(self.port_matrix.set_targets)
+        port.matrixQueryStarted.connect(self.port_matrix.mark_loading)
+        port.matrixPortObserved.connect(self.port_matrix.update_result)
+        port.matrixVisibilityChanged.connect(self.port_matrix.filter_to)
+        port.result_tree.currentItemChanged.connect(self._port_table_selected)
+        self.port_matrix.set_targets(tuple(port._groups))
+        port.full_query_succeeded.connect(self._show_completed_port_query)
+        self._port_inputs_auto_collapsed = False
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "port_result_tabs"):
+            self._update_port_layout()
+
+    def _update_port_layout(self) -> None:
+        compact = self.width() < 1200 or self.height() < 800
+        self.page_description.setVisible(self._page_index != 2 or not compact)
+        if compact == self._compact_ports:
+            return
+        port = self.port_page
+        header = port.result_tree.header()
+        self._port_header_states[self._compact_ports] = header.saveState()
+        if compact in self._port_header_states:
+            header.restoreState(self._port_header_states[compact])
+        else:
+            # Keep the five visible data columns usable alongside the navigation.
+            for column, width in ((0, 200), (1, 150), (2, 80), (3, 165), (5, 140)):
+                header.resizeSection(column, width)
+        self._compact_ports = compact
+        root = port.layout()
+        assert root is not None
+        root.setSpacing(3 if compact else 7)
+        self.port_search_group.setTitle("" if compact else self.port_search_group.accessibleName())
+        search_layout = self.port_search_group.layout()
+        assert search_layout is not None
+        if compact:
+            search_layout.setContentsMargins(4, 3, 4, 3)
+        else:
+            search_layout.unsetContentsMargins()
+        port.result_tree.setMinimumHeight(0 if compact else 160)
+        # The fixed power toolbar shows the same selected and hidden-port counts.
+        port.selection_summary.setVisible(not compact)
+        self.port_result_tabs.setVisible(compact)
+        self._show_port_result_view(self.port_result_tabs.currentIndex())
+        self.port_page.progress_panel.set_compact(compact)
+        # The pinned panel also shows query progress. Keep the status message
+        # for actions such as CSV export that do not update the pinned panel.
+        self.port_page.progress_bar.setVisible(not compact)
+
+    @Slot(int)
+    def _show_port_result_view(self, index: int) -> None:
+        self.port_matrix.setVisible(not self._compact_ports or index == 1)
+        self.port_page.result_tree.setVisible(not self._compact_ports or index == 0)
+
+    @Slot()
+    def _show_completed_port_query(self) -> None:
+        if self._compact_ports and not self._port_inputs_auto_collapsed:
+            self._port_inputs_auto_collapsed = True
+            self.port_target_toggle.setChecked(False)
+
+    def _port_matrix_activated(self, key: object) -> None:
+        if not isinstance(key, tuple) or len(key) != 2:
+            return
+        if not all(isinstance(part, str) for part in key):
+            return
+        item = self.port_page._items.get(cast(PortKey, key))
+        if item is not None:
+            self.port_page.result_tree.setCurrentItem(item)
+            self.port_page.result_tree.scrollToItem(item)
+
+    def _port_table_selected(
+        self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None
+    ) -> None:
+        if current is None:
+            return
+        key = current.data(0, Qt.ItemDataRole.UserRole)
+        if (
+            isinstance(key, tuple)
+            and len(key) == 2
+            and isinstance(key[0], str)
+            and isinstance(key[1], str)
+            and key[1]
+        ):
+            self.port_matrix.select_port(cast(PortKey, key))
+
+    def _apply_appearance(self, mode: str, *, persist: bool = True) -> None:
+        set_theme(mode, persist=persist)
+        self.theme_light_button.setChecked(mode == "light")
+        self.theme_dark_button.setChecked(mode == "dark")
+        self.port_matrix.set_theme(mode)
 
     def _layout_port_control_buttons(self, group: QWidget) -> None:
         """Reflow wide legacy button rows into a readable narrow control rail."""
@@ -843,6 +988,7 @@ class NetworkManagerWindow(QMainWindow):
             self.refresh_history()
         self._page_index = index
         self.pages.setCurrentIndex(index)
+        self._update_port_layout()
         self.page_title.setText(_PAGE_TITLES[index][0])
         self.page_description.setText(_PAGE_TITLES[index][1])
         for number, button in enumerate(self._navigation_buttons):

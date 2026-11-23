@@ -5,12 +5,11 @@ import io
 from dataclasses import asdict
 from decimal import Decimal
 
-from aruba2930f_backup.port_status_mapper import STATE_LABELS, make_matrix_port
-
 from aruba2930f_backup.poe_power import AP535_REFERENCE_ID, AP535_REFERENCE_URL
 from aruba2930f_backup.poe_query_models import MAX_TARGETS, PoETarget, QueryStatus
 from aruba2930f_backup.poe_targets import merge_targets
 from aruba2930f_backup.port_power_diagnosis import diagnose_port_power
+from aruba2930f_backup.port_status_mapper import STATE_LABELS, make_matrix_port
 
 
 def group_targets(groups, all_endpoints=()):

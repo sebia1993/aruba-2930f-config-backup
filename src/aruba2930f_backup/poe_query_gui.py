@@ -172,6 +172,8 @@ def _power_details(power: PowerEvidence) -> str:
 
 
 class PoEQueryDialog(QDialog):
+    full_query_succeeded = Signal()
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -201,6 +203,7 @@ class PoEQueryDialog(QDialog):
         self._coalescing_groups = False
         self._pending: set[tuple[str, str]] = set()
         self._run_total = 0
+        self._full_query_in_progress = False
         self._render_queue: list[PoEQueryResult] = []
         self._render_timer = QTimer(self)
         self._render_timer.setInterval(35)
@@ -548,7 +551,7 @@ class PoEQueryDialog(QDialog):
             return
         if groups != self._groups:
             self._build_results(groups)
-        self._start(groups, credentials)
+        self._start(groups, credentials, full_query=True)
 
     def _credentials(self) -> Credentials:
         provider = self.session_credential_provider
@@ -592,7 +595,10 @@ class PoEQueryDialog(QDialog):
         except ValueError as exc:
             QMessageBox.warning(self, "입력 확인", str(exc))
 
-    def _start(self, groups: tuple[PoETarget, ...], credentials: Credentials) -> None:
+    def _start(
+        self, groups: tuple[PoETarget, ...], credentials: Credentials, full_query: bool = False
+    ) -> None:
+        self._full_query_in_progress = full_query
         if self._service is None:
             from .poe_query import PoEQueryService
 
@@ -832,6 +838,13 @@ class PoEQueryDialog(QDialog):
             identity = result.identity
             if identity:
                 details += f"\n장비명: {identity.hostname or '확인 안 됨'} · 스위치 모델: {identity.model} · SKU: {identity.sku or '확인 안 됨'} · 소프트웨어: {identity.software_version or '확인 안 됨'}"
+                source_labels = {
+                    "system-information": "System Name (장비 직접 조회)",
+                    "prompt": "SSH 프롬프트",
+                    "running-config": "설정 백업 Hostname",
+                    "unavailable": "확인 불가",
+                }
+                details += f"\nHostname 수집 출처: {source_labels.get(identity.hostname_source, '확인 불가')}"
             if snapshot:
                 poe_setting = (
                     "확인 안 됨"
@@ -871,6 +884,7 @@ class PoEQueryDialog(QDialog):
 
     @Slot(str)
     def _on_failed(self, message: str) -> None:
+        self._full_query_in_progress = False
         self.status_label.setText(message)
 
     @Slot()
@@ -897,6 +911,19 @@ class PoEQueryDialog(QDialog):
         while self._render_queue:
             self._flush_result_queue()
         cancelled = self._worker is not None and self._worker.cancel_event.is_set()
+        full_query_succeeded = (
+            self._full_query_in_progress
+            and not cancelled
+            and not self._pending
+            and bool(self._results)
+            and all(
+                row.status in (QueryStatus.OK, QueryStatus.UNSUPPORTED)
+                and row.snapshot is not None
+                and (row.lldp is None or row.lldp.status is LLDPStatus.OK)
+                for row in self._results.values()
+            )
+        )
+        self._full_query_in_progress = False
         # A broken service must never leave pending rows looking measured.
         for endpoint, interface in tuple(self._pending):
             group = self._group_index[endpoint]
@@ -943,6 +970,8 @@ class PoEQueryDialog(QDialog):
             f"{'조회 중지' if cancelled else '조회 완료'} · {len(self._results)}개 포트 결과 · 각 행의 시각을 확인하세요."
         )
         self._set_busy(False)
+        if full_query_succeeded:
+            self.full_query_succeeded.emit()
         if self._close_when_done:
             self.reject()
 

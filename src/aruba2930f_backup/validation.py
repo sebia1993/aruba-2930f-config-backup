@@ -292,6 +292,33 @@ def hostname_from_prompt(prompt: str) -> str | None:
     return value
 
 
+def hostname_from_system_information(output: str) -> str | None:
+    """Read one unambiguous System Name from official ArubaOS-Switch output.
+
+    Reject inconsistent VSF/partial responses rather than promote Contact,
+    Location, banner text or arbitrary CLI output into device identity.
+    """
+    if not isinstance(output, str):
+        return None
+    lines = _ANSI_RE.sub("", output).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    candidates: list[str] = []
+    for line in lines:
+        match = re.fullmatch(r"[ \t]*System[ \t]+Name[ \t]*:[ \t]*(.*?)[ \t]*", line, re.I)
+        if match is None:
+            continue
+        value = match.group(1).strip()
+        if value.startswith('"') or value.endswith('"'):
+            if len(value) < 2 or not value.startswith('"') or not value.endswith('"'):
+                return None
+            value = value[1:-1]
+        if not value or len(value) > _MAX_HOSTNAME_LENGTH or not value.isprintable():
+            return None
+        candidates.append(value)
+    if not candidates or any(name != candidates[0] for name in candidates[1:]):
+        return None
+    return candidates[0]
+
+
 def hostname_from_running_config(config_text: str) -> str | None:
     """Extract one unambiguous top-level ArubaOS-Switch hostname directive.
 

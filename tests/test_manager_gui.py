@@ -79,7 +79,9 @@ def test_port_page_keeps_query_and_control_together_and_collapses_settings(
     app: QApplication,
 ) -> None:
     window = make_window(app)
+    window.resize(1320, 840)
     assert window.navigate(2)
+    app.processEvents()
     port = window.port_page
     # No side panel steals width from the switch/port status table.
     assert port.findChild(QSplitter, "portResultDetailSplitter") is None
