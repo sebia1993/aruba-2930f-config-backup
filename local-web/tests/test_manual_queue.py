@@ -426,10 +426,8 @@ class ManualQueueTests(unittest.TestCase):
         self.assertEqual(display[first]["state"], "uncertain")
         self.assertEqual(display[overlapping]["state"], "cancelled")
         self.assertEqual(display[independent]["state"], "done")
-        self.assertEqual([action for action, _ in self.log], [
-            "control.quick-execute",
-            "cable.test",
-        ])
+        commands = [action for action, _ in self.log]
+        self.assertEqual(commands, ["control.quick-execute", "cable.test"])
         records = {item["id"]: item for item in self.jobs.history()}
         self.assertEqual(records[first]["state"], "uncertain")
         self.assertNotIn("synthetic post-processing failure", records[first]["summary"])
