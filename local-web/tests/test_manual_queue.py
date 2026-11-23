@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from localweb.cable import diagnose_ports
-from localweb.jobs import Busy, Jobs
+from localweb.jobs import MANUAL_RESERVATION_TIMEOUT, Busy, Jobs
 from localweb.operations import _groups
 
 from aruba2930f_backup.models import Credentials
@@ -90,6 +90,43 @@ class ManualQueueTests(unittest.TestCase):
             "responseKey": "9" * 32,
             "targets": "192.0.2.1 " + port,
         }
+
+    def test_expired_reservation_is_cancelled_before_device_command(self):
+        first = self.jobs.submit("control.quick-execute", self.power("1"))
+        second = self.jobs.submit("cable.test", self.cable("2"))
+        self.jobs.pending_since[first] -= MANUAL_RESERVATION_TIMEOUT + 1
+        items = {item["id"]: item for item in self.jobs.manual_queue()["items"]}
+        self.assertEqual(items[first]["state"], "cancelled")
+        self.assertIn("10분", items[first]["message"])
+        self.assertNotIn(first, self.jobs.pending)
+        self.release_read.set()
+        self.finish()
+        self.assertEqual([row[0] for row in self.log], ["cable.test"])
+        self.assertEqual(self.jobs.get(second)["state"], "done")
+
+    def test_expired_reservation_is_cancelled_even_without_polling(self):
+        key = self.jobs.submit("control.quick-execute", self.power("1"))
+        self.jobs.pending_since[key] -= MANUAL_RESERVATION_TIMEOUT + 1
+        self.finish()
+        self.assertEqual(self.jobs.get(key)["state"], "cancelled")
+        self.assertFalse(self.log)
+        self.assertFalse(self.jobs.pending_since)
+        with self.assertRaises(Busy):
+            Jobs(self.root).submit("control.quick-execute", self.power("1"))
+
+    def test_queue_limit_preserves_existing_reservations_and_duplicate_receipts(self):
+        with patch("localweb.jobs.MAX_PENDING_MANUAL", 2):
+            first = self.jobs.submit("control.quick-execute", self.power("1"))
+            second = self.jobs.submit("cable.test", self.cable("2"))
+            with self.assertRaises(Busy) as error:
+                self.jobs.submit("control.quick-execute", self.power("4", ("4",)))
+            self.assertIn("예약 대기 한도", str(error.exception))
+            self.assertEqual(len(self.jobs.pending), 2)
+            self.assertEqual(self.jobs.submit("control.quick-execute", self.power("1")), first)
+        self.release_read.set()
+        self.finish()
+        self.assertEqual([row[0] for row in self.log], ["control.quick-execute", "cable.test"])
+        self.assertEqual(self.jobs.get(second)["state"], "done")
 
     def test_fifo_freezes_targets_and_reserves_one_write_across_tabs(self):
         body = self.power("1", ("1", "2"))

@@ -426,6 +426,7 @@ class JobTests(unittest.TestCase):
             clock.return_value = 295.0
             plan.finished("next", {}, "SSH timeout", "second", None)
             self.assertEqual(plan.due, 340)
+            self.assertEqual(plan.skipped_rounds, 2)
             self.assertFalse(plan.suspended)
 
     def test_monitor_shared_start_serial_reads_and_exact_endpoints(self):
@@ -608,6 +609,7 @@ class JobTests(unittest.TestCase):
                 self.jobs.monitor.due = time.monotonic() - 0.5
                 self.jobs.tick_monitor()
                 self.assertEqual(self.jobs.active, key)
+                self.assertEqual(self.jobs.monitor_status()["skippedRounds"], 1)
                 self.assertGreater(self.jobs.monitor.due, time.monotonic() + 58)
                 self.assertFalse(self.jobs.stop_monitor()["active"])
             finally:

@@ -60,6 +60,8 @@ PERSIST = {
 }
 EXTENSIONS = {".jsonl", ".json", ".txt", ".xlsx"}
 MAX_RESULTS = 8
+MAX_PENDING_MANUAL = 24
+MANUAL_RESERVATION_TIMEOUT = 10 * 60
 DEFAULT_MONITOR_MINUTES = 1
 DUPLICATE_POE_REQUEST = "이미 접수한 빠른 PoE 요청입니다. 해당 포트의 현재 상태를 다시 조회하세요."
 POWER_HISTORY_WARNING = (
@@ -148,6 +150,7 @@ class Jobs:
         self.recent = OrderedDict()
         self.manual = {}
         self.pending = OrderedDict()
+        self.pending_since = {}
         self.busy_workspace = None
         self.port_view = None
         self.active = None
@@ -175,6 +178,7 @@ class Jobs:
                 "monitorId": plan.id if plan else None,
                 "intervalMinutes": plan.minutes if plan else DEFAULT_MONITOR_MINUTES,
                 "portCount": plan.port_count if plan else 0,
+                "skippedRounds": plan.skipped_rounds if plan else 0,
                 "nextAt": plan.next_at if plan else None,
                 "jobId": plan.job if plan else None,
                 "lastJobId": plan.last_job if plan else None,
@@ -194,6 +198,8 @@ class Jobs:
                 if self.monitor.groups == groups and self.monitor.minutes == minutes:
                     return {**self.monitor_status(), "groups": group_targets(groups)}
                 raise Busy("실행 중인 모니터링을 중지한 후 대상이나 간격을 바꾸세요.")
+            if self.pending:
+                raise Busy("대기 중인 수동 작업을 마친 뒤 모니터링을 시작하세요.")
             if not self.operations.credentials:
                 raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
             # Publish the plan before the new worker can acquire the lock and finish.
@@ -211,6 +217,9 @@ class Jobs:
 
     def tick_monitor(self):
         with self.lock:
+            self._expire_pending()
+            if self.pending and not self.active:
+                self._next_manual()
             plan = self.monitor
             if (
                 self.closing
@@ -220,9 +229,12 @@ class Jobs:
                 or time.monotonic() < plan.due
             ):
                 return
-            plan.advance_to_next_slot()
-            if self.active or self.controls.awaiting_confirmation():
-                # Never queue missed reads behind a manual operation or its review.
+            occupied = bool(
+                self.active or self.pending or self.controls.awaiting_confirmation()
+            )
+            plan.advance_to_next_slot(skipped=occupied)
+            if occupied:
+                # A queued manual action always wins the next device slot.
                 return
             plan.job = self.submit("ports.refresh", {"targets": plan.targets}, monitored=True)
             plan.next_at = None
@@ -237,6 +249,7 @@ class Jobs:
 
     def manual_queue(self):
         with self.lock:
+            self._expire_pending()
             items = []
             for key, entry in self.recent.items():
                 if key not in self.manual:
@@ -261,6 +274,16 @@ class Jobs:
         with self.lock:
             self._cancel_reservations(tuple(self.pending), reason)
 
+    def _expire_pending(self):
+        expired = tuple(
+            key
+            for key in self.pending
+            if time.monotonic() - self.pending_since[key] >= MANUAL_RESERVATION_TIMEOUT
+        )
+        self._cancel_reservations(
+            expired, "예약 대기 10분이 지나 자동 취소했습니다. 필요한 경우 새로 신청하세요."
+        )
+
     def _cancel_reservations(self, keys, reason):
         if not keys:
             return
@@ -276,7 +299,8 @@ class Jobs:
             # reservations even when the journal is temporarily unwritable.
             reason += " 작업 이력에 취소를 기록하지 못했습니다."
         for key in keys:
-            self.pending.pop(key)
+            self.pending.pop(key, None)
+            self.pending_since.pop(key, None)
             self.recent[key].update(
                 state="cancelled", finished=finished, error=reason, _manual_message=reason
             )
@@ -302,6 +326,7 @@ class Jobs:
         ).start()
 
     def _next_manual(self):
+        self._expire_pending()
         while self.pending and not self.active:
             key = next(iter(self.pending))
             if self.closing or self.pending[key] is not self.operations.credentials:
@@ -321,6 +346,7 @@ class Jobs:
                 )
                 return
             self.pending.pop(key)
+            self.pending_since.pop(key, None)
             self.busy_workspace = self.workspace()
             self._start_worker(key, request.action, request.body(key), True, queued=True)
 
@@ -373,6 +399,7 @@ class Jobs:
         with self.lock:
             if self.closing:
                 raise Busy("서버가 종료 중입니다.")
+            self._expire_pending()
             repeat_message = {
                 "control.quick-execute": DUPLICATE_POE_REQUEST,
                 "cable.test": "이미 접수한 케이블 진단입니다. 작업 이력을 확인하세요.",
@@ -393,16 +420,18 @@ class Jobs:
                 existing = self._deduplicate(key, request, repeat_message)
                 if existing:
                     return existing
-                if self.active and request:
+                if request and (self.active or self.pending):
                     queued = bool(
-                        self.active in self.manual
-                        or self.pending
+                        self.pending
+                        or self.active in self.manual
                         or (self.monitor and self.monitor.job == self.active)
                     )
             else:
                 key = secrets.token_hex(16)
-            if self.active and not queued:
+            if (self.active or self.pending) and not queued:
                 raise Busy("다른 작업이 실행 중입니다. 완료 후 다시 실행하세요.")
+            if queued and len(self.pending) >= MAX_PENDING_MANUAL:
+                raise Busy("수동 작업 예약 대기 한도(24건)에 도달했습니다. 기존 예약을 확인하세요.")
             if queued and self.operations.credentials is None:
                 raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
             started = now()
@@ -431,6 +460,7 @@ class Jobs:
                 self.manual[key] = (request, queued)
             if queued:
                 self.pending[key] = self.operations.credentials
+                self.pending_since[key] = time.monotonic()
             else:
                 self.busy_workspace = self.workspace() if (monitored or request) else None
                 body = request.body(key) if request else dict(body)
