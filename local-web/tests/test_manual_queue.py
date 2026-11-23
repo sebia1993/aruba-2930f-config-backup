@@ -423,9 +423,10 @@ class ManualQueueTests(unittest.TestCase):
         self.assertEqual(
             [item[1]["targets"][0]["port"] for item in self.log], [str(i) for i in range(1, 13)]
         )
-        self.assertEqual(
-            [item["state"] for item in self.jobs.manual_queue()["items"]], ["done"] * 12
-        )
+        records = {item["id"]: item for item in self.jobs.history()}
+        self.assertEqual(set(records), set(keys))
+        self.assertTrue(all(records[key]["state"] == "done" for key in keys))
+        self.assertTrue(all(item["state"] == "done" for item in self.jobs.manual_queue()["items"]))
         self.assertFalse(self.jobs.pending)
         self.assertIsNone(self.jobs.active)
 
