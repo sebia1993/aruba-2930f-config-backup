@@ -726,18 +726,26 @@ class Jobs:
         finally:
             body.clear()
         manual = self.manual.get(key)
-        outcome = (
-            manual_outcome(
-                manual[0],
-                state,
-                result,
-                error,
-                uncertain_failure,
-                cable_progress=self.operations.cable_progress,
-            )
-            if manual
-            else None
-        )
+        outcome = None
+        if manual:
+            try:
+                outcome = manual_outcome(
+                    manual[0],
+                    state,
+                    result,
+                    error,
+                    uncertain_failure,
+                    cable_progress=self.operations.cable_progress,
+                )
+            except Exception:
+                # A malformed device readback or progress record must not kill
+                # this worker between a device write and queue cleanup. Stop
+                # overlapping requests instead of assuming the write was safe.
+                outcome = (
+                    "uncertain",
+                    "작업 결과를 해석하지 못했습니다. 해당 포트를 직접 조회한 뒤 다시 신청하세요.",
+                    set(manual[0].targets),
+                )
         files, registrations = [], []
         finished = now()
         try:

@@ -74,12 +74,21 @@ def _interrupted_tests(rows, progress):
     cursor = 0
     while True:
         page = progress(cursor)
+        # A broken progress producer must never trap the queue worker or make
+        # a possibly executed cable command look safe to follow with PoE.
+        if not isinstance(page, dict) or not isinstance(page.get("cableRows"), list):
+            return candidates
         if not page["cableRows"]:
             return candidates & attempted
         for event in page["cableRows"]:
+            if not isinstance(event, dict):
+                return candidates
             if event.get("stage") in {"test", "show"} and event.get("status") == "pending":
                 attempted.add(_row_address(event))
-        cursor = page["cursor"]
+        next_cursor = page.get("cursor")
+        if type(next_cursor) is not int or next_cursor <= cursor:
+            return candidates
+        cursor = next_cursor
 
 
 def manual_outcome(request, state, result, error, uncertain_failure, *, cable_progress=None):

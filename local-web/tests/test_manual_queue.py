@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 from localweb.cable import diagnose_ports
 from localweb.jobs import MANUAL_RESERVATION_TIMEOUT, Busy, Jobs
+from localweb.manual_queue import _interrupted_tests, manual_outcome
 from localweb.operations import _groups
 
 from aruba2930f_backup.models import Credentials
@@ -345,6 +346,89 @@ class ManualQueueTests(unittest.TestCase):
         self.finish()
         self.assertEqual(self.jobs.get(key)["state"], "cancelled")
         self.assertEqual(self.log, [])
+
+    def test_nonadvancing_cable_progress_never_releases_uncertain_port(self):
+        rows = [
+            {
+                "ip": "192.0.2.1",
+                "sshPort": 22,
+                "port": "3",
+                "stage": "test",
+                "status": "cancelled",
+            }
+        ]
+        calls = []
+
+        def stalled(cursor):
+            calls.append(cursor)
+            return {
+                "cursor": cursor,
+                "cableRows": [dict(rows[0], stage="test", status="pending")],
+            }
+
+        self.assertEqual(
+            _interrupted_tests(rows, stalled),
+            {("192.0.2.1", 22, "3")},
+        )
+        self.assertEqual(calls, [0])
+        self.assertEqual(
+            _interrupted_tests(rows, lambda _: {"cursor": "broken", "cableRows": rows}),
+            {("192.0.2.1", 22, "3")},
+        )
+
+    def test_bad_outcome_decoder_keeps_worker_and_blocks_only_matching_port(self):
+        first = self.jobs.submit("control.quick-execute", self.power("1", ("1",)))
+        overlap = self.jobs.submit("cable.test", self.cable("2", "1"))
+        unrelated = self.jobs.submit("cable.test", self.cable("3", "3"))
+        decoded = manual_outcome
+
+        def decode(request, *args, **kwargs):
+            if request.operation == "poe_off":
+                raise RuntimeError("simulated corrupt result parser")
+            return decoded(request, *args, **kwargs)
+
+        self.release_manual.set()
+        with patch("localweb.jobs.manual_outcome", side_effect=decode):
+            self.release_read.set()
+            self.finish()
+
+        self.assertIsNone(self.jobs.active)
+        self.assertFalse(self.jobs.pending)
+        self.assertEqual(self.jobs.get(first)["state"], "done")
+        items = {item["id"]: item for item in self.jobs.manual_queue()["items"]}
+        self.assertEqual(items[first]["state"], "uncertain")
+        self.assertEqual(items[overlap]["state"], "cancelled")
+        self.assertEqual(items[unrelated]["state"], "done")
+        self.assertEqual([item[0] for item in self.log], ["control.quick-execute", "cable.test"])
+        record = next(item for item in self.jobs.history() if item["id"] == first)
+        self.assertEqual(record["state"], "uncertain")
+
+    def test_multi_switch_reservations_preempt_next_monitor_round_in_fifo(self):
+        keys = []
+        for i in range(1, 13):
+            body = self.power(f"{i:x}", (str(i),))
+            body["targets"][0]["ip"] = "192.0.2.2" if i % 2 else "192.0.2.1"
+            keys.append(self.jobs.submit("control.quick-execute", body))
+        self.assertEqual(len(self.jobs.pending), 12)
+        duplicate = self.power("1", ("1",))
+        duplicate["targets"][0]["ip"] = "192.0.2.2"
+        self.assertEqual(self.jobs.submit("control.quick-execute", duplicate), keys[0])
+        self.release_read.set()
+        self.assertTrue(self.manual_started.wait(2))
+        self.jobs.monitor.due = time.monotonic() - 0.1
+        self.jobs.tick_monitor()
+        self.assertEqual(self.jobs.monitor_status()["skippedRounds"], 1)
+        self.release_manual.set()
+        self.finish()
+        self.assertEqual(
+            [item[1]["targets"][0]["port"] for item in self.log], [str(i) for i in range(1, 13)]
+        )
+        records = {item["id"]: item for item in self.jobs.history()}
+        self.assertEqual(set(records), set(keys))
+        self.assertTrue(all(records[key]["state"] == "done" for key in keys))
+        self.assertTrue(all(item["state"] == "done" for item in self.jobs.manual_queue()["items"]))
+        self.assertFalse(self.jobs.pending)
+        self.assertIsNone(self.jobs.active)
 
     def test_lost_credentials_never_run_queued_job(self):
         key = self.jobs.submit("cable.test", self.cable("1"))
