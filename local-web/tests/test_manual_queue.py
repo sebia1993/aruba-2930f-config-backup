@@ -414,7 +414,9 @@ class ManualQueueTests(unittest.TestCase):
             body["targets"][0]["ip"] = "192.0.2.2" if i % 2 else "192.0.2.1"
             keys.append(self.jobs.submit("control.quick-execute", body))
         self.assertEqual(len(self.jobs.pending), 12)
-        self.assertEqual(self.jobs.submit("control.quick-execute", self.power("1", ("1",))), keys[0])
+        duplicate = self.power("1", ("1",))
+        duplicate["targets"][0]["ip"] = "192.0.2.2"
+        self.assertEqual(self.jobs.submit("control.quick-execute", duplicate), keys[0])
         self.release_read.set()
         self.assertTrue(self.manual_started.wait(2))
         self.jobs.monitor.due = time.monotonic() - 0.1
