@@ -431,6 +431,40 @@ class JobTests(unittest.TestCase):
             self.assertEqual(plan.due, 100.0 + 1441 * 60)
             self.assertLessEqual(plan.due - clock.return_value, 60)
 
+    def test_monitor_projection_failure_releases_slot_and_recovers_next_round(self):
+        self.jobs.operations.credentials = Credentials("reader", "test")
+        with (
+            patch.object(self.jobs.operations.query_service, "collect", self.collect_ports),
+            patch.object(
+                self.jobs, "_record_power", side_effect=RuntimeError("simulated store error")
+            ),
+        ):
+            started = self.jobs.start_monitor(
+                {"targets": "192.0.2.5 1-2", "intervalMinutes": 1}
+            )
+            failed = self.finished(started["jobId"])
+
+        self.assertEqual(failed["state"], "failed")
+        self.assertIsNone(self.jobs.active)
+        self.assertIsNone(self.jobs.port_view)
+        status = self.jobs.monitor_status()
+        self.assertTrue(status["active"])
+        self.assertIsNone(status["jobId"])
+        self.assertIsNotNone(status["nextAt"])
+        self.assertIn("다시 조회", status["error"])
+
+        with patch.object(self.jobs.operations.query_service, "collect", self.collect_ports):
+            self.jobs.monitor.due = time.monotonic() - 0.1
+            self.jobs.tick_monitor()
+            resumed = self.jobs.monitor_status()["jobId"]
+            self.assertIsNotNone(resumed)
+            self.assertEqual(self.finished(resumed)["state"], "done")
+
+        recovered = self.jobs.monitor_status()
+        self.assertFalse(recovered["suspended"])
+        self.assertTrue(recovered["lastSuccess"])
+        self.assertIsNone(self.jobs.active)
+
     def test_monitor_schedule_is_anchored_to_start_and_skips_overruns(self):
         with patch("localweb.monitoring.time.monotonic", return_value=100.0) as clock:
             plan = PortMonitoring("job", (), "", 1, job="job")
