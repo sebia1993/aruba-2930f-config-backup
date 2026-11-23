@@ -403,6 +403,37 @@ class ManualQueueTests(unittest.TestCase):
         record = next(item for item in self.jobs.history() if item["id"] == first)
         self.assertEqual(record["state"], "uncertain")
 
+    def test_postprocessing_failure_never_stalls_queue_or_replays_written_port(self):
+        first = self.jobs.submit("control.quick-execute", self.power("1", ("1",)))
+        overlapping = self.jobs.submit("cable.test", self.cable("2", "1"))
+        independent = self.jobs.submit("cable.test", self.cable("3", "3"))
+        original = self.jobs._record_power
+
+        def record(rows, plan, result):
+            if self.jobs.active == first:
+                raise RuntimeError("synthetic post-processing failure")
+            return original(rows, plan, result)
+
+        self.release_manual.set()
+        with patch.object(self.jobs, "_record_power", side_effect=record):
+            self.release_read.set()
+            self.finish()
+
+        self.assertIsNone(self.jobs.active)
+        self.assertFalse(self.jobs.pending)
+        self.assertEqual(self.jobs.get(first)["state"], "failed")
+        display = {item["id"]: item for item in self.jobs.manual_queue()["items"]}
+        self.assertEqual(display[first]["state"], "uncertain")
+        self.assertEqual(display[overlapping]["state"], "cancelled")
+        self.assertEqual(display[independent]["state"], "done")
+        self.assertEqual([action for action, _ in self.log], [
+            "control.quick-execute",
+            "cable.test",
+        ])
+        records = {item["id"]: item for item in self.jobs.history()}
+        self.assertEqual(records[first]["state"], "uncertain")
+        self.assertNotIn("synthetic post-processing failure", records[first]["summary"])
+
     def test_multi_switch_reservations_preempt_next_monitor_round_in_fifo(self):
         keys = []
         for i in range(1, 13):
