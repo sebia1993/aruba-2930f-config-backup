@@ -81,7 +81,7 @@ function sync() {
   for (const node of all('[data-job]')) node.disabled = ui.busy || !ui.token;
   $('queryTargets').readOnly = ui.busy;
   document.querySelector('[data-import="queryTargets"]').disabled = ui.busy;
-  monitor()?.setControlBusy?.(ui.busy);
+  monitor()?.setControlBusy?.(manualInputBlocked());
   $('stopJob').hidden = !ui.jobId;
   $('dismissStatus').hidden = ui.busy;
   $('shutdown').disabled = ui.busy || !ui.token;
@@ -105,10 +105,14 @@ async function api(path, data, headers) {
   if (!response.ok) {
     const error = new Error(json.error || '로컬 요청 실패 (' + response.status + ')');
     error.status = response.status;
+    if (Array.isArray(json.conflicts)) error.conflicts = json.conflicts;
     throw error;
   }
   return json;
 }
+// A foreground device operation still locks unrelated commands. Its port choices
+// remain editable while the server owns scheduling for the next manual request.
+function manualInputBlocked() { return ui.busy && !ui.manualForeground; }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function poll(id,resuming=false,responseKey=null) {
   const headers=responseKey ? {'X-Cable-Response-Key':responseKey} : undefined;
@@ -147,22 +151,26 @@ async function poll(id,resuming=false,responseKey=null) {
   }
 }
 async function run(action, body, receive, retryKeys=null) {
-  if (ui.busy || !ui.token) return;
+  const manual=action==='cable.test' || action==='control.quick-execute';
+  if (!ui.token || (ui.busy && (!manual || manualInputBlocked()))) return;
+  if (manual && ui.busy) return window.manualQueue.submitBackground(action,body);
   ui.busy = true;
   window.powerMonitoring?.foregroundStarted();
   $('stopJob').disabled = false;
   sync();
   const quick = action === 'control.quick-execute' ? body : null;
-  const requestId = quick || action==='cable.test' ? body.requestId : null;
+  const requestId = manual ? body.requestId : null;
   const responseKey = action==='cable.test' ? body.responseKey : null;
   setJobProgress({});
-  notify(quick ? operationNames[quick.operation] + ' 즉시 실행 · 선택 ' + quick.targets.length + '개' : jobNames[action] + ' 진행 중…');
+  notify(manual ? (operationNames[body.operation] || jobNames[action])+' 접수 중…' : jobNames[action]+' 진행 중…');
   try {
-    const submitted = await api('/api/jobs', {action,body}).catch(error=>{
-      if (!requestId || (error.status && error.status < 500)) throw error;
-      // The server may have accepted the operation. Read its original job without submitting again.
-      return {id:requestId};
-    });
+    const submitted = manual ? await window.manualQueue.submit(action,body) : await api('/api/jobs',{action,body});
+    if (manual && (submitted.state==='queued' || submitted.id!==requestId || submitted.wasQueued)) {
+      window.manualQueue.announce(submitted);
+      return {background:true,submitted};
+    }
+    ui.manualForeground = manual;
+    if (manual) notify(quick ? operationNames[quick.operation]+' 즉시 실행 · 선택 '+quick.targets.length+'개' : jobNames[action]+' 진행 중…');
     window.portTools?.onJob?.(action,'running',body,!!retryKeys);
     body = null;
     ui.jobId = submitted.id;
@@ -211,6 +219,10 @@ async function run(action, body, receive, retryKeys=null) {
       await window.portTools.recoverQuery();
       setQueryWorkspace(false);
     }
+    if (manual && error.conflicts?.length) {
+      window.manualQueue.showConflict(error);
+      return {background:true};
+    }
     if (quick) window.controlTools.finishProgress();
     if (quick && ui.jobId) {
       markControlRowsUsed(quick.targets);
@@ -219,6 +231,7 @@ async function run(action, body, receive, retryKeys=null) {
   } finally {
     setJobProgress(null);
     ui.jobId = null;
+    ui.manualForeground = false;
     ui.busy = false;
     sync();
     window.portTools?.onJob?.(action,'idle');
@@ -376,7 +389,7 @@ $('portLiveControl').addEventListener('keydown',event=>{
   }
 });
 function selectObservedPort(message) {
-  if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
+  if ($('portMonitor').closest('[data-page]').hidden || manualInputBlocked()) return;
   const row=monitor()?.selected();
   if (!row || row.key!==message.key || !ui.liveId || message.liveId!==ui.liveId || monitor().source().liveId!==ui.liveId) return;
   clearInspection();
@@ -385,7 +398,7 @@ function selectObservedPort(message) {
   if (message.reveal) monitor().revealPowerPort(row.key);
 }
 function selectObservedBatch(selectedKey) {
-  if ($('portMonitor').closest('[data-page]').hidden || ui.busy) return;
+  if ($('portMonitor').closest('[data-page]').hidden || manualInputBlocked()) return;
   const batch=monitor()?.batch();
   if (!batch?.liveId || batch.liveId!==ui.liveId || !Array.isArray(batch.rows)) return;
   const available=new Set(window.portTools.availableControlTargets().map(controlPortKey));
@@ -778,7 +791,12 @@ function updateControlTarget() {
   if (lastFilter && lastFilter.nextElementSibling!==quickActions) lastFilter.after(quickActions);
   const powerEligible = targets.length && ($('operation').value!=='disable' || matrixControlTargets('poe_off').length);
   quickActions.hidden = !lastFilter || !batch || !(ui.selected.size || targets.length);
-  quickOff.disabled = quickOn.disabled = quickActions.hidden || ui.busy || !ui.token || !powerEligible;
+  quickOff.disabled = quickOn.disabled = quickActions.hidden || manualInputBlocked() || !ui.token || !powerEligible;
+  for (const [button,name] of [[quickOff,'Power OFF'],[quickOn,'Power ON']]) {
+    const label=name+(window.manualQueue?.hasWork() ? ' 예약' : ' 즉시 실행');
+    button.setAttribute('aria-label',label);
+    button.title=label;
+  }
   const refresh=$('refreshPorts');
   const refreshCount=!currentInspection() && (ui.liveId || displayingInventory())
     ? window.portTools?.selectedRefreshCount() || 0 : 0;
@@ -838,8 +856,8 @@ function queryPorts(targets) {
   });
 }
 let credentialRequest=null;
-function withSshAccount(onConnected) {
-  if (queryCredentials.open || ui.busy || !ui.token) return;
+function withSshAccount(onConnected,manual=false) {
+  if (queryCredentials.open || !ui.token || (ui.busy && !(manual && ui.manualForeground && ui.session.active))) return;
   if (ui.session.active) return onConnected();
   credentialRequest=onConnected;
   $('queryLoginForm').reset();
@@ -847,7 +865,7 @@ function withSshAccount(onConnected) {
   queryCredentials.showModal();
 }
 function runSsh(action, body, receive) {
-  return withSshAccount(()=>run(action,body,receive));
+  return withSshAccount(()=>run(action,body,receive),action==='control.quick-execute');
 }
 form('queryForm', () => {
   if (ui.busy || !ui.token || queryCredentials.open) return;
@@ -903,14 +921,14 @@ function retryFailedPorts(key=null) {
 $('retryFailedPorts').onclick=()=>retryFailedPorts();
 function updateMatrixSelectAll() {
   const toggle=$('matrixSelectAll'), scope=$('selectionScope');
-  const keys=ui.busy ? [] : (window.portTools?.scopeKeys() || []);
+  const keys=manualInputBlocked() ? [] : (window.portTools?.scopeKeys() || []);
   const checked=keys.length>0 && keys.every(key=>ui.selected.has(key));
   const action=checked ? '전체 선택 해제' : '전체 선택';
   const scopeName=scope.selectedOptions[0].textContent;
   const description=scopeName+' 범위의 선택 가능한 포트';
   $('matrixSelectionScope').hidden=scope.value==='filtered';
   $('matrixSelectionScope').textContent=scopeName;
-  toggle.disabled=ui.busy || !keys.length;
+  toggle.disabled=manualInputBlocked() || !keys.length;
   toggle.textContent=action;
   toggle.setAttribute('aria-pressed',String(checked));
   toggle.setAttribute('aria-description',description);
@@ -919,7 +937,7 @@ function updateMatrixSelectAll() {
 $('selectionScope').onchange=updateMatrixSelectAll;
 $('matrixSelectAll').onclick=()=>{
   const keys=window.portTools.scopeKeys();
-  if (ui.busy || !keys.length) return;
+  if (manualInputBlocked() || !keys.length) return;
   const remove=keys.every(key=>ui.selected.has(key));
   clearInspection();
   ui.tileRow=null;
@@ -932,7 +950,7 @@ $('matrixSelectAll').onclick=()=>{
 };
 $('selectEligible').onclick=()=>{
   const keys=window.portTools.scopeKeys();
-  if (ui.busy || !keys.length) return;
+  if (manualInputBlocked() || !keys.length) return;
   ui.tileRow=null;
   const allowed=$('operation').value!=='disable' && new Set(ui.rows
     .filter(row=>!row.controlUsed && (row.eligible_operations || []).includes($('operation').value)).map(portKey));
@@ -1186,8 +1204,20 @@ async function start() {
     window.powerMonitoring?.connect(ui.bootMonitor);
     $('version').textContent = 'v' + String(bootstrap.version || '').replace(/^v/,'');
     let resumed;
+    const queuedJobs=await window.manualQueue.refresh();
+    window.manualQueue.ready();
     const resumeId=window.cableTools?.jobOnOpen(bootstrap) || bootstrap.busyJob;
-    if (resumeId && resumeId!==bootstrap.monitor?.jobId) {
+    const resumedManual=queuedJobs.find(item=>item.id===resumeId);
+    if (resumeId && resumeId!==bootstrap.monitor?.jobId && !resumedManual?.wasQueued) {
+      if (resumedManual) {
+        const saved=await api('/api/workspace');
+        if (saved.groups?.length) {
+          window.portTools.restoreInventory(saved.groups,saved.targetText,true);
+          if (saved.query) { receivePorts(saved.query); setQueryWorkspace(saved.query.rows.some(portObserved)); }
+          route();
+        }
+      }
+      ui.manualForeground=!!resumedManual;
       ui.busy = true; ui.jobId = resumeId; sync();
       setJobProgress({});
       notify('진행 중인 작업을 기다리고 있습니다.');
@@ -1200,7 +1230,7 @@ async function start() {
       } finally {
         window.portTools?.endResumedQuery();
         setJobProgress(null);
-        ui.busy = false; ui.jobId = null;
+        ui.busy = false; ui.manualForeground = false; ui.jobId = null;
         const latest = await api('/api/bootstrap'); ui.session = latest.session || {active:false};
       }
     }

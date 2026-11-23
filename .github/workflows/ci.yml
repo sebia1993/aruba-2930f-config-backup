@@ -112,6 +112,16 @@ jobs:
           node --test tests/test_power_matrix.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Port power matrix tests failed.' }
 
+      - name: Exercise manual reservations in a Windows browser
+        working-directory: local-web
+        shell: pwsh
+        run: |
+          python -m pip install --no-input 'playwright==1.65.2' 'greenlet==3.5.6'
+          if ($LASTEXITCODE -ne 0) { throw 'Browser test dependency installation failed.' }
+          $env:PYTHONPATH = (Resolve-Path ./core).Path
+          python tests/browser_manual_queue.py
+          if ($LASTEXITCODE -ne 0) { throw 'Manual reservation browser test failed.' }
+
       - name: Build and verify local web ZIP
         working-directory: local-web
         shell: pwsh
@@ -183,6 +193,7 @@ jobs:
           version=${BASH_REMATCH[1]}
           sidecar=${zip%.zip}.sha256
           read -r checksum filename < "$sidecar"
+          filename=${filename%$'\r'}
           [[ "$checksum" =~ ^[a-fA-F0-9]{64}$ && "$filename" == "$zip" ]]
           echo "$checksum  $zip" | sha256sum --check --strict -
           tag="web-v$version"

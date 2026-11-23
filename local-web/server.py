@@ -289,10 +289,7 @@ class Handler(BaseHTTPRequestHandler):
                 app.sharing.close()
                 self._json({"active": False})
             elif path == "/api/jobs":
-                with app.jobs.lock:
-                    key = app.jobs.submit(data.get("action"), data.get("body"))
-                    state = app.jobs.recent[key]["state"]
-                self._json({"id": key, "state": state}, 202)
+                self._json(app.jobs.submit_receipt(data.get("action"), data.get("body")), 202)
             elif path == "/api/targets/preview":
                 from localweb.operations import parse_target_preview
 
@@ -306,7 +303,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/monitor/stop":
                 self._json(app.jobs.stop_monitor(data.get("monitorId")))
             elif re.fullmatch("/api/jobs/" + KEY + "/cancel", path):
-                self._json(app.jobs.cancel(path.split("/")[3]))
+                self._json(
+                    app.jobs.cancel(path.split("/")[3], queued_only=data.get("queuedOnly") is True)
+                )
             elif path == "/api/open-folder":
                 handle = data.get("fileId")
                 if not isinstance(handle, str) or not re.fullmatch(KEY, handle):

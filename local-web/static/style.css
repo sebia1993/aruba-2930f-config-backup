@@ -230,3 +230,14 @@ dialog::backdrop { background: #030c17bc; }
 
 .control-target { margin: 0; color: var(--teal); overflow-wrap: anywhere; }
 #portMonitor:not(.has-data) .viewer { height: var(--empty-view-height, 100px); min-height: 0; }
+
+#manualQueue { flex:none; min-width:0; margin:3px clamp(8px,1.25vw,22px); border-bottom:1px solid var(--stroke); }
+#manualQueue summary { width:fit-content; padding:5px 4px; }
+#manualQueueCount,.queue-state { color:var(--teal); font-variant-numeric:tabular-nums; }
+#manualQueueNotice { margin:3px 6px; overflow-wrap:anywhere; }
+#manualQueueItems { max-height:min(24dvh,14rem); overflow:auto; margin:0; padding:0 5px; }
+#manualQueueItems li { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; border-top:1px solid var(--stroke); padding:5px 0; }
+#manualQueueItems li[data-conflict=true] { border-inline-start:3px solid var(--bad); padding-inline-start:6px; }
+#manualQueueItems .queue-targets { flex:1 1 12rem; }
+.queue-targets { margin:0; max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; }
+.queue-message { color:var(--muted); overflow-wrap:anywhere; }

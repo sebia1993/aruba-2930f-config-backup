@@ -150,6 +150,30 @@ class WebControlTests(unittest.TestCase):
         self.state.query_service.collect.assert_not_called()
         self.service.apply.assert_not_called()
 
+    def test_control_audit_failure_after_write_locks_uncertain_port(self):
+        self.query(1)
+
+        def lose_audit_after_apply(plan, *args, on_stage, **kwargs):
+            on_stage(0, plan.targets[0], "apply")
+            raise ValueError("audit save failed")
+
+        with (
+            patch(
+                "localweb.controls.BatchPortController.execute", side_effect=lose_audit_after_apply
+            ),
+            self.assertRaises(ValueError) as error,
+        ):
+            self.controls.dispatch(
+                "control.quick-execute",
+                {
+                    "targets": [{"ip": self.target.endpoint, "port": "1"}],
+                    "operation": "poe_off",
+                },
+                self.cancel,
+            )
+        self.assertTrue(getattr(error.exception, "control_outcome_unknown", False))
+        self.assertIn((self.target, "1"), self.state.unverified_controls)
+
     def test_first_key_can_be_registered_but_manual_control_still_requires_confirmation(self):
         plan = self.preview(scope="single", operation="disable")
         self.assertEqual(plan["confirmationText"], "192.0.2.42:2222 / 1")

@@ -46,6 +46,12 @@ if TYPE_CHECKING:
     from .operations import Operations
 
 
+class ControlOutcomeUnknown(ValueError):
+    """The device may have accepted a command before the worker failed."""
+
+    control_outcome_unknown = True
+
+
 @dataclass(repr=False)
 class Approval:
     token: str
@@ -589,6 +595,12 @@ class Controls:
         )
         journal = journal or controller.begin_journal(batch)
         stages = {}
+        writes_started = set()
+
+        def publish_stage(index, item, phase):
+            if phase == "apply":
+                writes_started.add((item.target, item.interface))
+            publish(index, item, "사전 검증" if phase == "preflight" else "명령 적용")
 
         def publish(index, item, stage, message=""):
             stages[index] = {
@@ -613,15 +625,18 @@ class Controls:
                 journal=journal,
                 journal_offset=offset,
                 continue_after_chunk=(lambda _done, _total: not cancel.is_set()) if quick else None,
-                on_stage=lambda index, item, phase: publish(
-                    index, item, "사전 검증" if phase == "preflight" else "명령 적용"
-                ),
+                on_stage=publish_stage,
                 on_result=lambda index, result: publish(
                     index, result.target, result.status.value, result.message
                 ),
             )
-        except Exception:
+        except Exception as exc:
             self._forget_rows({(target.target, target.interface) for target in chunk})
+            if batch.action.is_poe and writes_started:
+                self.operations.unverified_controls.update(writes_started)
+                raise ControlOutcomeUnknown(
+                    "전력 명령의 적용 결과를 확인하지 못했습니다. 해당 포트를 다시 조회하세요."
+                ) from exc
             raise
         outcomes = {(r.target.target, r.target.interface): r.status.value for r in outcome.results}
         # Paused/cancelled ports never received a write. Preserve their original observation.
