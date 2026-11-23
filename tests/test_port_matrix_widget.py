@@ -8,14 +8,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import QModelIndex, QSettings, Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from aruba2930f_backup.manager_gui import NetworkManagerWindow
 from aruba2930f_backup.models import DeviceTarget
 from aruba2930f_backup.poe_power import LLDPObservation, LLDPStatus
 from aruba2930f_backup.poe_query_models import PoEQueryResult, PoETarget, QueryStatus
 from aruba2930f_backup.port_control import PortSnapshot
-from aruba2930f_backup.port_matrix_widget import PortMatrixModel, PortMatrixPanel
+from aruba2930f_backup.port_matrix_widget import PortMatrixModel, PortMatrixPanel, PortMatrixView
 from aruba2930f_backup.port_status_mapper import MatrixState, make_matrix_port, port_sort_key
 from aruba2930f_backup.ui_theme import selected_theme, set_theme
 
@@ -145,21 +145,39 @@ def test_entire_matrix_row_fits_at_each_zoom(app: QApplication, tile_size: int) 
 
 
 def test_focused_tile_is_preserved_as_columns_reflow(app: QApplication) -> None:
-    panel = PortMatrixPanel()
     group = PoETarget(DeviceTarget("192.0.2.10"), tuple(str(n) for n in range(1, 49)))
-    panel.set_targets((group,))
-    panel.resize(620, 420)
-    panel.show()
+    parent = QWidget()
+    model = PortMatrixModel()
+    model.set_targets((group,))
+    view = PortMatrixView(model, parent)
+    parent.resize(1100, 420)
+    view.resize(620, 420)
+    parent.show()
     app.processEvents()
     key = (group.target.endpoint, "48")
-    panel.select_port(key)
+    view.setCurrentIndex(model.index_for(key))
     for width in (1000, 620):
-        previous_columns = panel.model.columnCount()
-        panel.resize(width, 420)
+        previous_columns = model.columnCount()
+        view.resize(width, 420)
         app.processEvents()
-        assert panel.model.columnCount() != previous_columns
-        assert panel.model.key_at(panel.view.currentIndex()) == key
-        assert panel.view.selectionModel().isSelected(panel.model.index_for(key))
+        assert model.columnCount() != previous_columns
+        assert model.key_at(view.currentIndex()) == key
+        assert view.selectionModel().isSelected(model.index_for(key))
+    parent.close()
+
+
+def test_header_wraps_with_large_fonts_on_a_narrow_matrix(app: QApplication) -> None:
+    panel = PortMatrixPanel()
+    font = panel.font()
+    font.setPixelSize(24)
+    panel.setFont(font)
+    group = PoETarget(DeviceTarget("192.0.2.10"), tuple(str(n) for n in range(1, 49)))
+    panel.set_targets((group,))
+    panel.resize(680, 440)
+    panel.show()
+    app.processEvents()
+    assert panel.width() == 680
+    assert panel.summary.height() >= panel.summary.heightForWidth(panel.summary.width())
     panel.close()
 
 
