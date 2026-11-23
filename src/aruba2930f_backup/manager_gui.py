@@ -645,6 +645,7 @@ class NetworkManagerWindow(QMainWindow):
         else:
             search_layout.unsetContentsMargins()
         port.result_tree.setMinimumHeight(0 if compact else 160)
+        self.port_matrix.view.setMinimumHeight(0 if compact else 135)
         # The fixed power toolbar shows the same selected and hidden-port counts.
         port.selection_summary.setVisible(not compact)
         self.port_result_tabs.setVisible(compact)

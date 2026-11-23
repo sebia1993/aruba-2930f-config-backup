@@ -225,10 +225,12 @@ class PortMatrixView(QTableView):
         self._delegate = PortMatrixDelegate(self)
         self.setItemDelegate(self._delegate)
         self.setShowGrid(False)
-        self.horizontalHeader().hide()
-        self.verticalHeader().hide()
-        self.horizontalHeader().setDefaultSectionSize(self._tile_px)
-        self.verticalHeader().setDefaultSectionSize(self._tile_px)
+        for header in (self.horizontalHeader(), self.verticalHeader()):
+            header.hide()
+            # The headers have no text. A font-based minimum would enlarge
+            # the cells beyond the tile width used to fit the grid.
+            header.setMinimumSectionSize(1)
+            header.setDefaultSectionSize(self._tile_px)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)

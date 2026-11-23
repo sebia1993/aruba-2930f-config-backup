@@ -144,3 +144,24 @@ def test_startup_fits_work_area_and_keeps_preferred_large_size(monkeypatch, work
     finally:
         manager.close()
         app.processEvents()
+
+
+def test_short_matrix_can_scroll_to_last_port_with_details_open(window):
+    window.resize(1093, 550)
+    port = window.port_page
+    groups = tuple(
+        PoETarget(DeviceTarget(f"192.0.2.{ip}"), tuple(str(n) for n in range(1, 49)))
+        for ip in range(1, 8)
+    )
+    port._build_results(groups)
+    port.full_query_succeeded.emit()
+    window.port_result_tabs.setCurrentIndex(1)
+    matrix = window.port_matrix
+    matrix.select_port((groups[0].target.endpoint, "1"), open_details=True)
+    QApplication.processEvents()
+    last = matrix.model.index_for((groups[-1].target.endpoint, "48"))
+    matrix.view.scrollTo(last, matrix.view.ScrollHint.PositionAtBottom)
+    QApplication.processEvents()
+    rect = matrix.view.visualRect(last)
+    assert rect.height() > 0
+    assert QRegion(rect).subtracted(matrix.view.viewport().visibleRegion()).isEmpty()

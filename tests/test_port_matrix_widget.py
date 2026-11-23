@@ -128,6 +128,22 @@ def test_matrix_renders_14400_ports_without_creating_cell_widgets(app: QApplicat
     panel.close()
 
 
+@pytest.mark.parametrize("tile_size", (22, 28, 38))
+def test_entire_matrix_row_fits_at_each_zoom(app: QApplication, tile_size: int) -> None:
+    panel = PortMatrixPanel()
+    group = PoETarget(DeviceTarget("192.0.2.10"), tuple(str(n) for n in range(1, 97)))
+    panel.set_targets((group,))
+    panel.resize(700, 440)
+    panel.show()
+    panel.view.set_tile_size(tile_size)
+    app.processEvents()
+    last_column = panel.model.columnCount() - 1
+    tile_rect = panel.view.visualRect(panel.model.index(0, last_column))
+    assert tile_rect.width() == tile_rect.height() == tile_size
+    assert panel.view.viewport().rect().contains(tile_rect)
+    panel.close()
+
+
 def test_focused_tile_is_preserved_as_columns_reflow(app: QApplication) -> None:
     panel = PortMatrixPanel()
     group = PoETarget(DeviceTarget("192.0.2.10"), tuple(str(n) for n in range(1, 49)))
