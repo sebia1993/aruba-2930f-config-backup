@@ -125,6 +125,31 @@ class WebControlTests(unittest.TestCase):
             self.cancel,
         )
 
+    def test_queued_off_uses_new_reading_and_skips_port_already_off(self):
+        self.query(2)
+        # The cached value is ON. The read at dispatch observes that port 1 is OFF.
+        result = self.controls.dispatch_queued(
+            "control.quick-execute",
+            {"targets": [{"ip": self.target.endpoint, "port": "1"}], "operation": "poe_off"},
+            self.cancel,
+        )
+        self.assertEqual(result["rechecked"], 1)
+        self.assertEqual([row["port"] for row in result["skipped"]], ["1"])
+        self.assertEqual(self.state.query_service.collect.call_args.args[0][0].interfaces, ("1",))
+        self.service.apply.assert_not_called()
+
+    def test_queued_write_with_unverified_prior_result_stays_blocked(self):
+        self.query(1)
+        self.state.unverified_controls.add((self.target, "1"))
+        result = self.controls.dispatch_queued(
+            "control.quick-execute",
+            {"targets": [{"ip": self.target.endpoint, "port": "1"}], "operation": "poe_on"},
+            self.cancel,
+        )
+        self.assertEqual([row["port"] for row in result["blocked"]], ["1"])
+        self.state.query_service.collect.assert_not_called()
+        self.service.apply.assert_not_called()
+
     def test_first_key_can_be_registered_but_manual_control_still_requires_confirmation(self):
         plan = self.preview(scope="single", operation="disable")
         self.assertEqual(plan["confirmationText"], "192.0.2.42:2222 / 1")

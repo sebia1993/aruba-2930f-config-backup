@@ -74,6 +74,35 @@ class LanSharingTests(unittest.TestCase):
                 payload = json.loads(payload)
             return response.status, response.headers, payload
 
+    def test_reservation_endpoints_and_read_only_cable_preview(self):
+        status, _, queue = self.request("/api/manual-queue", headers=self.local_auth)
+        self.assertEqual((status, queue), (200, {"items": []}))
+        with self.host.jobs.lock:
+            self.host.jobs.active = "busy-monitor"
+        try:
+            status, _, result = self.request(
+                "/api/targets/preview",
+                headers=self.local_auth,
+                body={"targets": "192.0.2.1:2222 17-18"},
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(result["groups"][0]["interfaces"], ["17", "18"])
+            self.assertEqual(self.host.jobs.operations.inventory_view(), [])
+        finally:
+            with self.host.jobs.lock:
+                self.host.jobs.active = None
+        status, _, job = self.request(
+            "/api/jobs",
+            headers=self.local_auth,
+            body={"action": "targets.preview", "body": {"targets": "192.0.2.1 17"}},
+        )
+        self.assertEqual(status, 202)
+        self.assertEqual(job["state"], "running")
+        for _ in range(100):
+            if self.host.jobs.get(job["id"])["state"] != "running":
+                break
+            time.sleep(0.01)
+
     def enable(self):
         status, _, view = self.request(
             "/api/sharing/enable", body={"address": "127.0.0.1"}, headers=self.local_auth

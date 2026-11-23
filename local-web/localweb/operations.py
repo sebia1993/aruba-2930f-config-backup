@@ -215,6 +215,11 @@ def _eligible(row: PoEQueryResult, *, disable_only=False) -> list[str]:
     return actions
 
 
+def parse_target_preview(body: dict) -> dict:
+    """Parse the browser's target list without touching the device or active job."""
+    return preview_targets(body, _groups)
+
+
 class Operations:
     """One local operator. The HTTP layer serializes dispatch calls."""
 
@@ -329,7 +334,7 @@ class Operations:
         if action != "ports.refresh":
             _abort_if_cancelled(cancel)
         if action in {"targets.preview", "targets.apply"}:
-            view = preview_targets(body, _groups)
+            view = parse_target_preview(body)
             if action == "targets.apply":
                 self._inventory = _groups({"targets": view["targets"]}) if view["groups"] else ()
                 self.query_scope = self._inventory

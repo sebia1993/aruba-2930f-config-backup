@@ -159,8 +159,8 @@ def test_workflows_pin_node24_actions_to_reviewed_commits() -> None:
 
     assert combined.count("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1") == 2
     assert combined.count("actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97") == 2
-    assert combined.count("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a") == 3
-    assert combined.count("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c") == 1
+    assert combined.count("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a") == 4
+    assert combined.count("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c") == 2
     assert "@11d5960a326750d5838078e36cf38b85af677262" not in combined
     assert "@a26af69be951a213d495a4c3e4e4022e16d87065" not in combined
     assert "@ea165f8d65b6e75b540449e92b4886f43607fa02" not in combined
@@ -266,3 +266,17 @@ def test_publish_sidecar_pattern_executes_in_powershell() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_local_web_release_uses_the_verified_main_build_only_on_explicit_request() -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    build, publish = ci.split("  publish-local-web:", maxsplit=1)
+    assert build.index("Packaged local web smoke test failed") < build.index(
+        "Upload local web release"
+    )
+    assert "github.event_name == 'push'" in publish
+    assert "github.ref == 'refs/heads/main'" in publish
+    assert "startsWith(github.event.head_commit.message, '[web-release] ')" in publish
+    assert "needs: windows-validate-and-package" in publish
+    assert "actions/checkout" not in publish
+    assert publish.index("sha256sum --check") < publish.index("gh release create")
