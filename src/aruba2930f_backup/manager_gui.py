@@ -468,6 +468,7 @@ class NetworkManagerWindow(QMainWindow):
             "엑셀의 스위치 IP / 포트 두 열을 복사하고 붙여넣기 결과를 미리 확인하세요."
         )
         quick_actions = QHBoxLayout()
+        self._port_input_toolbar = quick_actions
         quick_actions.addWidget(self.port_target_toggle, 1)
         self.port_input_focus_button = QToolButton(port)
         self.port_input_focus_button.setObjectName("portInputFocusToggle")
@@ -581,7 +582,7 @@ class NetworkManagerWindow(QMainWindow):
         self._layout_port_control_buttons(control_group)
         self.port_advanced_toggle = QToolButton(port)
         self.port_advanced_toggle.setObjectName("portAdvancedControlToggle")
-        self.port_advanced_toggle.setText("고급 제어")
+        self.port_advanced_toggle.setText("고급 제어 · 기존 포트 Up/Down 및 계획 기능")
         self.port_advanced_toggle.setToolTip(
             "일반 PoE 작업은 아래 OFF/ON 두 버튼을 사용하세요. "
             "포트 Up/Down 및 기존 작업 계획은 필요할 때만 펼칩니다."
@@ -591,7 +592,7 @@ class NetworkManagerWindow(QMainWindow):
         self.port_advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.port_advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
         self.port_advanced_toggle.toggled.connect(self._toggle_port_advanced)
-        quick_actions.addWidget(self.port_advanced_toggle)
+        root.addWidget(self.port_advanced_toggle)
         self.port_advanced_scroll = QScrollArea(port)
         self.port_advanced_scroll.setObjectName("portAdvancedControls")
         self.port_advanced_scroll.setWidgetResizable(True)
@@ -635,15 +636,19 @@ class NetworkManagerWindow(QMainWindow):
                 header.resizeSection(column, width)
         self._compact_ports = compact
         root = port.layout()
-        assert root is not None
+        assert isinstance(root, QVBoxLayout)
         root.setSpacing(3 if compact else 7)
         self.port_search_group.setTitle("" if compact else self.port_search_group.accessibleName())
         search_layout = self.port_search_group.layout()
         assert search_layout is not None
         if compact:
             search_layout.setContentsMargins(4, 3, 4, 3)
+            self._port_input_toolbar.addWidget(self.port_advanced_toggle)
+            self.port_advanced_toggle.setText("고급 제어")
         else:
             search_layout.unsetContentsMargins()
+            root.insertWidget(root.indexOf(self.port_advanced_scroll), self.port_advanced_toggle)
+            self.port_advanced_toggle.setText("고급 제어 · 기존 포트 Up/Down 및 계획 기능")
         port.result_tree.setMinimumHeight(0 if compact else 160)
         self.port_matrix.view.setMinimumHeight(0 if compact else 135)
         # The fixed power toolbar shows the same selected and hidden-port counts.
