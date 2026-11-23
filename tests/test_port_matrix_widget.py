@@ -156,7 +156,8 @@ def test_focused_tile_is_preserved_as_columns_reflow(app: QApplication) -> None:
     app.processEvents()
     key = (group.target.endpoint, "48")
     view.setCurrentIndex(model.index_for(key))
-    for width in (1000, 620):
+    narrow_width = view.width()
+    for width in (narrow_width + 350, narrow_width):
         previous_columns = model.columnCount()
         view.resize(width, 420)
         app.processEvents()
