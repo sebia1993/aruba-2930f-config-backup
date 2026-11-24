@@ -177,6 +177,82 @@ class ManualQueueTests(unittest.TestCase):
         self.assertFalse(next_receipt["wasQueued"])
         self.assertFalse(self.jobs.get(next_receipt["id"])["wasQueued"])
 
+    def test_durable_receipt_recovers_evicted_alias_without_replay(self):
+        first = self.jobs.submit("control.quick-execute", self.power("1"))
+        alias = self.power("2")
+        self.assertEqual(self.jobs.submit("control.quick-execute", alias), first)
+        receipt = self.jobs.manual_receipt(alias["requestId"])
+        self.assertEqual(receipt["id"], first)
+        self.assertEqual(receipt["state"], "queued")
+        self.assertTrue(receipt["accepted"])
+        self.assertFalse(receipt["historyOnly"])
+        self.jobs.submit("cable.test", self.cable("3"))
+        with patch("localweb.jobs.MAX_RESULTS", 1):
+            self.finish()
+        self.assertNotIn(first, self.jobs.recent)
+        for jobs in (self.jobs, Jobs(self.root)):
+            recovered = jobs.manual_receipt(alias["requestId"])
+            self.assertEqual(recovered["id"], first)
+            self.assertEqual(recovered["state"], "done")
+            self.assertTrue(recovered["historyOnly"])
+            self.assertEqual(jobs.manual_receipt(alias["requestId"], close_missing=True), recovered)
+            with self.assertRaises(Busy):
+                jobs.submit("control.quick-execute", alias)
+        self.assertEqual(len(self.log), 2)
+
+    def test_closing_missing_receipt_blocks_delayed_post_even_after_restart(self):
+        body = self.power("1")
+        key = body["requestId"]
+        self.assertIsNone(self.jobs.manual_receipt(key))
+        closed = self.jobs.manual_receipt(key, close_missing=True)
+        self.assertFalse(closed["accepted"])
+        self.assertEqual(closed["state"], "not_accepted")
+        with self.assertRaises(Busy):
+            self.jobs.submit("control.quick-execute", body)
+        self.finish()
+        reopened = Jobs(self.root)
+        self.assertEqual(reopened.manual_receipt(key), closed)
+        with self.assertRaises(Busy):
+            reopened.submit("control.quick-execute", body)
+        self.assertFalse(self.log)
+
+    def test_close_of_accepted_receipt_never_cancels_it(self):
+        first = self.jobs.submit("control.quick-execute", self.power("1"))
+        receipt = self.jobs.manual_receipt(first, close_missing=True)
+        self.assertTrue(receipt["accepted"])
+        self.assertEqual(receipt["state"], "queued")
+        self.assertIn(first, self.jobs.pending)
+        self.finish()
+        self.assertEqual(len(self.log), 1)
+
+    def test_orphaned_memory_receipt_is_not_reported_as_running(self):
+        key = "a" * 32
+        self.jobs.recent[key] = {
+            "action": "control.quick-execute",
+            "state": "running",
+            "error": "",
+        }
+        try:
+            receipt = self.jobs.manual_receipt(key)
+            self.assertTrue(receipt["accepted"])
+            self.assertEqual(receipt["state"], "uncertain")
+        finally:
+            del self.jobs.recent[key]
+
+    def test_failed_journal_insert_does_not_enqueue_or_execute(self):
+        body = self.power("1")
+        with closing(sqlite3.connect(self.jobs.db)) as db, db:
+            db.execute(
+                "CREATE TRIGGER reject_manual_insert BEFORE INSERT ON jobs "
+                "BEGIN SELECT RAISE(FAIL, 'disk failure'); END"
+            )
+        with self.assertRaises(sqlite3.Error):
+            self.jobs.submit_receipt("control.quick-execute", body)
+        self.assertIsNone(self.jobs.manual_receipt(body["requestId"]))
+        self.assertFalse(self.jobs.pending)
+        self.finish()
+        self.assertFalse(self.log)
+
     def test_alias_recovers_canonical_cable_and_protects_owner_excerpt(self):
         first = self.cable("1")
         retry = dict(self.cable("2"), responseKey="8" * 32)

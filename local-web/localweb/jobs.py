@@ -60,6 +60,7 @@ PERSIST = {
 }
 EXTENSIONS = {".jsonl", ".json", ".txt", ".xlsx"}
 MAX_RESULTS = 8
+MANUAL_ACTIONS = frozenset({"control.quick-execute", "cable.test"})
 MAX_PENDING_MANUAL = 24
 MANUAL_RESERVATION_TIMEOUT = 10 * 60
 DEFAULT_MONITOR_MINUTES = 1
@@ -134,6 +135,9 @@ class Jobs:
                 "CREATE TABLE IF NOT EXISTS manual_aliases (id TEXT PRIMARY KEY, job TEXT NOT NULL)"
             )
             db.execute(
+                "CREATE TABLE IF NOT EXISTS closed_manual_receipts (id TEXT PRIMARY KEY, closed TEXT NOT NULL)"
+            )
+            db.execute(
                 "UPDATE jobs SET state='cancelled',finished=?,summary=? WHERE state='queued'",
                 (now(), "서버가 다시 시작되어 대기 중이던 예약을 취소했습니다."),
             )
@@ -147,6 +151,7 @@ class Jobs:
                 (now(), "이전 실행 중 서버가 종료되었습니다."),
             )
         self.lock = RLock()
+        self.receipt_log_lock = RLock()
         self.recent = OrderedDict()
         self.manual = {}
         self.pending = OrderedDict()
@@ -350,6 +355,8 @@ class Jobs:
 
     def _deduplicate(self, key, request, repeat_message):
         with closing(sqlite3.connect(self.db)) as db, db:
+            if db.execute("SELECT 1 FROM closed_manual_receipts WHERE id=?", (key,)).fetchone():
+                raise Busy("접수 확인을 종료한 요청입니다. 이 요청은 실행되지 않습니다.")
             alias = db.execute("SELECT job FROM manual_aliases WHERE id=?", (key,)).fetchone()
             previous = alias[0] if alias else key
             if previous in self.manual:
@@ -475,6 +482,108 @@ class Jobs:
                 "state": self.recent[key]["state"],
                 "wasQueued": key in self.manual and self.manual[key][1],
             }
+
+    def _receipt_from_memory(self, key):
+        entry = self.recent.get(key)
+        if entry is None or entry["action"] not in MANUAL_ACTIONS:
+            return None
+        state = entry.get("_manual_state", entry["state"])
+        message = entry.get("_manual_message") or entry["error"]
+        # A receipt can be durable even if preparation raised before the
+        # worker started. Never present an orphaned entry as an active job.
+        if state == "running" and self.active != key:
+            state = "uncertain"
+            message = "실행 상태를 확인할 수 없습니다. 해당 포트 상태를 직접 조회하세요."
+        elif state == "queued" and key not in self.pending:
+            state = "uncertain"
+            message = "예약 상태를 확인할 수 없습니다. 해당 포트 상태를 직접 조회하세요."
+        return {
+            "id": key,
+            "accepted": True,
+            "state": state,
+            "wasQueued": key in self.manual and self.manual[key][1],
+            "historyOnly": False,
+            "message": message,
+        }
+
+    def manual_receipt(self, key, *, close_missing=False):
+        """Resolve acceptance without accessing the switch or replaying a command.
+
+        The same lock protects submission and closing a missing request. A closed
+        ID is durably rejected even if its original HTTP POST arrives later.
+        Only summary fields are returned; cable response keys and CLI are excluded.
+        """
+        if not isinstance(key, str) or re.fullmatch(r"[0-9a-f]{32}", key) is None:
+            raise ValueError("작업 요청 식별자가 올바르지 않습니다.")
+        with self.lock:
+            current = self._receipt_from_memory(key)
+            if current is not None:
+                return current
+            with closing(sqlite3.connect(self.db)) as db, db:
+                if close_missing:
+                    db.execute("BEGIN IMMEDIATE")
+                alias = db.execute("SELECT job FROM manual_aliases WHERE id=?", (key,)).fetchone()
+                canonical = alias[0] if alias else key
+                current = self._receipt_from_memory(canonical)
+                if current is not None:
+                    return current
+                row = db.execute(
+                    "SELECT action,state,summary FROM jobs WHERE id=?", (canonical,)
+                ).fetchone()
+                if row and row[0] in MANUAL_ACTIONS:
+                    state, message = row[1], row[2]
+                    # On startup pending work is cancelled and running work is
+                    # uncertain. Also handle an older failed journal update.
+                    if state == "queued":
+                        state = "cancelled"
+                        message = "실행되지 않은 예약입니다. 작업 이력과 포트 상태를 확인하세요."
+                    elif state == "running":
+                        state = "uncertain"
+                        message = "실행 결과를 확인할 수 없습니다. 포트 상태를 직접 조회하세요."
+                    return {
+                        "id": canonical,
+                        "accepted": True,
+                        "state": state,
+                        "wasQueued": False,
+                        "historyOnly": True,
+                        "message": message,
+                    }
+                # Do not close an ID already owned by another job or a broken alias.
+                if alias or row or key in self.recent:
+                    raise Busy("작업 식별자의 접수 기록을 안전하게 확인할 수 없습니다.")
+                closed = db.execute(
+                    "SELECT 1 FROM closed_manual_receipts WHERE id=?", (key,)
+                ).fetchone()
+                if not closed and not close_missing:
+                    return None
+                if not closed:
+                    db.execute("INSERT INTO closed_manual_receipts VALUES(?,?)", (key, now()))
+                return {
+                    "id": key,
+                    "accepted": False,
+                    "state": "not_accepted",
+                    "wasQueued": False,
+                    "historyOnly": True,
+                    "message": "미접수로 확정했습니다. 이전 요청은 나중에 도착해도 실행되지 않습니다.",
+                }
+
+    def record_receipt_diagnostic(self, key, stage, status, code):
+        """Keep bounded local diagnostics without request bodies, credentials or CLI."""
+        if not isinstance(key, str) or re.fullmatch(r"[0-9a-f]{32}", key) is None:
+            return
+        path = self.directory / "receipt-diagnostics.jsonl"
+        record = {
+            "time": now(),
+            "requestId": key,
+            "stage": stage,
+            "httpStatus": status,
+            "code": code,
+        }
+        with self.receipt_log_lock, suppress(OSError):
+            if path.exists() and path.stat().st_size >= 1024 * 1024:
+                path.replace(path.with_suffix(".jsonl.1"))
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def cancel(self, key, *, queued_only=False):
         with self.lock:

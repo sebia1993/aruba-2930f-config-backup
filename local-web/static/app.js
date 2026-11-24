@@ -89,8 +89,9 @@ function sync() {
   window.cableTools?.sync();
   window.powerMonitoring?.sync();
 }
-async function api(path, data, headers) {
+async function api(path, data, headers, timeoutMs) {
   const options = {credentials:'same-origin', cache:'no-store', headers};
+  if (timeoutMs) options.signal=AbortSignal.timeout(timeoutMs);
   if (data !== undefined) {
     options.method = 'POST';
     options.headers = {'Content-Type':'application/json','X-Local-Token':ui.token};
@@ -101,11 +102,17 @@ async function api(path, data, headers) {
   catch { throw new Error('로컬 서버 응답이 없습니다. 실행 창과 연결 상태를 확인하세요.'); }
   let json;
   try { json = await response.json(); }
-  catch { throw new Error('로컬 서버에서 응답을 읽을 수 없습니다. Start-Local-Web.cmd로 웹 화면을 다시 여세요.'); }
+  catch {
+    const error=new Error('로컬 서버에서 응답을 읽을 수 없습니다. Start-Local-Web.cmd로 웹 화면을 다시 여세요.');
+    error.status=response.status;
+    throw error;
+  }
   if (!response.ok) {
-    const error = new Error(json.error || '로컬 요청 실패 (' + response.status + ')');
+    const error = new Error(json?.error || '로컬 요청 실패 (' + response.status + ')');
     error.status = response.status;
-    if (Array.isArray(json.conflicts)) error.conflicts = json.conflicts;
+    error.code = json?.code;
+    error.serverRejection = typeof json?.error==='string';
+    if (Array.isArray(json?.conflicts)) error.conflicts = json.conflicts;
     throw error;
   }
   return json;
@@ -165,7 +172,7 @@ async function run(action, body, receive, retryKeys=null) {
   notify(manual ? (operationNames[body.operation] || jobNames[action])+' 접수 중…' : jobNames[action]+' 진행 중…');
   try {
     const submitted = manual ? await window.manualQueue.submit(action,body) : await api('/api/jobs',{action,body});
-    if (manual && (submitted.state==='queued' || submitted.id!==requestId || submitted.wasQueued)) {
+    if (manual && (submitted.recovered || submitted.state==='queued' || submitted.id!==requestId || submitted.wasQueued)) {
       window.manualQueue.announce(submitted);
       return {background:true,submitted};
     }
@@ -221,6 +228,10 @@ async function run(action, body, receive, retryKeys=null) {
     }
     if (manual && error.conflicts?.length) {
       window.manualQueue.showConflict(error);
+      return {background:true};
+    }
+    if (manual && error.receiptPending) {
+      notify(error.message,true);
       return {background:true};
     }
     if (quick) window.controlTools.finishProgress();

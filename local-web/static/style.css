@@ -235,6 +235,8 @@ dialog::backdrop { background: #030c17bc; }
 #manualQueue summary { width:fit-content; padding:5px 4px; }
 #manualQueueCount,.queue-state { color:var(--teal); font-variant-numeric:tabular-nums; }
 #manualQueueNotice { margin:3px 6px; overflow-wrap:anywhere; }
+#manualReceiptActions:not([hidden]) { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; padding:3px 6px; }
+#manualReceiptActions .queue-message { flex:1 1 12rem; overflow-wrap:anywhere; }
 #manualQueueItems { max-height:min(24dvh,14rem); overflow:auto; margin:0; padding:0 5px; }
 #manualQueueItems li { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; border-top:1px solid var(--stroke); padding:5px 0; }
 #manualQueueItems li[data-conflict=true] { border-inline-start:3px solid var(--bad); padding-inline-start:6px; }

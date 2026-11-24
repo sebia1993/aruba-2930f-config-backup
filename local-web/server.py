@@ -9,6 +9,7 @@ import re
 import secrets
 import shutil
 import socket
+import sqlite3
 import sys
 import threading
 import time
@@ -22,9 +23,9 @@ from urllib.request import ProxyHandler, build_opener
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
-from localweb.jobs import Busy, Jobs  # noqa: E402 - import after configuring the bundled core path.
+from localweb.jobs import MANUAL_ACTIONS, Busy, Jobs  # noqa: E402
 
-VERSION = "1.30.3"
+VERSION = "1.30.4"
 STATIC = {
     "/": "index.html",
     "/matrix": "matrix.html",
@@ -87,6 +88,103 @@ class Handler(BaseHTTPRequestHandler):
 
     def _fail(self, code, msg):
         self._json({"error": msg}, code)
+
+    def _receipt_reply(self, key, stage, value, status, code):
+        self.server.jobs.record_receipt_diagnostic(key, stage, status, code)
+        try:
+            self._json(value, status)
+        except OSError:
+            # Acceptance may already have happened. Record only the response
+            # failure and let the browser reconcile the original request ID.
+            self.server.jobs.record_receipt_diagnostic(key, stage, status, "response_write_failed")
+
+    def _receipt_storage_error(self, key, stage):
+        self._receipt_reply(
+            key,
+            stage,
+            {
+                "error": "작업 이력 DB를 읽거나 기록하지 못했습니다. 접수 상태를 다시 확인하세요.",
+                "code": "receipt_storage_unavailable",
+            },
+            503,
+            "receipt_storage_unavailable",
+        )
+
+    def _lookup_receipt(self, key, *, close_missing=False):
+        stage = "close" if close_missing else "lookup"
+        try:
+            receipt = self.server.jobs.manual_receipt(key, close_missing=close_missing)
+        except sqlite3.Error:
+            return self._receipt_storage_error(key, stage)
+        except Busy:
+            return self._receipt_reply(
+                key,
+                stage,
+                {
+                    "error": "작업 식별자의 접수 기록을 확인할 수 없습니다.",
+                    "code": "receipt_conflict",
+                },
+                409,
+                "receipt_conflict",
+            )
+        if receipt is None:
+            return self._receipt_reply(
+                key,
+                stage,
+                {"error": "아직 접수 기록이 없습니다.", "code": "receipt_not_found"},
+                404,
+                "receipt_not_found",
+            )
+        self._receipt_reply(key, stage, receipt, 200, receipt["state"])
+
+    def _submit_job(self, action, body):
+        manual = isinstance(action, str) and action in MANUAL_ACTIONS
+        key = body.get("requestId") if manual and isinstance(body, dict) else None
+        if not isinstance(key, str) or re.fullmatch(KEY, key) is None:
+            return self._json(self.server.jobs.submit_receipt(action, body), 202)
+        try:
+            receipt = self.server.jobs.submit_receipt(action, body)
+        except sqlite3.Error:
+            return self._receipt_storage_error(key, "submit")
+        except Busy as exc:
+            value = {"error": str(exc)}
+            if exc.conflicts:
+                value["conflicts"] = exc.conflicts
+            return self._receipt_reply(key, "submit", value, 409, "conflict")
+        except ValueError:
+            # A validation error is definitive only if no durable receipt
+            # exists. Preparation can also raise after the journal INSERT.
+            try:
+                existing = self.server.jobs.manual_receipt(key)
+            except sqlite3.Error:
+                return self._receipt_storage_error(key, "submit")
+            except Busy:
+                return self._receipt_check_required(key)
+            if existing is not None and existing["accepted"]:
+                return self._receipt_check_required(key)
+            return self._receipt_reply(
+                key,
+                "submit",
+                {"error": "요청한 작업과 입력 형식을 확인하세요."},
+                400,
+                "invalid_request",
+            )
+        except Exception:
+            # An unexpected failure may follow a committed acceptance.
+            return self._receipt_check_required(key)
+        self._receipt_reply(key, "submit", receipt, 202, "accepted")
+
+    def _receipt_check_required(self, key):
+        self._receipt_reply(
+            key,
+            "submit",
+            {
+                "error": "접수 처리 중 오류가 발생했습니다. 기존 요청 ID를 확인하세요.",
+                "code": "receipt_check_required",
+            },
+            503,
+            "receipt_check_required",
+        )
 
     def _browser_presence(self):
         with self.server.browser_connection(self.connection):
@@ -222,6 +320,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(app.jobs.workspace())
             elif path == "/api/manual-queue":
                 self._json(app.jobs.manual_queue())
+            elif re.fullmatch("/api/manual-receipts/" + KEY, path):
+                self._lookup_receipt(path.rsplit("/", 1)[1])
             elif path == "/api/monitor":
                 self._json(app.jobs.monitor_status())
             elif re.fullmatch("/api/jobs/" + KEY, path):
@@ -289,7 +389,9 @@ class Handler(BaseHTTPRequestHandler):
                 app.sharing.close()
                 self._json({"active": False})
             elif path == "/api/jobs":
-                self._json(app.jobs.submit_receipt(data.get("action"), data.get("body")), 202)
+                self._submit_job(data.get("action"), data.get("body"))
+            elif re.fullmatch("/api/manual-receipts/" + KEY + "/close", path):
+                self._lookup_receipt(path.split("/")[3], close_missing=True)
             elif path == "/api/targets/preview":
                 from localweb.operations import parse_target_preview
 
