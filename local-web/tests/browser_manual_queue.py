@@ -87,8 +87,18 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
         # Reapplying the same intent must keep a single reservation. The opposite
         # intent must leave the original pending until the operator cancels it.
         select_only(tiles, power)
-        again = submit(page, off, quick_action)
-        assert again.ok and again.json()["id"] == first, again.text()
+        recovered = []
+
+        def lose_ack(route):
+            response = route.fetch()
+            assert response.status == 202, response.text()
+            recovered.append(response.json()["id"])
+            route.abort()
+
+        page.route("**/api/jobs", lose_ack, times=1)
+        off.click()
+        expect(queue.locator("#manualQueueNotice")).to_contain_text("접수 확인 완료", timeout=30000)
+        assert recovered == [first]
         select_only(tiles, power)
         conflict = submit(page, quick_power_group(page).locator("#quickOn"), quick_action)
         assert conflict.status == 409 and first in conflict.json()["conflicts"], conflict.text()

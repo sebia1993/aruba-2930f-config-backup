@@ -1,8 +1,16 @@
 'use strict';
 (() => {
   const panel=$('manualQueue'), details=$('manualQueueDetails'), list=$('manualQueueItems');
-  const notice=$('manualQueueNotice');
-  const labels={queued:'예약 대기',running:'실행 중',done:'완료',failed:'실패',cancelled:'취소됨',uncertain:'결과 미확인'};
+  const notice=$('manualQueueNotice'), receiptActions=$('manualReceiptActions');
+  const storageKey='aruba.manualReceipt.v1';
+  const receiptId=id=>typeof id==='string' && /^[0-9a-f]{32}$/.test(id);
+  const receiptStates=new Set(['queued','running','done','failed','cancelled','uncertain','not_accepted']);
+  let outstanding=null, receiptBusy=false;
+  try {
+    const saved=JSON.parse(sessionStorage.getItem(storageKey) || 'null');
+    if (receiptId(saved?.id)) outstanding={id:saved.id};
+  } catch { /* Browser storage is optional; keep the in-memory lock. */ }
+  const labels={queued:'예약 대기',running:'실행 중',done:'완료',failed:'실패',cancelled:'취소됨',uncertain:'결과 미확인',not_accepted:'미접수 확정'};
   const pending=item=>item.state==='queued' || item.state==='running';
   const title=item=>operationNames[item.operation] || jobNames[item.action] || '수동 작업';
   const keys=new Map();
@@ -66,7 +74,7 @@
     const waiting=items.filter(item=>item.state==='queued').length;
     const running=items.filter(item=>item.state==='running').length;
     $('manualQueueCount').textContent='대기 '+waiting+' · 실행 '+running;
-    panel.hidden=!items.some(item=>item.wasQueued) && notice.hidden;
+    panel.hidden=!outstanding && !items.some(item=>item.wasQueued) && notice.hidden;
   }
   async function showResult(item) {
     try {
@@ -122,7 +130,7 @@
       paint();
       await repair();
     } catch (error) {
-      if (ticket===requestNumber && !panel.hidden) message(error.message);
+      if (ticket===requestNumber && !panel.hidden && !outstanding) message(error.message);
     }
     return items;
   }
@@ -133,28 +141,140 @@
       wake(hasWork() ? 750 : 2000);
     },wait);
   }
-  async function submit(action,body) {
-    let submitted;
-    try { submitted=await api('/api/jobs',{action,body}); }
-    catch (error) {
-      if (error.status && error.status<500) throw error;
-      // An HTTP failure can follow acceptance. Only read the original ID.
-      const job=await api('/api/jobs/'+encodeURIComponent(body.requestId)).catch(()=>{
-        throw new Error('접수 여부를 확인할 수 없습니다. 다시 요청하기 전에 수동 작업 대기열을 확인하세요.');
-      });
-      submitted={id:job.id,state:job.state,wasQueued:job.wasQueued || job.state==='queued'};
+  function remember(id) {
+    outstanding=id ? {id} : null;
+    try {
+      if (id) sessionStorage.setItem(storageKey,JSON.stringify(outstanding));
+      else sessionStorage.removeItem(storageKey);
+    } catch { /* An unavailable store must not permit another in-memory submission. */ }
+  }
+  function validReceipt(receipt, recovered=false) {
+    return receiptId(receipt?.id) && receiptStates.has(receipt.state) &&
+      (!recovered || (typeof receipt.accepted==='boolean' &&
+        (receipt.accepted ? receipt.state!=='not_accepted' : receipt.state==='not_accepted')));
+  }
+  function receiptNotice(text) {
+    panel.hidden=false;
+    details.open=true;
+    message(text);
+    receiptActions.hidden=!outstanding || receiptBusy;
+    receiptActions.replaceChildren();
+    if (outstanding && !receiptBusy) {
+      receiptActions.append(
+        button('접수 상태 다시 확인',()=>resumeReceipt(false)),
+        button('미접수 요청 종료',()=>resumeReceipt(true)),
+        elem('span','기록이 없을 때만 이전 요청을 종료합니다. 이미 접수된 작업은 유지됩니다.','queue-message')
+      );
     }
+  }
+  function pendingError() {
+    const error=new Error('이전 요청의 접수 상태를 확인 중입니다. 수동 작업 대기열에서 먼저 확인하세요.');
+    error.receiptPending=true;
+    return error;
+  }
+  function completeReceipt(receipt,body=null) {
     ++requestNumber;
-    if (action==='cable.test' && submitted.id===body.requestId) keys.set(submitted.id,body.responseKey);
+    if (body?.responseKey && receipt.id===body.requestId) keys.set(receipt.id,body.responseKey);
+    if (receipt.recovered) ++workspaceGeneration;
+    remember(null);
+    receiptActions.hidden=true;
+    receiptActions.replaceChildren();
+    panel.hidden=!items.some(item=>item.wasQueued) && notice.hidden;
     wake();
-    return submitted;
+    return receipt;
+  }
+  async function lookupReceipt(id) {
+    const path='/api/manual-receipts/'+encodeURIComponent(id);
+    let lastError;
+    for (let attempt=1; attempt<=5; ++attempt) {
+      receiptNotice('접수 상태 자동 확인 중 ('+attempt+'/5) · 요청 ID '+id);
+      try {
+        const receipt=await api(path,undefined,undefined,6000);
+        if (!validReceipt(receipt,true)) throw new Error('접수 응답 형식 오류');
+        return {...receipt,recovered:true};
+      } catch (error) {
+        lastError=error;
+        if (attempt<5) await delay(250*2**(attempt-1));
+      }
+    }
+    const reason=lastError?.code==='receipt_storage_unavailable'?'작업 이력 DB 오류':
+      lastError?.code==='receipt_not_found'?'접수 기록 없음 (늦게 도착할 수 있음)':
+      lastError?.status?'HTTP '+lastError.status:'서버 응답 오류';
+    const error=new Error(reason+' · 접수 미확인 · 요청 ID '+id);
+    error.receiptPending=true;
+    throw error;
+  }
+  async function resumeReceipt(closeMissing=false) {
+    if (!outstanding || receiptBusy) return;
+    const id=outstanding.id;
+    receiptBusy=true;
+    try {
+      receiptNotice('접수 상태 확인 중 · 요청 ID '+id);
+      let receipt;
+      if (closeMissing) {
+        try {
+          receipt=await api('/api/manual-receipts/'+encodeURIComponent(id)+'/close',{},undefined,10000);
+          if (!validReceipt(receipt,true)) throw new Error('접수 응답 형식 오류');
+          receipt={...receipt,recovered:true};
+        } catch {
+          // Closing can also lose its acknowledgement. Read only; never replay a write.
+          receipt=await lookupReceipt(id);
+        }
+      } else receipt=await lookupReceipt(id);
+      announce(completeReceipt(receipt));
+    } catch (error) {
+      receiptBusy=false;
+      receiptNotice(error.message+' · 기존 요청은 자동 재전송하지 않습니다.');
+    } finally {
+      receiptBusy=false;
+    }
+  }
+  async function submit(action,body) {
+    if (outstanding || receiptBusy) {
+      if (outstanding && !receiptBusy) receiptNotice('이전 요청의 접수 상태를 먼저 확인하세요. · 요청 ID '+outstanding.id);
+      throw pendingError();
+    }
+    if (!receiptId(body.requestId)) throw new Error('작업 요청 식별자가 올바르지 않습니다.');
+    remember(body.requestId);
+    receiptBusy=true;
+    let submitted;
+    try {
+      try {
+        submitted=await api('/api/jobs',{action,body},undefined,10000);
+        if (!validReceipt(submitted)) throw new Error('접수 응답 형식 오류');
+      } catch (error) {
+        // Only an explicit JSON rejection can prove the ordinary submission failed.
+        if (error.serverRejection && [400,403,409,413,415].includes(error.status)) {
+          remember(null);
+          receiptActions.hidden=true;
+          message(error.message);
+          throw error;
+        }
+        submitted=await lookupReceipt(body.requestId);
+      }
+      if (!submitted.recovered) message('');
+      return completeReceipt(submitted,body);
+    } catch (error) {
+      if (outstanding) {
+        receiptBusy=false;
+        receiptNotice(error.message+' · 기존 요청은 자동 재전송하지 않습니다.');
+        error.receiptPending=true;
+      }
+      throw error;
+    } finally {
+      receiptBusy=false;
+    }
   }
   function announce(submitted) {
     panel.hidden=false;
     details.open=true;
-    const text=submitted.state==='queued'?'수동 작업이 예약되었습니다.':'작업의 현재 상태를 확인하세요.';
+    const text=submitted.recovered
+      ? (submitted.accepted?'접수 확인 완료 · ':'')+(labels[submitted.state] || submitted.state)+
+        (submitted.message?' · '+submitted.message:'')+
+        (submitted.historyOnly && submitted.accepted?' · 상세 결과는 작업 이력 또는 포트 재조회에서 확인하세요.':'')
+      : submitted.state==='queued'?'수동 작업이 예약되었습니다.':'작업의 현재 상태를 확인하세요.';
     message(text);
-    if (!ui.jobId) notify(text);
+    if (!ui.jobId) notify(text,submitted.state==='uncertain' || submitted.state==='failed');
     refresh();
   }
   function showConflict(error) {
@@ -176,11 +296,15 @@
       return {background:true,submitted};
     } catch (error) {
       if (error.conflicts?.length) showConflict(error);
-      else { panel.hidden=false; details.open=true; message(error.message); }
+      else if (!error.receiptPending) { panel.hidden=false; details.open=true; message(error.message); }
     }
     return {background:true};
   }
-  function ready() { initialized=true; wake(); }
+  function ready() {
+    initialized=true;
+    wake();
+    if (outstanding) void resumeReceipt(false);
+  }
   document.addEventListener('visibilitychange',()=>{ if (!document.hidden) wake(); });
   window.addEventListener('aruba-server-stopped',()=>{initialized=false; clearTimeout(timer); keys.clear();});
   window.manualQueue={submit,announce,submitBackground,showConflict,refresh,ready,hasWork};
