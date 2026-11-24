@@ -153,3 +153,13 @@ test('explicit validation or busy rejection releases the local confirmation lock
   assert.equal(h.storage.size,0);
   assert.equal(h.calls.length,1);
 });
+
+test('initial database error remains visible if later lookups find no receipt', async () => {
+  const h=receiptHarness(async (path,body)=>{
+    if (body) throw Object.assign(new Error('db'),{status:503,code:'receipt_storage_unavailable'});
+    throw Object.assign(new Error('missing'),{status:404,code:'receipt_not_found'});
+  });
+  await assert.rejects(h.queue.submit('control.quick-execute',powerBody),/작업 이력 DB 오류.*접수 미확인/);
+  assert.equal(h.calls.filter(c=>c.path==='/api/jobs').length,1);
+  assert.equal(h.storage.size,1);
+});

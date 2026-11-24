@@ -487,13 +487,23 @@ class Jobs:
         entry = self.recent.get(key)
         if entry is None or entry["action"] not in MANUAL_ACTIONS:
             return None
+        state = entry.get("_manual_state", entry["state"])
+        message = entry.get("_manual_message") or entry["error"]
+        # A receipt can be durable even if preparation raised before the
+        # worker started. Never present an orphaned entry as an active job.
+        if state == "running" and self.active != key:
+            state = "uncertain"
+            message = "실행 상태를 확인할 수 없습니다. 해당 포트 상태를 직접 조회하세요."
+        elif state == "queued" and key not in self.pending:
+            state = "uncertain"
+            message = "예약 상태를 확인할 수 없습니다. 해당 포트 상태를 직접 조회하세요."
         return {
             "id": key,
             "accepted": True,
-            "state": entry.get("_manual_state", entry["state"]),
+            "state": state,
             "wasQueued": key in self.manual and self.manual[key][1],
             "historyOnly": False,
-            "message": entry.get("_manual_message") or entry["error"],
+            "message": message,
         }
 
     def manual_receipt(self, key, *, close_missing=False):

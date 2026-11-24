@@ -183,7 +183,13 @@
     wake();
     return receipt;
   }
-  async function lookupReceipt(id) {
+  function receiptErrorReason(error) {
+    if (error?.code==='receipt_storage_unavailable') return '작업 이력 DB 오류 (HTTP 503)';
+    if (error?.code==='receipt_check_required') return '접수 처리 오류 (HTTP 503)';
+    if (error?.code==='receipt_not_found') return '접수 기록 없음 (늦게 도착할 수 있음)';
+    return error?.status?'HTTP '+error.status:'서버 응답 오류';
+  }
+  async function lookupReceipt(id,initialError=null) {
     const path='/api/manual-receipts/'+encodeURIComponent(id);
     let lastError;
     for (let attempt=1; attempt<=5; ++attempt) {
@@ -197,10 +203,10 @@
         if (attempt<5) await delay(250*2**(attempt-1));
       }
     }
-    const reason=lastError?.code==='receipt_storage_unavailable'?'작업 이력 DB 오류':
-      lastError?.code==='receipt_not_found'?'접수 기록 없음 (늦게 도착할 수 있음)':
-      lastError?.status?'HTTP '+lastError.status:'서버 응답 오류';
-    const error=new Error(reason+' · 접수 미확인 · 요청 ID '+id);
+    const reason=receiptErrorReason(lastError);
+    const first=initialError ? receiptErrorReason(initialError) : '';
+    const context=first && first!==reason ? '최초 접수: '+first+' · ' : '';
+    const error=new Error(context+reason+' · 접수 미확인 · 요청 ID '+id);
     error.receiptPending=true;
     throw error;
   }
@@ -250,7 +256,7 @@
           message(error.message);
           throw error;
         }
-        submitted=await lookupReceipt(body.requestId);
+        submitted=await lookupReceipt(body.requestId,error);
       }
       if (!submitted.recovered) message('');
       return completeReceipt(submitted,body);

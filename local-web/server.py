@@ -152,6 +152,16 @@ class Handler(BaseHTTPRequestHandler):
                 value["conflicts"] = exc.conflicts
             return self._receipt_reply(key, "submit", value, 409, "conflict")
         except ValueError:
+            # A validation error is definitive only if no durable receipt
+            # exists. Preparation can also raise after the journal INSERT.
+            try:
+                existing = self.server.jobs.manual_receipt(key)
+            except sqlite3.Error:
+                return self._receipt_storage_error(key, "submit")
+            except Busy:
+                return self._receipt_check_required(key)
+            if existing is not None and existing["accepted"]:
+                return self._receipt_check_required(key)
             return self._receipt_reply(
                 key,
                 "submit",
@@ -159,7 +169,22 @@ class Handler(BaseHTTPRequestHandler):
                 400,
                 "invalid_request",
             )
+        except Exception:
+            # An unexpected failure may follow a committed acceptance.
+            return self._receipt_check_required(key)
         self._receipt_reply(key, "submit", receipt, 202, "accepted")
+
+    def _receipt_check_required(self, key):
+        self._receipt_reply(
+            key,
+            "submit",
+            {
+                "error": "접수 처리 중 오류가 발생했습니다. 기존 요청 ID를 확인하세요.",
+                "code": "receipt_check_required",
+            },
+            503,
+            "receipt_check_required",
+        )
 
     def _browser_presence(self):
         with self.server.browser_connection(self.connection):

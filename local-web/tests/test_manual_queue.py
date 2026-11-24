@@ -225,6 +225,20 @@ class ManualQueueTests(unittest.TestCase):
         self.finish()
         self.assertEqual(len(self.log), 1)
 
+    def test_orphaned_memory_receipt_is_not_reported_as_running(self):
+        key = "a" * 32
+        self.jobs.recent[key] = {
+            "action": "control.quick-execute",
+            "state": "running",
+            "error": "",
+        }
+        try:
+            receipt = self.jobs.manual_receipt(key)
+            self.assertTrue(receipt["accepted"])
+            self.assertEqual(receipt["state"], "uncertain")
+        finally:
+            del self.jobs.recent[key]
+
     def test_failed_journal_insert_does_not_enqueue_or_execute(self):
         body = self.power("1")
         with closing(sqlite3.connect(self.jobs.db)) as db, db:

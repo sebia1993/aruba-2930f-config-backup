@@ -150,6 +150,36 @@ class LanSharingTests(unittest.TestCase):
         self.assertNotIn("PRIVATE", log)
         self.assertNotIn("192.0.2.1", log)
 
+    def test_validation_error_after_acceptance_requires_receipt_lookup(self):
+        key = "b" * 32
+        accepted = {
+            "id": key,
+            "accepted": True,
+            "state": "uncertain",
+            "wasQueued": False,
+            "historyOnly": True,
+            "message": "",
+        }
+        with (
+            patch.object(self.host.jobs, "submit_receipt", side_effect=ValueError("PRIVATE")),
+            patch.object(self.host.jobs, "manual_receipt", return_value=accepted),
+        ):
+            status, _, error = self.request(
+                "/api/jobs",
+                headers=self.local_auth,
+                body={
+                    "action": "control.quick-execute",
+                    "body": {"requestId": key, "operation": "poe_off", "targets": []},
+                },
+            )
+            self.assertEqual(status, 503)
+            self.assertEqual(error["code"], "receipt_check_required")
+            self.assertNotIn("PRIVATE", json.dumps(error))
+            status, _, receipt = self.request(
+                "/api/manual-receipts/" + key, headers=self.local_auth
+            )
+            self.assertEqual((status, receipt), (200, accepted))
+
     def enable(self):
         status, _, view = self.request(
             "/api/sharing/enable", body={"address": "127.0.0.1"}, headers=self.local_auth
