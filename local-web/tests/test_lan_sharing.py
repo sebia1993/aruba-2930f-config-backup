@@ -3,6 +3,7 @@
 import hashlib
 import json
 import socket
+import sqlite3
 import ssl
 import tempfile
 import threading
@@ -102,6 +103,52 @@ class LanSharingTests(unittest.TestCase):
             if self.host.jobs.get(job["id"])["state"] != "running":
                 break
             time.sleep(0.01)
+
+    def test_manual_receipt_http_recovery_and_storage_failure(self):
+        key = "a" * 32
+        path = "/api/manual-receipts/" + key
+        status, _, _ = self.request(path)
+        self.assertEqual(status, 403)
+        status, _, missing = self.request(path, headers=self.local_auth)
+        self.assertEqual(status, 404)
+        self.assertEqual(missing["code"], "receipt_not_found")
+        body = {
+            "action": "control.quick-execute",
+            "body": {
+                "requestId": key,
+                "operation": "poe_off",
+                "targets": [{"ip": "192.0.2.1", "sshPort": 22, "port": "1"}],
+            },
+        }
+        with patch.object(
+            self.host.jobs, "submit_receipt", side_effect=sqlite3.OperationalError("PRIVATE")
+        ):
+            status, _, error = self.request("/api/jobs", headers=self.local_auth, body=body)
+        self.assertEqual(status, 503)
+        self.assertEqual(error["code"], "receipt_storage_unavailable")
+        self.assertNotIn("PRIVATE", json.dumps(error))
+        with patch.object(
+            self.host.jobs, "manual_receipt", side_effect=sqlite3.OperationalError("PRIVATE")
+        ):
+            status, _, error = self.request(path, headers=self.local_auth)
+        self.assertEqual(status, 503)
+        self.assertEqual(error["code"], "receipt_storage_unavailable")
+        status, _, closed = self.request(path + "/close", headers=self.local_auth, body={})
+        self.assertEqual(status, 200)
+        self.assertFalse(closed["accepted"])
+        self.assertEqual(closed["state"], "not_accepted")
+        status, _, error = self.request("/api/jobs", headers=self.local_auth, body=body)
+        self.assertEqual(status, 409)
+        self.assertFalse(self.host.jobs.pending)
+        self.assertIsNone(self.host.jobs.active)
+        status, _, recovered = self.request(path, headers=self.local_auth)
+        self.assertEqual((status, recovered), (200, closed))
+        log = (self.host.jobs.directory / "receipt-diagnostics.jsonl").read_text(encoding="utf-8")
+        records = [json.loads(line) for line in log.splitlines()]
+        self.assertEqual([r["httpStatus"] for r in records], [404, 503, 503, 200, 409, 200])
+        self.assertTrue(all(r["requestId"] == key for r in records))
+        self.assertNotIn("PRIVATE", log)
+        self.assertNotIn("192.0.2.1", log)
 
     def enable(self):
         status, _, view = self.request(
