@@ -7,6 +7,11 @@ from aruba2930f_backup.port_control import validate_interface
 from .controls import _targets
 from .operations import _groups
 
+# Fail closed if a progress producer reports endlessly advancing cursors.
+# Normal progress pages contain up to 512 events, so 128 pages permit a
+# substantially larger history than a single diagnostic job should need.
+_MAX_CABLE_PROGRESS_PAGES = 128
+
 
 @dataclass(frozen=True)
 class ManualRequest:
@@ -72,7 +77,7 @@ def _interrupted_tests(rows, progress):
         return set()
     attempted = set()
     cursor = 0
-    while True:
+    for _ in range(_MAX_CABLE_PROGRESS_PAGES):
         page = progress(cursor)
         # A broken progress producer must never trap the queue worker or make
         # a possibly executed cable command look safe to follow with PoE.
@@ -89,6 +94,10 @@ def _interrupted_tests(rows, progress):
         if type(next_cursor) is not int or next_cursor <= cursor:
             return candidates
         cursor = next_cursor
+    # Truncated progress cannot prove that an individual cable test was not
+    # sent. Keep every cancelled test/show port uncertain and block follow-up
+    # control rather than holding the worker forever.
+    return candidates
 
 
 def manual_outcome(request, state, result, error, uncertain_failure, *, cable_progress=None):

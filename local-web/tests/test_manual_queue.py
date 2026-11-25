@@ -452,6 +452,35 @@ class ManualQueueTests(unittest.TestCase):
             {("192.0.2.1", 22, "3")},
         )
 
+    def test_endlessly_advancing_cable_progress_fails_closed_without_hanging(self):
+        rows = [
+            {
+                "ip": "192.0.2.1",
+                "sshPort": 22,
+                "port": port,
+                "stage": "test",
+                "status": "cancelled",
+            }
+            for port in ("3", "4")
+        ]
+        calls = []
+
+        def endless(cursor):
+            calls.append(cursor)
+            # Only port 3 is mentioned. An unbounded progress stream must
+            # never make port 4 safe for a follow-up PoE command.
+            return {
+                "cursor": cursor + 1,
+                "cableRows": [dict(rows[0], status="pending")],
+            }
+
+        self.assertEqual(
+            _interrupted_tests(rows, endless),
+            {("192.0.2.1", 22, "3"), ("192.0.2.1", 22, "4")},
+        )
+        self.assertGreater(len(calls), 1)
+        self.assertLessEqual(len(calls), 128)
+
     def test_bad_outcome_decoder_keeps_worker_and_blocks_only_matching_port(self):
         first = self.jobs.submit("control.quick-execute", self.power("1", ("1",)))
         overlap = self.jobs.submit("cable.test", self.cable("2", "1"))
