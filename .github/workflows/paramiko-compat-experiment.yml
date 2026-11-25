@@ -1,0 +1,64 @@
+name: Paramiko compatibility experiment
+
+on:
+  push:
+    branches:
+      - verify/paramiko-5-compat-20261125
+    paths:
+      - .github/workflows/paramiko-compat-experiment.yml
+      - tools/paramiko_compat_probe.py
+
+permissions:
+  contents: read
+
+jobs:
+  loopback:
+    name: Paramiko ${{ matrix.version }} client compatibility
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["4.0.0", "5.0.0"]
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      QT_QPA_PLATFORM: offscreen
+      CANDIDATE_VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+          architecture: x64
+      - name: Install unchanged locked server and isolated candidate
+        id: setup
+        shell: pwsh
+        run: |
+          python -m pip install --no-input -r requirements-lock.txt -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { throw "Baseline install failed" }
+          python -m venv --system-site-packages "$env:RUNNER_TEMP/paramiko-candidate"
+          if ($LASTEXITCODE -ne 0) { throw "Candidate venv failed" }
+          $candidate = Join-Path $env:RUNNER_TEMP 'paramiko-candidate/Scripts/python.exe'
+          & $candidate -m pip install --no-input "paramiko==$env:CANDIDATE_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "Candidate install failed" }
+          & $candidate -m pip check
+          if ($LASTEXITCODE -ne 0) { throw "Candidate dependency check failed" }
+      - name: Cross-version desktop and web SSH handshake and fingerprint gate
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "$(Get-Location)/src;$(Get-Location)"
+          $candidate = Join-Path $env:RUNNER_TEMP 'paramiko-candidate/Scripts/python.exe'
+          python tools/paramiko_compat_probe.py $candidate $env:CANDIDATE_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "Cross-version compatibility gate failed" }
+      - name: Existing SSH regression suite with candidate version
+        if: always() && steps.setup.outcome == 'success'
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "$(Get-Location)/src;$(Get-Location)"
+          $candidate = Join-Path $env:RUNNER_TEMP 'paramiko-candidate/Scripts/python.exe'
+          & $candidate -m pytest -v tests/test_loopback_ssh.py tests/test_auto_ssh.py tests/test_hostkeys.py
+          if ($LASTEXITCODE -ne 0) { throw "Existing SSH regression failed" }
