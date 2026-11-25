@@ -7,7 +7,6 @@ from aruba2930f_backup.port_control import validate_interface
 from .controls import _targets
 from .operations import _groups
 
-
 # Fail closed if a progress producer reports endlessly advancing cursors.
 # Normal progress pages contain up to 512 events, so 128 pages permit a
 # substantially larger history than a single diagnostic job should need.
