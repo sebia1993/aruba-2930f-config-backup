@@ -32,6 +32,12 @@ def client(port, mode, version):
             LoopbackArubaSSHServer.username, LoopbackArubaSSHServer.password,
         )
         if mode == "changed":
+            # Legacy compatibility is session-local. Each subprocess must run
+            # the real pre-auth probe before exercising the authenticated path.
+            # Never seed the compatibility allowlist or bypass pin validation.
+            preflight = collector.probe_host_keys([target], options=options)[0]
+            assert preflight.state is HostKeyTrustState.UNKNOWN, preflight.state
+            assert preflight.observation.fingerprint.startswith("SHA256:")
             store.approve([HostKeyCheck(
                 observation=HostKeyObservation(
                     target, "ssh-rsa", sha256_fingerprint(b"different-loopback-key"),
