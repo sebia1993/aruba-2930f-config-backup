@@ -68,11 +68,28 @@ _FOLDER_PICKER = """
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.Application]::EnableVisualStyles()
+# A TopMost property on an unshown form does not reliably raise its
+# owned modal dialog above the browser. Show an almost transparent, 1px
+# owner on the monitor where the operator clicked before opening the picker.
 $owner = New-Object System.Windows.Forms.Form
+$owner.ShowInTaskbar = $false
+$owner.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+$owner.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+$owner.Size = [System.Drawing.Size]::new(1, 1)
+$owner.Opacity = 0.01
+$monitor = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
+$owner.Location = [System.Drawing.Point]::new(
+    [int]($monitor.WorkingArea.Left + $monitor.WorkingArea.Width / 2),
+    [int]($monitor.WorkingArea.Top + $monitor.WorkingArea.Height / 2)
+)
 $owner.TopMost = $true
 $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
 $dlg.Description = '백업을 저장할 폴더를 선택하세요.'
 try {
+    $owner.Show()
+    [System.Windows.Forms.Application]::DoEvents()
+    $owner.Activate()
+    $owner.BringToFront()
     if ($dlg.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
         [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
         [Console]::Write($dlg.SelectedPath)

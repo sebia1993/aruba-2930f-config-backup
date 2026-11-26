@@ -1,8 +1,10 @@
 """Offline exercise of the same web operations, exporters and native parsers used on site."""
 
 import json
+import os
 import secrets
 import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -11,6 +13,7 @@ from threading import Event
 from unittest.mock import Mock, patch
 
 from localweb.backup_destination import copy_backup_files
+from localweb.backup_tools import _FOLDER_PICKER
 from localweb.controls import Controls
 from localweb.operations import Operations, TargetInputError, _backup_targets
 from openpyxl import Workbook, load_workbook
@@ -385,6 +388,48 @@ class OperationsTests(unittest.TestCase):
             self.assertEqual(self.call("backup.pick-directory"), {"directory": str(self.base)})
             dialog.communicate.return_value = (b"", None)
             self.assertEqual(self.call("backup.pick-directory"), {"directory": ""})
+
+    def test_folder_picker_has_visible_owner_and_focus_before_modal_dialog(self):
+        script = _FOLDER_PICKER
+        for statement in (
+            "$owner.ShowInTaskbar = $false",
+            "$owner.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None",
+            "$owner.Opacity = 0.01",
+            "$monitor = [System.Windows.Forms.Screen]::FromPoint",
+            "$owner.TopMost = $true",
+            "$owner.Show()",
+            "$owner.Activate()",
+            "$owner.BringToFront()",
+            "$dlg.ShowDialog($owner)",
+            "$dlg.Dispose(); $owner.Dispose()",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIn(statement, script)
+        self.assertLess(script.index("$owner.Show()"), script.index("$dlg.ShowDialog($owner)"))
+        self.assertLess(script.index("$owner.Activate()"), script.index("$dlg.ShowDialog($owner)"))
+
+    @unittest.skipUnless(os.name == "nt", "Requires Windows PowerShell")
+    def test_folder_picker_embedded_powershell_syntax(self):
+        system = os.environ.get("SYSTEMROOT", "")
+        powershell = Path(system) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        self.assertTrue(powershell.is_file())
+        parser = (
+            "$source = [Console]::In.ReadToEnd(); "
+            "$tokens = $null; $errors = $null; "
+            "[System.Management.Automation.Language.Parser]::ParseInput("
+            "$source, [ref]$tokens, [ref]$errors) | Out-Null; "
+            "if ($errors.Count) { "
+            "$errors | ForEach-Object { Write-Error $_.Message }; exit 1 }"
+        )
+        result = subprocess.run(
+            [str(powershell), "-NoProfile", "-NonInteractive", "-Command", parser],
+            input=_FOLDER_PICKER,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_history_includes_device_300_and_latest_30_reports(self):
         directory = self.ops.legacy_backup_dir / "2020-03-15"
