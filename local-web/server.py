@@ -48,6 +48,7 @@ STATIC = {
             "backup-tools.css",
             "control-tools.js",
             "cable-tools.js",
+            "ping-tools.js",
             "monitoring.js",
             "manual-queue.js",
         )

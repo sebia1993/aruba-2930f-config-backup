@@ -54,6 +54,30 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
     power = f"{power_switch.ip}:{power_switch.port}"
     cable = f"{cable_switch.ip}:{cable_switch.port}"
     page.goto(url)
+    page.locator('nav a[href="#ping"]').click()
+    expect(page.locator("#pingHeading")).to_be_visible()
+    page.locator("#pingTargets").fill("192.0.2.11")
+    page.locator("#pingDestinations").fill("198.51.100.10")
+    page.locator('[data-ping-preset="quick"]').click()
+    expect(page.locator("#pingRepetitions")).to_have_value("3")
+    expect(page.locator("#pingTimeout")).to_have_value("1")
+    page.locator("#pingPreview").click()
+    expect(page.locator("#pingCommands")).to_have_value(
+        "ping 198.51.100.10 repetitions 3 timeout 1 source 192.0.2.11"
+    )
+    expect(page.locator("#pingPreviewSummary")).to_contain_text("총 3회")
+    expect(page.locator("#pingCopy")).to_be_enabled()
+    page.locator("#pingSourceMode").select_option("vlan")
+    expect(page.locator("#pingVlan")).to_be_visible()
+    expect(page.locator("#pingCommands")).to_have_value("")
+    expect(page.locator("#pingCopy")).to_be_disabled()
+    page.locator("#pingVlan").fill("10")
+    page.locator("#pingPreview").click()
+    expect(page.locator("#pingCommands")).to_have_value(
+        "ping 198.51.100.10 repetitions 3 timeout 1 source 10"
+    )
+    expect(page.locator("#pingPreviewStatus")).to_contain_text("미실행")
+    page.locator('nav a[href="#ports"]').click()
     page.locator("#queryTargets").fill(f"{power} 1\n{cable} 1")
     expect(page.locator("#monitorInterval")).to_have_value("1")
     page.locator("#monitorToggle").click()
