@@ -113,7 +113,9 @@ class PingOutputTests(unittest.TestCase):
 
     def test_single_timeout_unreachable_and_incomplete(self):
         self.assertEqual(self.parse("Request timed out.").loss_pct, 100)
-        self.assertEqual(self.parse("The destination address is unreachable.").status, "unreachable")
+        self.assertEqual(
+            self.parse("The destination address is unreachable.").status, "unreachable"
+        )
         self.assertIsNone(self.parse("The destination address is unreachable.").loss_pct)
         self.assertEqual(self.parse("Request timed out.", completed=False).status, "unknown")
         self.assertEqual(self.parse("Request timed out.", 3).status, "unknown")
@@ -151,7 +153,9 @@ class PingOutputTests(unittest.TestCase):
             "198.51.100.10 is alive, iteration 3, time = 3 ms"
         )
         result = self.parse(output, 3)
-        self.assertEqual((result.status, result.rtt_avg_ms, result.rtt_origin), ("normal", 3, "replies"))
+        self.assertEqual(
+            (result.status, result.rtt_avg_ms, result.rtt_origin), ("normal", 3, "replies")
+        )
         duplicate = output.replace("iteration 3", "iteration 2")
         self.assertEqual(self.parse(duplicate, 3).status, "unknown")
         self.assertEqual(self.parse(output, 4).status, "unknown")
@@ -167,8 +171,32 @@ class PingOutputTests(unittest.TestCase):
         self.assertIsNone(result.rtt_avg_ms)
         self.assertEqual(result.rtt_evidence, "<1, 3")
 
+    def test_unicode_round_trip_separator(self):
+        result = self.parse(
+            "3 packets transmitted, 3 packets received, 0% packet loss\n"
+            "round\u2013trip (ms) min/avg/max = 1/2/3",
+            3,
+        )
+        self.assertEqual(result.rtt_avg_ms, 2)
+        self.assertEqual(result.rtt_origin, "summary")
+
+    def test_summary_cannot_override_contradictory_reply_numbers(self):
+        output = (
+            "198.51.100.10 is alive, iteration 1, time = 1 ms\n"
+            "198.51.100.10 is alive, iteration 1, time = 2 ms\n"
+            "2 packets transmitted, 2 packets received, 0% packet loss"
+        )
+        result = self.parse(output, 2)
+        self.assertEqual(result.status, "unknown")
+        self.assertIsNone(result.loss_pct)
+        self.assertEqual(
+            self.parse(output.replace("iteration 1", "iteration 3"), 2).status, "unknown"
+        )
+
     def test_cli_and_source_rejection_not_packet_loss(self):
         self.assertEqual(self.parse("Invalid input: source").status, "cli_error")
+        self.assertEqual(self.parse("% Command authorization failed").status, "cli_error")
+        self.assertEqual(self.parse("Incomplete input: source").status, "cli_error")
         self.assertEqual(self.parse("Invalid source IP address.").status, "source_error")
         self.assertIsNone(self.parse("Invalid source IP address.").received)
         self.assertEqual(self.parse("Unexpected CLI output").status, "unknown")

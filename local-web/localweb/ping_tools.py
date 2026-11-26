@@ -222,9 +222,7 @@ def verify_source(
     requested = plan.requested_source(target)
     if requested is None:
         return None
-    evidence = {
-        (_integer(vlan, 1, 4094, "VLAN"), unicast_ipv4(ip)) for vlan, ip in owned
-    }
+    evidence = {(_integer(vlan, 1, 4094, "VLAN"), unicast_ipv4(ip)) for vlan, ip in owned}
     if plan.options.source_mode == "vlan":
         candidates = {ip for vlan, ip in evidence if vlan == plan.options.vlan}
         if len(candidates) != 1:
@@ -267,7 +265,7 @@ _SUMMARY = re.compile(
     re.IGNORECASE,
 )
 _RTT = re.compile(
-    r"^round[-–]trip \(ms\) min/avg/max\s*=\s*"
+    r"^round[-\u2013]trip \(ms\) min/avg/max\s*=\s*"
     r"(<\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?)\s*/\s*"
     r"(<\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?)\s*/\s*"
     r"(<\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?)\.?$",
@@ -285,8 +283,9 @@ _SOURCE_ERROR = re.compile(
     r"invalid source vlan|source vlan has no ip address)\.?$", re.I
 )
 _CLI_ERROR = re.compile(
-    r"^(?:invalid input|invalid command|unknown command|incomplete command|"
-    r"ambiguous command|permission denied|not authorized|access denied|"
+    r"^(?:%\s*)?(?:invalid input|invalid command|unknown command|incomplete command|"
+    r"incomplete input|ambiguous command|ambiguous input|permission denied|not authorized|"
+    r"access denied|command authorization failed|authorization failed|"
     r"unrecognized command)(?:[.:].*)?$",
     re.I,
 )
@@ -310,8 +309,13 @@ def _measured(
                 else:
                     evidence = None
     return PingObservation(
-        status, sent, received, loss, *(values or (None, None, None)),
-        evidence, origin if evidence else None,
+        status,
+        sent,
+        received,
+        loss,
+        *(values or (None, None, None)),
+        evidence,
+        origin if evidence else None,
     )
 
 
@@ -393,6 +397,10 @@ def parse_ping_output(
             return unknown
         if len(replies) > received:
             return unknown
+        if any(match[2] is not None for match in replies) and not _numbered_replies(
+            replies, repetitions
+        ):
+            return unknown
         if not received and statistics:
             return unknown
         if statistics:
@@ -408,10 +416,7 @@ def parse_ping_output(
             return _measured(1, 0)
     # Some AOS-S builds return one line per successful repetition but omit
     # a summary. Accept only a complete set of unique matching reply numbers.
-    if (
-        len(replies) == repetitions == len(lines)
-        and _numbered_replies(replies, repetitions)
-    ):
+    if len(replies) == repetitions == len(lines) and _numbered_replies(replies, repetitions):
         return _from_replies(repetitions, repetitions, replies)
     # Without trustworthy full transmission evidence do not infer batch loss.
     return unknown
