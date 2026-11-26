@@ -7,11 +7,11 @@ import threading
 import unittest
 from pathlib import Path
 
-from aruba2930f_backup.hostkeys import HostKeyStore
-from aruba2930f_backup.models import CollectionFailure, CollectionOptions, Credentials, ErrorCode
-
 from localweb.ping_ssh import PingSSHSession
 from localweb.ping_tools import PingPlan
+
+from aruba2930f_backup.hostkeys import HostKeyStore
+from aruba2930f_backup.models import CollectionFailure, CollectionOptions, Credentials, ErrorCode
 
 _VLANS = """
  VLAN ID Name | Status Voice Jumbo

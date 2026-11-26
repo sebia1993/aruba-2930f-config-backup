@@ -63,6 +63,8 @@ from .backup_destination import copy_backup_files, selected_directory
 from .backup_history import backup_history
 from .backup_tools import BackupProgress, HistoryFolders, pick_directory
 from .cable import CableSession, diagnose_ports
+from .ping_ssh import PingPairResult, PingSSHSession
+from .ping_tools import Destination, PingPlan, preview_command
 from .port_tools import group_targets, matrix_observation, preview_targets, target_table
 
 POWER_SETTLE_SECONDS = 3
@@ -1068,7 +1070,13 @@ class Operations:
         }
 
     @contextmanager
-    def _cable_session(self, target, credentials, options, cancel):
+    def _prepared_diagnostic_session(self, session_type, target, credentials, options, cancel):
+        """Share the existing pinned diagnostic login and EXEC preparation.
+
+        The caller must hold the existing global device-operation slot for
+        the entire context. This helper never retries a command or creates a
+        separate SSH concurrency lane.
+        """
         session = None
         try:
             _abort_if_cancelled(cancel)
@@ -1086,7 +1094,7 @@ class Operations:
                 self.host_key_store.approve([check])
             self.host_key_store.require_trusted(observation)
             _abort_if_cancelled(cancel)
-            session = CableSession(target, credentials, options, self.host_key_store)
+            session = session_type(target, credentials, options, self.host_key_store)
             session.connect()
             _abort_if_cancelled(cancel)
             if credentials.enable_secret or not session.get_prompt().endswith("#"):
@@ -1096,6 +1104,17 @@ class Operations:
             _abort_if_cancelled(cancel)
             session.set_terminal_width()
             _abort_if_cancelled(cancel)
+            yield session
+        finally:
+            if session is not None:
+                with suppress(Exception):
+                    session.close()
+
+    @contextmanager
+    def _cable_session(self, target, credentials, options, cancel):
+        with self._prepared_diagnostic_session(
+            CableSession, target, credentials, options, cancel
+        ) as session:
             version = session.send_show("show version", cancel_event=cancel)
             _abort_if_cancelled(cancel)
             try:
@@ -1109,7 +1128,35 @@ class Operations:
             )
             _abort_if_cancelled(cancel)
             yield session
-        finally:
-            if session is not None:
-                with suppress(Exception):
-                    session.close()
+
+    def _ping_pair(
+        self,
+        plan: PingPlan,
+        target: DeviceTarget,
+        destination: Destination,
+        credentials: Credentials,
+        cancel: threading.Event,
+    ) -> PingPairResult:
+        """Execute one planned pair inside a caller-owned device-operation slot.
+
+        The credential snapshot must still be current. Each slot opens and
+        closes its own verified session so that a later scheduler may yield
+        between pairs without keeping a connection or holding a device lock.
+        This internal method is not exposed through dispatch or HTTP yet.
+        """
+        _abort_if_cancelled(cancel)
+        if self.credentials is None or credentials is not self.credentials:
+            raise ValueError("SSH 세션이 변경되었습니다. 다시 접수하세요.")
+        # Validate the exact pair before probing or opening any connection.
+        preview_command(plan, target, destination)
+        options = CollectionOptions(
+            max_attempts=1,
+            command_timeout_seconds=plan.options.command_timeout,
+            max_output_bytes=1024 * 1024,
+            max_output_lines=20_000,
+        )
+        with self._prepared_diagnostic_session(
+            PingSSHSession, target, credentials, options, cancel
+        ) as session:
+            _abort_if_cancelled(cancel)
+            return session.run_pair(plan, destination, cancel=cancel)

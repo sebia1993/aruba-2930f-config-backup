@@ -16,6 +16,7 @@ from localweb.backup_destination import copy_backup_files
 from localweb.backup_tools import _FOLDER_PICKER
 from localweb.controls import Controls
 from localweb.operations import Operations, TargetInputError, _backup_targets
+from localweb.ping_tools import Destination, PingPlan
 from openpyxl import Workbook, load_workbook
 from verify_http_ssh import interface_status_table
 
@@ -24,6 +25,7 @@ from aruba2930f_backup.hostkeys import HostKeyStore, sha256_fingerprint
 from aruba2930f_backup.models import (
     CollectionFailure,
     DeviceTarget,
+    ErrorCode,
     HostKeyObservation,
     HostKeyTrustState,
 )
@@ -93,6 +95,95 @@ class OperationsTests(unittest.TestCase):
                 "hostkey.approve", endpoint=check["endpoint"], fingerprint=check["fingerprint"]
             )["approved"]
         )
+
+    def ping_plan(self):
+        return PingPlan.parse(
+            {
+                "targets": self.target.endpoint,
+                "destinations": [{"ip": "198.51.100.10"}],
+            }
+        )
+
+    def test_ping_pair_prepares_pinned_session_and_closes_it(self):
+        plan = self.ping_plan()
+        credentials = self.ops.credentials
+        result = self.session.run_pair.return_value
+        with patch("localweb.operations.PingSSHSession", self.factory.create):
+            actual = self.ops._ping_pair(
+                plan, self.target, plan.destinations[0], credentials, self.cancel
+            )
+        self.assertIs(actual, result)
+        self.probe.probe.assert_called_once_with(self.target, timeout=15.0)
+        target, used_credentials, options, store = self.factory.create.call_args.args
+        self.assertEqual(target, self.target)
+        self.assertIs(used_credentials, credentials)
+        self.assertIs(store, self.ops.host_key_store)
+        self.assertEqual(options.max_attempts, 1)
+        self.assertEqual(options.command_timeout_seconds, plan.options.command_timeout)
+        self.assertEqual(
+            [entry[0] for entry in self.session.method_calls],
+            [
+                "connect",
+                "enter_enable",
+                "disable_paging",
+                "set_terminal_width",
+                "run_pair",
+                "close",
+            ],
+        )
+        self.session.run_pair.assert_called_once_with(
+            plan, plan.destinations[0], cancel=self.cancel
+        )
+        self.assertEqual(len(store.list_approved()), 1)
+
+    def test_ping_pair_rejects_changed_host_key_before_opening_session(self):
+        self.approve()
+        self.fingerprint = sha256_fingerprint(b"changed fixture key")
+        plan = self.ping_plan()
+        with (
+            patch("localweb.operations.PingSSHSession", self.factory.create),
+            self.assertRaises(CollectionFailure) as raised,
+        ):
+            self.ops._ping_pair(
+                plan, self.target, plan.destinations[0], self.ops.credentials, self.cancel
+            )
+        self.assertEqual(raised.exception.code, ErrorCode.HOST_KEY_CHANGED)
+        self.factory.create.assert_not_called()
+
+    def test_ping_pair_rejects_invalid_pair_and_expired_credentials_before_probe(self):
+        plan = self.ping_plan()
+        credentials = self.ops.credentials
+        with (
+            patch("localweb.operations.PingSSHSession", self.factory.create),
+            self.assertRaises(ValueError),
+        ):
+            self.ops._ping_pair(
+                plan, self.target, Destination("198.51.100.99"), credentials, self.cancel
+            )
+        self.call("session.close")
+        with (
+            patch("localweb.operations.PingSSHSession", self.factory.create),
+            self.assertRaises(ValueError),
+        ):
+            self.ops._ping_pair(
+                plan, self.target, plan.destinations[0], credentials, self.cancel
+            )
+        self.probe.probe.assert_not_called()
+        self.factory.create.assert_not_called()
+
+    def test_ping_pair_cancellation_after_connect_closes_without_command(self):
+        plan = self.ping_plan()
+        self.session.connect.side_effect = self.cancel.set
+        with (
+            patch("localweb.operations.PingSSHSession", self.factory.create),
+            self.assertRaises(CollectionFailure) as raised,
+        ):
+            self.ops._ping_pair(
+                plan, self.target, plan.destinations[0], self.ops.credentials, self.cancel
+            )
+        self.assertEqual(raised.exception.code, ErrorCode.CANCELLED)
+        self.session.run_pair.assert_not_called()
+        self.session.close.assert_called_once()
 
     def test_review_is_tied_to_observed_endpoint_and_fingerprint(self):
         self.call("hostkey.inspect", targets=self.target.endpoint)
