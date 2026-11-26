@@ -11,12 +11,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, RLock, Thread
 
-from aruba2930f_backup.models import CollectionFailure
+from aruba2930f_backup.models import CollectionFailure, ErrorCode
 
 from .controls import Controls
 from .manual_queue import ManualRequest, manual_outcome
 from .monitoring import PortMonitoring
 from .operations import Operations, TargetInputError, _groups
+from .ping_jobs import PingBatch
+from .ping_tools import PingPlan
 from .port_tools import group_targets
 from .power_history import PowerHistory, sampled_rows
 
@@ -162,6 +164,7 @@ class Jobs:
         self.closing = False
         self.cancel_event = None
         self.monitor: PortMonitoring | None = None
+        self.ping_batch: PingBatch | None = None
 
     def latest_cable_job(self):
         with self.lock:
@@ -233,6 +236,7 @@ class Jobs:
                 or plan.suspended
                 or time.monotonic() < plan.due
             ):
+                self._tick_ping()
                 return
             occupied = bool(self.active or self.pending or self.controls.awaiting_confirmation())
             plan.advance_to_next_slot(skipped=occupied)
@@ -247,6 +251,9 @@ class Jobs:
             if self.active:
                 raise Busy("작업을 마치거나 취소한 후 서버를 종료하세요.")
             self.invalidate_pending("서버 종료로 예약을 취소했습니다.")
+            if self.ping_batch:
+                self.ping_batch.stop("SERVER_SHUTDOWN")
+                self._finish_ping(self.ping_batch)
             self.monitor = None
             self.closing = True
 
@@ -398,6 +405,136 @@ class Jobs:
                 )
         return None
 
+    def submit_ping(self, body):
+        """Internal only until the authenticated Ping API and its tests are ready."""
+        if not isinstance(body, dict) or set(body) != {"requestId", "plan"}:
+            raise ValueError("Ping request requires an ID and plan.")
+        key = body["requestId"]
+        if not isinstance(key, str) or re.fullmatch(r"[0-9a-f]{32}", key) is None:
+            raise ValueError("Invalid Ping request ID.")
+        plan = PingPlan.parse(body["plan"])
+        with self.lock:
+            if self.closing:
+                raise Busy("서버가 종료 중입니다.")
+            if self.ping_batch and self.ping_batch.key == key:
+                if self.ping_batch.plan == plan:
+                    return key
+                raise Busy("Ping 요청 ID를 이미 사용했습니다.")
+            if self.ping_batch:
+                raise Busy("다른 Ping 작업이 실행 중입니다.")
+            creds = self.operations.credentials
+            if creds is None:
+                raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
+            started = now()
+            # Store acceptance before any SSH slot can be claimed. On restart
+            # the existing running-job recovery marks this as interrupted.
+            with closing(sqlite3.connect(self.db)) as db, db:
+                tables = ("jobs", "manual_aliases", "closed_manual_receipts")
+                if key in self.recent or any(
+                    db.execute(f"SELECT 1 FROM {table} WHERE id=?", (key,)).fetchone()
+                    for table in tables
+                ):
+                    raise Busy("Ping 요청 ID를 이미 사용했습니다. 작업 상태를 확인하세요.")
+                db.execute(
+                    "INSERT INTO jobs VALUES(?,?,?,?,?,?,?)",
+                    (key, "ping.run", "running", started, None, "", "[]"),
+                )
+            self.ping_batch = PingBatch(key, plan, creds)
+            self.recent[key] = dict(
+                id=key,
+                action="ping.run",
+                state="running",
+                started=started,
+                finished=None,
+                error="",
+                result=None,
+            )
+            self._trim_recent()
+            return key
+
+    def _tick_ping(self):
+        # Called under the same lock as monitor and manual queue admission.
+        batch = self.ping_batch
+        if batch is None:
+            return
+        if self.closing or batch.credentials is not self.operations.credentials:
+            batch.stop("SESSION_CHANGED")
+        if batch.terminal:
+            self._finish_ping(batch)
+            return
+        if self.active or self.pending or self.controls.awaiting_confirmation():
+            return
+        slot = batch.claim()
+        if slot is None:
+            return
+        self.busy_workspace = self.workspace()
+        self.active = batch.key
+        self.cancel_event = Event()
+        self.operations.reset_job_progress()
+        try:
+            Thread(
+                target=self._run_ping_slot,
+                args=(batch, slot, self.cancel_event),
+                daemon=True,
+            ).start()
+        except RuntimeError:
+            batch.stop("WORKER_START_FAILED", state="failed")
+            batch.record(slot, error=ErrorCode.UNEXPECTED_ERROR)
+            self.active = self.cancel_event = self.busy_workspace = None
+            self._finish_ping(batch)
+
+    def _finish_ping(self, batch):
+        if self.ping_batch is not batch or not batch.terminal:
+            return
+        snapshot = batch.snapshot(complete=True)
+        finished = now()
+        state = batch.state
+        error = batch.stop_reason
+        summary = f"Ping · {snapshot['processedPairs']}/{snapshot['total']}"
+        try:
+            with closing(sqlite3.connect(self.db)) as db, db:
+                db.execute(
+                    "UPDATE jobs SET state=?,finished=?,summary=? WHERE id=?",
+                    (state, finished, summary, batch.key),
+                )
+        except sqlite3.Error:
+            state = "failed"
+            error = "PING_HISTORY_WRITE_FAILED"
+        self.recent[batch.key].update(
+            state=state,
+            finished=finished,
+            error=error,
+            result=snapshot,
+        )
+        self.ping_batch = None
+        self._trim_recent()
+
+    def _run_ping_slot(self, batch, slot, cancel):
+        result, error, uncertain = None, None, False
+        try:
+            result = self.operations._ping_pair(
+                batch.plan, slot.target, slot.destination, batch.credentials, cancel
+            )
+        except CollectionFailure as exc:
+            error = exc.code
+        except Exception:
+            error = ErrorCode.UNEXPECTED_ERROR
+            uncertain = True
+        with self.lock:
+            try:
+                batch.record(slot, result, error=error, uncertain=uncertain)
+            except Exception:
+                # Never replay a slot after an uncertain worker or projection failure.
+                batch.stop("RESULT_PROJECTION_FAILED", state="failed")
+                batch.record(slot, error=ErrorCode.UNEXPECTED_ERROR, uncertain=True)
+            finally:
+                self.active = self.cancel_event = self.busy_workspace = None
+                if batch.terminal:
+                    self._finish_ping(batch)
+                # Manual FIFO wins immediately; monitor or another Ping slot
+                # may run only on a subsequent normal service tick.
+                self._next_manual()
+
     def submit(self, action, body, *, monitored=False):
         if not isinstance(action, str) or action not in ACTIONS or not isinstance(body, dict):
             raise ValueError("작업 이름과 입력 형식을 확인하세요.")
@@ -429,6 +566,7 @@ class Jobs:
                     queued = bool(
                         self.pending
                         or self.active in self.manual
+                        or (self.ping_batch and self.ping_batch.key == self.active)
                         or (self.monitor and self.monitor.job == self.active)
                     )
             else:
@@ -589,6 +727,15 @@ class Jobs:
         with self.lock:
             if key not in self.recent:
                 raise KeyError(key)
+            if self.ping_batch and key == self.ping_batch.key:
+                if queued_only and self.active == key:
+                    return {"requested": False}
+                self.ping_batch.stop("OPERATOR_CANCELLED")
+                if self.active == key:
+                    self.cancel_event.set()
+                else:
+                    self._finish_ping(self.ping_batch)
+                return {"requested": True}
             if key in self.pending:
                 self._cancel_reservations((key,), "운영자가 실행 전에 예약을 취소했습니다.")
                 return {"requested": True}
@@ -614,6 +761,8 @@ class Jobs:
             item.pop("_manual_state", None)
             item.pop("_manual_message", None)
             progress = self.operations.progress_snapshot() if self.active == key else {}
+            if self.ping_batch and key == self.ping_batch.key:
+                progress = self.ping_batch.snapshot(after=after)
             if self.active == key and item["action"] in {"ports.query", "ports.refresh"}:
                 progress.update(self.operations.query_progress(after))
                 if item["action"] == "ports.query" and "targets" in progress:

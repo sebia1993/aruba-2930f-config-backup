@@ -56,7 +56,9 @@ class PingSSHSession(NetmikoSSHSession):
         if not self._paging_prepared:
             raise CollectionFailure(ErrorCode.PAGING_SETUP_FAILED, "페이지 출력 해제가 필요합니다.")
         if not self._terminal_width_prepared:
-            raise CollectionFailure(ErrorCode.COMMAND_REJECTED, "터미널 출력 너비 확인이 필요합니다.")
+            raise CollectionFailure(
+                ErrorCode.COMMAND_REJECTED, "터미널 출력 너비 확인이 필요합니다."
+            )
         return self._require_cached_prompt()
 
     def _source_table(self, *, vlan: bool, cancel: CancellationSignal | None) -> str:

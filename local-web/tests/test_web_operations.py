@@ -165,9 +165,7 @@ class OperationsTests(unittest.TestCase):
             patch("localweb.operations.PingSSHSession", self.factory.create),
             self.assertRaises(ValueError),
         ):
-            self.ops._ping_pair(
-                plan, self.target, plan.destinations[0], credentials, self.cancel
-            )
+            self.ops._ping_pair(plan, self.target, plan.destinations[0], credentials, self.cancel)
         self.probe.probe.assert_not_called()
         self.factory.create.assert_not_called()
 
