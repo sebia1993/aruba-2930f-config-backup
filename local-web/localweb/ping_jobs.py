@@ -151,6 +151,7 @@ class PingBatch:
                 for index in range(len(rows), self.plan.total_pairs)
             ]
         total = self.plan.total_pairs
+        after = min(max(after, 0), len(rows))
         page = rows if complete else rows[after : after + 512]
         return {
             "total": total,

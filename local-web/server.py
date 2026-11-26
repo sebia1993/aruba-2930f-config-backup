@@ -324,6 +324,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._lookup_receipt(path.rsplit("/", 1)[1])
             elif path == "/api/monitor":
                 self._json(app.jobs.monitor_status())
+            elif path == "/api/ping/runs":
+                self._json(app.jobs.current_ping())
+            elif re.fullmatch("/api/ping/runs/" + KEY, path):
+                raw_cursor = parse_qs(urlsplit(self.path).query).get("after", ["0"])[0]
+                after = int(raw_cursor) if re.fullmatch(r"[0-9]{1,9}", raw_cursor) else 0
+                try:
+                    self._json(app.jobs.ping_status(path.rsplit("/", 1)[1], after))
+                except sqlite3.Error:
+                    self._fail(503, "Ping 작업 이력을 읽지 못했습니다. 기존 요청 ID를 확인하세요.")
             elif re.fullmatch("/api/jobs/" + KEY, path):
                 raw_cursor = parse_qs(urlsplit(self.path).query).get("after", ["0"])[0]
                 after = int(raw_cursor) if re.fullmatch(r"[0-9]{1,9}", raw_cursor) else 0
@@ -396,6 +405,23 @@ class Handler(BaseHTTPRequestHandler):
                 from localweb.operations import parse_target_preview
 
                 self._json(parse_target_preview(data))
+            elif path == "/api/ping/preview":
+                from localweb.ping_tools import preview_plan
+
+                self._json(preview_plan(data))
+            elif path == "/api/ping/runs":
+                try:
+                    receipt = app.jobs.submit_ping_receipt(data)
+                except sqlite3.Error:
+                    return self._fail(503, "Ping 접수 상태를 확인하세요. 새 요청 ID로 재실행하지 마세요.")
+                self._json(receipt, 202)
+            elif re.fullmatch("/api/ping/runs/" + KEY + "/cancel", path):
+                if data:
+                    raise ValueError("Unexpected cancel options.")
+                try:
+                    self._json(app.jobs.cancel_ping(path.split("/")[4]))
+                except sqlite3.Error:
+                    self._fail(503, "Ping 취소 상태를 확인하세요.")
             elif path == "/api/monitor/start":
                 try:
                     status = app.jobs.start_monitor(data)

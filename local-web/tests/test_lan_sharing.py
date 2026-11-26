@@ -20,6 +20,8 @@ from localweb.jobs import Jobs
 from localweb.sharing import Sharing
 from server import Handler, LocalServer
 
+from aruba2930f_backup.models import Credentials
+
 
 class LanSharingTests(unittest.TestCase):
     def setUp(self):
@@ -103,6 +105,66 @@ class LanSharingTests(unittest.TestCase):
             if self.host.jobs.get(job["id"])["state"] != "running":
                 break
             time.sleep(0.01)
+
+
+    def test_ping_routes_require_existing_session_and_share_the_device_slot(self):
+        plan = {
+            "targets": "192.0.2.11",
+            "destinations": [{"ip": "198.51.100.10"}],
+        }
+        key = "d" * 32
+        runs = "/api/ping/runs"
+        body = {"requestId": key, "plan": plan}
+        self.assertEqual(self.request(runs)[0], 403)
+        self.assertEqual(self.request(runs, body=body)[0], 403)
+        self.assertEqual(self.request("/api/ping/preview", body=plan)[0], 403)
+        status, _, preview = self.request(
+            "/api/ping/preview", body=plan, headers=self.local_auth
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(preview["totalRequests"], 5)
+        self.assertFalse(preview["sourceVerified"])
+        self.assertEqual(
+            preview["commands"][0]["command"],
+            "ping 198.51.100.10 repetitions 5 timeout 2 source 192.0.2.11",
+        )
+        self.host.jobs.operations.credentials = Credentials("fixture-reader", "fixture")
+        with (
+            patch.object(self.host.jobs.controls, "awaiting_confirmation", return_value=True),
+            patch.object(self.host.jobs.operations, "_ping_pair") as execute,
+        ):
+            status, _, receipt = self.request(runs, body=body, headers=self.local_auth)
+            self.assertEqual((status, receipt["id"], receipt["accepted"]), (202, key, True))
+            self.assertEqual(self.request(runs, body=body, headers=self.local_auth)[0], 202)
+            self.assertEqual(self.request(runs, headers=self.local_auth)[2], {"id": key})
+            detail = self.request(runs + "/" + key, headers=self.local_auth)[2]
+            self.assertEqual(detail["progress"]["completed"], 0)
+            self.assertEqual(self.request(runs + "/" + key)[0], 403)
+            bad = dict(self.local_auth, **{"X-Local-Token": "wrong"})
+            cancel = runs + "/" + key + "/cancel"
+            self.assertEqual(self.request(cancel, body={}, headers=bad)[0], 403)
+            self.assertEqual(self.request(cancel, body={}, headers=self.local_auth)[0], 200)
+            self.assertEqual(self.request(runs, headers=self.local_auth)[2], {"id": None})
+            detail = self.request(runs + "/" + key, headers=self.local_auth)[2]
+            self.assertEqual(detail["state"], "cancelled")
+            self.assertEqual(detail["result"]["rows"][0]["status"], "not_run")
+            self.assertEqual(self.request(runs, body=body, headers=self.local_auth)[0], 409)
+            execute.assert_not_called()
+
+    def test_ping_storage_errors_do_not_echo_private_details(self):
+        runs = "/api/ping/runs"
+        with patch.object(
+            self.host.jobs, "submit_ping_receipt", side_effect=sqlite3.OperationalError("PRIVATE")
+        ):
+            status, _, error = self.request(runs, body={}, headers=self.local_auth)
+        self.assertEqual(status, 503)
+        self.assertNotIn("PRIVATE", json.dumps(error))
+        with patch.object(
+            self.host.jobs, "ping_status", side_effect=sqlite3.OperationalError("PRIVATE")
+        ):
+            status, _, error = self.request(runs + "/" + "d" * 32, headers=self.local_auth)
+        self.assertEqual(status, 503)
+        self.assertNotIn("PRIVATE", json.dumps(error))
 
     def test_manual_receipt_http_recovery_and_storage_failure(self):
         key = "a" * 32

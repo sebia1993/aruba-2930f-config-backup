@@ -49,9 +49,7 @@ class PingJobsTests(unittest.TestCase):
         )
 
     def test_order_and_request_id_recovery(self):
-        with patch.object(
-            self.jobs.operations, "_ping_pair", side_effect=self.result
-        ) as execute:
+        with patch.object(self.jobs.operations, "_ping_pair", side_effect=self.result) as execute:
             key = self.jobs.submit_ping(self.body)
             self.assertEqual(self.jobs.submit_ping(self.body), key)
             self.assertEqual(self.jobs.get(key)["progress"]["completed"], 0)
@@ -124,9 +122,7 @@ class PingJobsTests(unittest.TestCase):
 
     def test_auth_denial_stops_remaining_pairs_without_loss(self):
         failure = CollectionFailure(ErrorCode.AUTH_FAILED, "fixture rejection")
-        with patch.object(
-            self.jobs.operations, "_ping_pair", side_effect=failure
-        ) as execute:
+        with patch.object(self.jobs.operations, "_ping_pair", side_effect=failure) as execute:
             key = self.jobs.submit_ping(self.body)
             self.jobs.tick_monitor()
             self.wait_idle()
@@ -150,6 +146,33 @@ class PingJobsTests(unittest.TestCase):
         result = self.jobs.get(key)
         self.assertEqual(result["state"], "cancelled")
         self.assertEqual(result["result"]["stopReason"], "SESSION_CHANGED")
+
+
+    def test_ping_status_recovers_history_without_claiming_packet_results(self):
+        key = self.jobs.submit_ping(self.body)
+        self.assertEqual(self.jobs.current_ping(), {"id": key})
+        self.assertEqual(self.jobs.ping_status(key)["progress"]["total"], 4)
+        reopened = Jobs(self.jobs.directory)
+        receipt = reopened.ping_status(key)
+        self.assertEqual(receipt["state"], "interrupted")
+        self.assertTrue(receipt["historyOnly"])
+        self.assertIsNone(receipt["result"])
+        self.assertEqual(reopened.cancel_ping(key), {"requested": False})
+        self.jobs.cancel_ping(key)
+
+    def test_cancel_only_acts_on_ping_owned_ids(self):
+        other = "c" * 32
+        with self.jobs.lock:
+            self.jobs.recent[other] = {"action": "cable.test", "state": "running"}
+        with self.assertRaises(KeyError):
+            self.jobs.cancel_ping(other)
+        self.assertEqual(self.jobs.recent[other]["state"], "running")
+        key = self.jobs.submit_ping(self.body)
+        self.assertEqual(self.jobs.cancel_ping(key), {"requested": True})
+        self.assertEqual(self.jobs.cancel_ping(key), {"requested": False})
+        status = self.jobs.ping_status(key, after=99)
+        self.assertEqual(status["result"]["rows"], [])
+        self.assertEqual(status["result"]["cursor"], 4)
 
     def test_shutdown_cancels_waiting_batch_and_does_not_resume(self):
         key = self.jobs.submit_ping(self.body)

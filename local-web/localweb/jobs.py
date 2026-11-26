@@ -406,7 +406,7 @@ class Jobs:
         return None
 
     def submit_ping(self, body):
-        """Internal only until the authenticated Ping API and its tests are ready."""
+        """Admit a finite Ping plan without starting a device operation."""
         if not isinstance(body, dict) or set(body) != {"requestId", "plan"}:
             raise ValueError("Ping request requires an ID and plan.")
         key = body["requestId"]
@@ -451,6 +451,65 @@ class Jobs:
             )
             self._trim_recent()
             return key
+
+    def submit_ping_receipt(self, body):
+        with self.lock:
+            key = self.submit_ping(body)
+            return {"id": key, "accepted": True, "state": self.recent[key]["state"]}
+
+    def current_ping(self):
+        """Return the current run ID even while a manual or monitor job owns the slot."""
+        with self.lock:
+            return {"id": self.ping_batch.key if self.ping_batch else None}
+
+    def ping_status(self, key, after=0):
+        """Read only Ping-owned IDs; never replay a missing or interrupted job."""
+        with self.lock:
+            item = self.recent.get(key)
+            if item is not None:
+                if item["action"] != "ping.run":
+                    raise KeyError(key)
+                progress = {}
+                result = item["result"]
+                if self.ping_batch and self.ping_batch.key == key:
+                    progress = self.ping_batch.snapshot(after=after)
+                elif result is not None:
+                    rows = result["rows"]
+                    after = min(max(after, 0), len(rows))
+                    page = rows[after : after + 512]
+                    result = dict(result, rows=page, cursor=after + len(page))
+                return dict(item, result=result, progress=progress, historyOnly=False)
+            with closing(sqlite3.connect(self.db)) as db:
+                row = db.execute(
+                    "SELECT state,started,finished,summary FROM jobs WHERE id=? AND action=?",
+                    (key, "ping.run"),
+                ).fetchone()
+            if row is None:
+                raise KeyError(key)
+            state, started, finished, summary = row
+            # A failed journal update may have left an old running state.
+            # There is no live batch and no recoverable per-pair detail here.
+            if state == "running":
+                state = "interrupted"
+            return {
+                "id": key,
+                "action": "ping.run",
+                "state": state,
+                "started": started,
+                "finished": finished,
+                "summary": summary,
+                "error": "",
+                "result": None,
+                "progress": {},
+                "historyOnly": True,
+            }
+
+    def cancel_ping(self, key):
+        with self.lock:
+            status = self.ping_status(key)
+            if status["state"] != "running" or status["historyOnly"]:
+                return {"requested": False}
+            return self.cancel(key)
 
     def _tick_ping(self):
         # Called under the same lock as monitor and manual queue admission.

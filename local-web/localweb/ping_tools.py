@@ -108,6 +108,7 @@ class Destination:
             not isinstance(self.label, str)
             or len(self.label) > 80
             or any(ord(ch) < 32 or ord(ch) == 127 for ch in self.label)
+            or any(0xD800 <= ord(ch) <= 0xDFFF for ch in self.label)
         ):
             raise ValueError("서버 이름은 제어문자 없는 80자 이하여야 합니다.")
 
@@ -244,6 +245,36 @@ def preview_command(plan: PingPlan, target: DeviceTarget, destination: Destinati
     if options.data_size is not None:
         command += f" data-size {options.data_size}"
     return command
+
+
+def preview_plan(value: object) -> dict:
+    """Validate the same plan as admission without accessing any device."""
+    plan = PingPlan.parse(value)
+    commands = []
+    for target in plan.targets:
+        for destination in plan.destinations:
+            if len(commands) == 20:
+                break
+            commands.append(
+                {
+                    "endpoint": target.endpoint,
+                    "destination": destination.ip,
+                    "command": preview_command(plan, target, destination),
+                }
+            )
+        if len(commands) == 20:
+            break
+    return {
+        "switches": len(plan.targets),
+        "destinations": len(plan.destinations),
+        "totalPairs": plan.total_pairs,
+        "totalRequests": plan.total_requests,
+        "requestedConcurrency": plan.options.concurrency,
+        "effectiveConcurrency": 1,
+        "commands": commands,
+        "truncated": len(commands) < plan.total_pairs,
+        "sourceVerified": False,
+    }
 
 
 @dataclass(frozen=True)
