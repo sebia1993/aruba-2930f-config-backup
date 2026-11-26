@@ -106,7 +106,6 @@ class LanSharingTests(unittest.TestCase):
                 break
             time.sleep(0.01)
 
-
     def test_ping_routes_require_existing_session_and_share_the_device_slot(self):
         plan = {
             "targets": "192.0.2.11",
@@ -118,9 +117,7 @@ class LanSharingTests(unittest.TestCase):
         self.assertEqual(self.request(runs)[0], 403)
         self.assertEqual(self.request(runs, body=body)[0], 403)
         self.assertEqual(self.request("/api/ping/preview", body=plan)[0], 403)
-        status, _, preview = self.request(
-            "/api/ping/preview", body=plan, headers=self.local_auth
-        )
+        status, _, preview = self.request("/api/ping/preview", body=plan, headers=self.local_auth)
         self.assertEqual(status, 200)
         self.assertEqual(preview["totalRequests"], 5)
         self.assertFalse(preview["sourceVerified"])

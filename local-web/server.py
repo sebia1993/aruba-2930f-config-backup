@@ -413,7 +413,9 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     receipt = app.jobs.submit_ping_receipt(data)
                 except sqlite3.Error:
-                    return self._fail(503, "Ping 접수 상태를 확인하세요. 새 요청 ID로 재실행하지 마세요.")
+                    return self._fail(
+                        503, "Ping 접수 상태를 확인하세요. 새 요청 ID로 재실행하지 마세요."
+                    )
                 self._json(receipt, 202)
             elif re.fullmatch("/api/ping/runs/" + KEY + "/cancel", path):
                 if data:

@@ -147,7 +147,6 @@ class PingJobsTests(unittest.TestCase):
         self.assertEqual(result["state"], "cancelled")
         self.assertEqual(result["result"]["stopReason"], "SESSION_CHANGED")
 
-
     def test_ping_status_recovers_history_without_claiming_packet_results(self):
         key = self.jobs.submit_ping(self.body)
         self.assertEqual(self.jobs.current_ping(), {"id": key})
