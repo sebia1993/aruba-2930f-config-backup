@@ -29,9 +29,7 @@ _IP_ROW = re.compile(
     r"([^|]+?)\s*\|\s*(Manual|DHCP/Bootp|Disabled)(?:\s+(.*))?",
     re.I,
 )
-_ADDRESS_ROW = re.compile(
-    r"([0-9.]{7,15})\s+([0-9.]{7,15})(?:\s+(?:Yes|No)){0,2}", re.I
-)
+_ADDRESS_ROW = re.compile(r"([0-9.]{7,15})\s+([0-9.]{7,15})(?:\s+(?:Yes|No)){0,2}", re.I)
 _ERROR = "Source 주소의 VLAN 및 활성 IPv4 정보를 확인할 수 없습니다."
 
 
