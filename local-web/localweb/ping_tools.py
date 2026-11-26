@@ -280,7 +280,8 @@ _TIMEOUT = re.compile(r"^(?:request timed out|no response from destination)\.?$"
 _UNREACHABLE = re.compile(r"^(?:the )?destination (?:address |host )?is unreachable\.?$", re.I)
 _SOURCE_ERROR = re.compile(
     r"^(?:invalid source (?:ip )?address|source (?:ip )?address is not valid|"
-    r"invalid source vlan|source vlan has no ip address)\.?$", re.I
+    r"invalid source vlan|source vlan has no ip address)\.?$",
+    re.I,
 )
 _CLI_ERROR = re.compile(
     r"^(?:%\s*)?(?:invalid input|invalid command|unknown command|incomplete command|"

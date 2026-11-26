@@ -126,7 +126,9 @@ class PingOutputTests(unittest.TestCase):
             "round-trip (ms) min/avg/max = 1/3/5",
             5,
         )
-        self.assertEqual((result.status, result.loss_pct, result.rtt_avg_ms), ("partial_loss", 40, 3))
+        self.assertEqual(
+            (result.status, result.loss_pct, result.rtt_avg_ms), ("partial_loss", 40, 3)
+        )
         result = self.parse("5 packets transmitted, 0 packets received, 100% packet loss", 5)
         self.assertEqual(result.status, "no_reply")
         self.assertIsNone(result.rtt_avg_ms)
