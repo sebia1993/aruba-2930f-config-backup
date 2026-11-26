@@ -77,6 +77,75 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
         "ping 198.51.100.10 repetitions 3 timeout 1 source 10"
     )
     expect(page.locator("#pingPreviewStatus")).to_contain_text("미실행")
+    # Mock the browser-facing receipt and result transport only: no real Ping
+    # or production target is contacted. Backend admission is tested separately.
+    submissions = []
+    cancelled = []
+    run_id = None
+
+    def ping_transport(route):
+        nonlocal run_id
+        request = route.request
+        path = request.url.split("?", 1)[0]
+        if request.method == "POST" and path.endswith("/api/ping/runs"):
+            payload = request.post_data_json
+            run_id = payload["requestId"]
+            assert re.fullmatch(r"[0-9a-f]{32}", run_id)
+            assert payload["plan"]["options"]["vlan"] == 10
+            submissions.append(run_id)
+            route.abort()
+        elif request.method == "POST" and path.endswith("/cancel"):
+            assert path.endswith(f"/{run_id}/cancel")
+            cancelled.append(run_id)
+            route.fulfill(json={"requested": True})
+        elif path.endswith("/api/ping/runs"):
+            route.fulfill(json={"id": run_id if not cancelled else None})
+        else:
+            assert path.endswith(f"/{run_id}")
+            row = {
+                "index": 0,
+                "ip": "192.0.2.11",
+                "ssh_port": 22,
+                "destination_ip": "198.51.100.10",
+                "status": "not_run",
+            }
+            snapshot = {
+                "total": 1,
+                "completed": int(bool(cancelled)),
+                "processedPairs": 0,
+                "rows": [row] if cancelled and not request.url.endswith("after=1") else [],
+                "cursor": int(bool(cancelled)),
+            }
+            route.fulfill(
+                json={
+                    "id": run_id,
+                    "state": "cancelled" if cancelled else "running",
+                    "historyOnly": False,
+                    "progress": snapshot,
+                }
+            )
+
+    page.route("**/api/ping/runs**", ping_transport)
+    try:
+        expect(page.locator("#pingStart")).to_be_enabled()
+        page.locator("#pingStart").click()
+        expect(page.locator("#pingRunStatus")).to_contain_text("작업 진행 중")
+        expect(page.locator("#pingStart")).to_be_disabled()
+        assert len(submissions) == 1
+        page.reload()
+        expect(page.locator("#pingRunStatus")).to_contain_text("작업 진행 중")
+        expect(page.locator("#pingRequestId")).to_have_text(submissions[0])
+        assert len(submissions) == 1
+        page.locator("#pingCancel").click()
+        expect(page.locator("#pingRunStatus")).to_contain_text("작업 취소됨")
+        expect(page.locator("#pingRows")).to_contain_text("미실행")
+        expect(page.locator("#pingNew")).to_be_enabled()
+        assert cancelled == submissions
+        page.locator("#pingNew").click()
+        expect(page.locator("#pingRequestId")).to_have_text("—")
+        assert len(submissions) == 1
+    finally:
+        page.unroute("**/api/ping/runs**", ping_transport)
     page.locator('nav a[href="#ports"]').click()
     page.locator("#queryTargets").fill(f"{power} 1\n{cable} 1")
     expect(page.locator("#monitorInterval")).to_have_value("1")

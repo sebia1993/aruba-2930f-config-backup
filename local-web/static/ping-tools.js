@@ -1,11 +1,11 @@
 'use strict';
 
-// Preview-only development slice. Server validation is authoritative; no SSH
-// execution is exposed here until admission/recovery and result UI are ready.
+// General Ping UI. The server owns admission, scheduling and all measurement counters.
 (() => {
   const form = $('pingForm');
   let generation = 0;
   let currentCommands = '';
+  let previewedPlan = null;
   const preset = {quick:[3,1], normal:[5,2], detail:[20,3]};
   const summary = $('pingPreviewSummary');
   const status = $('pingPreviewStatus');
@@ -29,12 +29,14 @@
   }
   function invalidate() {
     generation++;
+    previewedPlan = null;
     currentCommands = '';
     commands.value = '';
     copy.disabled = true;
     summary.textContent = '입력을 작성하고 미리보기를 실행하세요.';
     status.textContent = '입력을 검토하세요. 장비 접속은 하지 않습니다.';
     syncSource();
+    syncRun();
   }
   function plan() {
     const mode = $('pingSourceMode').value;
@@ -88,7 +90,8 @@
     }
     status.textContent = '서버에서 입력을 검증 중입니다.';
     try {
-      const result = await api('/api/ping/preview', plan(), undefined, 15000);
+      const requestPlan = plan();
+      const result = await api('/api/ping/preview', requestPlan, undefined, 15000);
       if (requestGeneration !== generation) return;
       const text = result.commands.map(row => row.command).join('\n');
       currentCommands = text;
@@ -99,6 +102,8 @@
         '회 · 요청 동시성 ' + result.requestedConcurrency + ' / 실제 ' +
         result.effectiveConcurrency + (result.truncated ? ' · 처음 20개 명령만 표시' : '');
       status.textContent = '입력 검증 완료 · 실제 Source 및 장비 호환성 미확인 · 미실행';
+      previewedPlan = requestPlan;
+      syncRun();
     } catch (error) {
       if (requestGeneration === generation) status.textContent = error.message;
     }
@@ -116,5 +121,246 @@
       status.textContent = '자동 복사를 사용할 수 없습니다. 선택한 명령을 직접 복사하세요.';
     }
   });
+  // Persist only an opaque receipt ID, never credentials or the measurement plan.
+  const storageKey = 'ping.run.id.v1';
+  const runStatus = $('pingRunStatus');
+  const runButton = $('pingStart');
+  const retryButton = $('pingRetry');
+  const cancelButton = $('pingCancel');
+  const newButton = $('pingNew');
+  const refreshButton = $('pingRefresh');
+  const idPattern = /^[0-9a-f]{32}$/;
+  const terminalStates = new Set(['done', 'cancelled', 'failed', 'interrupted']);
+  const labels = {
+    normal:'정상', partial_loss:'부분 손실', no_reply:'응답 없음',
+    unreachable:'도달 불가', source_error:'Source 오류', cli_error:'CLI 오류',
+    ssh_failure:'SSH 실패', unknown:'결과 미확인', not_run:'미실행'
+  };
+  let trackedId = null;
+  let pendingPlan = null;
+  let storageOK = true;
+  let discovered = false;
+  let busy = false;
+  let running = false;
+  let terminal = false;
+  let missingReceipt = false;
+  let cursor = 0;
+  let pageIndex = 0;
+  let rows = [];
+  try {
+    const saved = sessionStorage.getItem(storageKey);
+    if (saved && idPattern.test(saved)) trackedId = saved;
+    else if (saved) storageOK = false;
+  } catch { storageOK = false; }
+
+  function remember(id) {
+    try {
+      if (id === null) sessionStorage.removeItem(storageKey);
+      else sessionStorage.setItem(storageKey, id);
+      trackedId = id;
+      return true;
+    } catch {
+      storageOK = false;
+      runStatus.textContent = '요청 ID를 안전하게 저장할 수 없습니다. 새 작업을 시작하지 않습니다.';
+      return false;
+    }
+  }
+  function syncRun() {
+    runButton.disabled = busy || !storageOK || !discovered || !!trackedId || !previewedPlan;
+    retryButton.hidden = !(trackedId && missingReceipt && pendingPlan);
+    retryButton.disabled = busy || !storageOK;
+    cancelButton.disabled = busy || !running || !trackedId;
+    newButton.disabled = busy || !terminal || !trackedId || !storageOK;
+    refreshButton.disabled = busy;
+    $('pingRequestId').textContent = trackedId || '—';
+  }
+  function clearResults() {
+    cursor = 0;
+    pageIndex = 0;
+    rows = [];
+    running = terminal = missingReceipt = false;
+    $('pingRunProgress').removeAttribute('value');
+    $('pingRunCounts').textContent = '아직 확인된 측정 결과가 없습니다.';
+    paintRows();
+  }
+  function paintRows() {
+    const pageSize = 100;
+    const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+    pageIndex = Math.min(pageIndex, pages - 1);
+    $('pingRows').replaceChildren(simpleTable([
+      ['스위치', r => r.ip + ':' + r.ssh_port],
+      ['목적지', r => r.destination_ip + (r.destination_label ? ' (' + r.destination_label + ')' : '')],
+      ['확인 Source', 'verified_source_ip'],
+      ['상태', r => labels[r.status] || '결과 미확인'],
+      ['송신', 'sent'], ['응답', 'received'],
+      ['손실률', r => r.loss_pct == null ? '—' : r.loss_pct + '%'],
+      ['RTT min/avg/max (ms)', r => r.rtt_evidence ?? (
+        r.rtt_avg_ms == null ? '—' : [r.rtt_min_ms, r.rtt_avg_ms, r.rtt_max_ms].join('/')
+      )],
+      ['사유', 'reason_code']
+    ], rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize)));
+    $('pingPage').textContent = (pageIndex + 1) + ' / ' + pages + ' · 수신 ' + rows.length + '행';
+    $('pingPrev').disabled = pageIndex === 0;
+    $('pingNext').disabled = pageIndex + 1 >= pages;
+  }
+  $('pingPrev').addEventListener('click', () => { pageIndex--; paintRows(); });
+  $('pingNext').addEventListener('click', () => { pageIndex++; paintRows(); });
+
+  async function readRun() {
+    const id = trackedId;
+    const job = await api('/api/ping/runs/' + id + '?after=' + cursor, undefined, undefined, 10000);
+    if (job.id !== id) throw new Error('작업 식별자가 일치하지 않습니다.');
+    const snapshot = job.result || job.progress;
+    running = job.state === 'running' && !job.historyOnly;
+    missingReceipt = false;
+    pendingPlan = null; // A receipt proves admission; never submit this plan again.
+    terminal = false;
+    if (snapshot && Number.isInteger(snapshot.total) && snapshot.total > 0 &&
+        snapshot.total <= 3000 && Number.isInteger(snapshot.completed) &&
+        snapshot.completed >= cursor && snapshot.completed <= snapshot.total &&
+        Number.isInteger(snapshot.processedPairs) && snapshot.processedPairs >= 0 &&
+        snapshot.processedPairs <= snapshot.completed && Array.isArray(snapshot.rows) &&
+        snapshot.rows.length <= 512 && snapshot.cursor === cursor + snapshot.rows.length &&
+        snapshot.cursor <= snapshot.completed &&
+        snapshot.rows.every((row, index) => row.index === cursor + index)) {
+      if (snapshot.rows.length) {
+        rows.push(...snapshot.rows);
+        cursor = snapshot.cursor;
+        paintRows();
+      }
+      const meter = $('pingRunProgress');
+      meter.max = snapshot.total;
+      meter.value = snapshot.completed;
+      $('pingRunCounts').textContent = '분류된 조합 ' + snapshot.completed + '/' + snapshot.total +
+        ' · 처리 ' + snapshot.processedPairs + ' · 미실행 분류 포함 · 실제 ICMP 응답 수와 다름';
+      terminal = terminalStates.has(job.state) && cursor === snapshot.completed;
+    } else if (job.historyOnly) {
+      $('pingRunProgress').removeAttribute('value');
+      $('pingRunCounts').textContent = '서버 이력만 확인됨 · 개별 측정 상세 복원 불가';
+      terminal = terminalStates.has(job.state);
+    } else {
+      throw new Error('진행 데이터 형식이 올바르지 않습니다.');
+    }
+    runStatus.textContent = ({
+      running:'작업 진행 중 · 기존 운영 작업 우선',
+      done:'작업 종료 · 개별 측정 상태를 확인하세요.',
+      cancelled:'작업 취소됨 · 미실행 조합 포함',
+      failed:'작업 실패 · 개별 측정 상태 확인 필요',
+      interrupted:'서버 재시작 또는 중단 · 상세 결과 미확인'
+    }[job.state] || '작업 상태 미확인') + (job.historyOnly ? ' · 이력만 확인됨' : '') +
+      (job.error ? ' · ' + job.error : '');
+    if (!running && !terminal && !job.historyOnly) runStatus.textContent += ' · 결과 페이지 수신 중';
+  }
+
+  async function discover() {
+    const current = await api('/api/ping/runs', undefined, undefined, 10000);
+    if (current.id !== null && !idPattern.test(current.id)) throw new Error('작업 ID 형식 오류');
+    discovered = true;
+    if (current.id && !trackedId) {
+      clearResults();
+      // Even if storage becomes unavailable, allow read-only monitoring of this ID.
+      if (!remember(current.id)) trackedId = current.id;
+    }
+  }
+  async function refresh() {
+    if (busy || !ui.token) return;
+    busy = true;
+    syncRun();
+    try {
+      if (!trackedId) await discover();
+      if (trackedId && !terminal) await readRun();
+      else if (!trackedId && storageOK) runStatus.textContent = '실행 중인 Ping 작업 없음 · 미리보기 후 시작하세요.';
+    } catch (error) {
+      running = false;
+      missingReceipt = !!trackedId && error.status === 404 && error.serverRejection;
+      if (!trackedId) discovered = false;
+      runStatus.textContent = (trackedId ? '작업 상태 미확인 · 새 요청을 보내지 않습니다. · ' : '') + error.message;
+    } finally {
+      busy = false;
+      syncRun();
+    }
+  }
+  async function postRun(retry = false) {
+    if (busy || !storageOK || !ui.token) return;
+    if (retry ? !(trackedId && missingReceipt && pendingPlan) : (!previewedPlan || trackedId || !discovered)) return;
+    const requestPlan = retry ? pendingPlan : previewedPlan;
+    const requestGeneration = generation;
+    busy = true;
+    syncRun();
+    try {
+      if (!retry) {
+        await discover();
+        if (trackedId || requestGeneration !== generation) return;
+        const id = Array.from(crypto.getRandomValues(new Uint8Array(16)),
+          byte => byte.toString(16).padStart(2, '0')).join('');
+        if (!remember(id)) return;
+        clearResults();
+        pendingPlan = requestPlan;
+      }
+      runStatus.textContent = '작업 접수 중 · 요청 ID 유지';
+      try {
+        const receipt = await api('/api/ping/runs', {requestId:trackedId, plan:requestPlan}, undefined, 10000);
+        if (receipt.id !== trackedId || receipt.accepted !== true) throw new Error('접수 응답 미확인');
+        pendingPlan = null;
+      } catch (error) {
+        // A first, explicit server rejection proves no admission. An ambiguous
+        // response or rejection of a retry does not; retain the original ID.
+        if (!retry && error.serverRejection && [400,403,409,413,415].includes(error.status)) {
+          if (remember(null)) pendingPlan = null;
+          discovered = false;
+          runStatus.textContent = error.message;
+          return;
+        }
+        runStatus.textContent = '접수 미확인 · 기존 요청 ID를 조회합니다.';
+      }
+      await readRun();
+    } catch (error) {
+      running = false;
+      missingReceipt = !!trackedId && error.status === 404 && error.serverRejection;
+      if (!trackedId) discovered = false;
+      runStatus.textContent = '접수/상태 미확인 · 자동 재전송하지 않습니다. · ' + error.message;
+    } finally {
+      busy = false;
+      syncRun();
+    }
+  }
+  runButton.addEventListener('click', () => postRun());
+  retryButton.addEventListener('click', () => postRun(true));
+  refreshButton.addEventListener('click', refresh);
+  cancelButton.addEventListener('click', async () => {
+    if (busy || !trackedId || !running || !ui.token) return;
+    busy = true;
+    syncRun();
+    try {
+      await api('/api/ping/runs/' + trackedId + '/cancel', {}, undefined, 10000);
+      await readRun();
+    } catch (error) {
+      running = false;
+      runStatus.textContent = '취소 결과 미확인 · 작업 상태를 다시 확인하세요. · ' + error.message;
+    } finally {
+      busy = false;
+      syncRun();
+    }
+  });
+  newButton.addEventListener('click', () => {
+    if (busy || !terminal || !remember(null)) return;
+    pendingPlan = null;
+    discovered = false;
+    clearResults();
+    invalidate();
+    refresh();
+  });
+  // GET-only polling, never auto-submit on reload, navigation or lost response.
+  function visibleRefresh() {
+    if (location.hash === '#ping' && (!terminal || !trackedId)) refresh();
+  }
+  window.addEventListener('hashchange', visibleRefresh);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) visibleRefresh();
+  });
+  setInterval(() => { if (!document.hidden) visibleRefresh(); }, 2000);
   syncSource();
+  syncRun();
+  if (!storageOK) runStatus.textContent = '요청 ID 저장 불가 · 새 작업 시작 차단';
+  visibleRefresh();
 })();
