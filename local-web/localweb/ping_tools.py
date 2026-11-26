@@ -190,12 +190,12 @@ class PingPlan:
         raw_destinations = body.get("destinations")
         if not isinstance(raw_destinations, list) or not 1 <= len(raw_destinations) <= 10:
             raise ValueError("서버 목록을 1~10대 입력하세요.")
-        destinations = tuple(
-            Destination(**_object(item, {"ip", "label"}))
-            if isinstance(item, dict) and "ip" in item
-            else _missing_destination()
-            for item in raw_destinations
-        )
+        destinations = []
+        for item in raw_destinations:
+            entry = _object(item, {"ip", "label"})
+            if "ip" not in entry:
+                raise ValueError("목적지 IPv4 주소를 입력하세요.")
+            destinations.append(Destination(**entry))
         options = PingOptions.parse(body.get("options", {}))
         sources = body.get("source_ips", {})
         if not isinstance(sources, dict):
@@ -205,14 +205,10 @@ class PingPlan:
             raise ValueError("등록되지 않은 스위치 Source 매핑입니다.")
         return cls(
             tuple(targets),
-            destinations,
+            tuple(destinations),
             options,
             tuple((target_by_endpoint[key], unicast_ipv4(ip)) for key, ip in sources.items()),
         )
-
-
-def _missing_destination():
-    raise ValueError("목적지 IPv4 주소를 입력하세요.")
 
 
 def verify_source(
@@ -262,11 +258,12 @@ class PingObservation:
     rtt_avg_ms: float | None = None
     rtt_max_ms: float | None = None
     rtt_evidence: str | None = None
+    rtt_origin: str | None = None
 
 
 _SUMMARY = re.compile(
-    r"^(\d+) packets? transmitted,\s*(\d+) packets? received,\s*"
-    r"(\d+(?:\.\d+)?)% packet loss\.?$",
+    r"^(\d{1,3}) packets? transmitted,\s*(\d{1,3}) packets? received,\s*"
+    r"(\d{1,3}(?:\.\d{1,6})?)% packet loss\.?$",
     re.IGNORECASE,
 )
 _RTT = re.compile(
@@ -278,7 +275,7 @@ _RTT = re.compile(
 )
 _REPLY = re.compile(
     r"^(\d{1,3}(?:\.\d{1,3}){3}) is alive,\s*"
-    r"(?:iteration (\d+),\s*)?time\s*=\s*(<\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?)\s*ms\.?$",
+    r"(?:iteration (\d{1,3}),\s*)?time\s*=\s*(<\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?)\s*ms\.?$",
     re.IGNORECASE,
 )
 _TIMEOUT = re.compile(r"^(?:request timed out|no response from destination)\.?$", re.I)
@@ -295,7 +292,9 @@ _CLI_ERROR = re.compile(
 )
 
 
-def _measured(sent: int, received: int, rtt: tuple[str, ...] = ()) -> PingObservation:
+def _measured(
+    sent: int, received: int, rtt: tuple[str, ...] = (), *, origin: str | None = None
+) -> PingObservation:
     status = "normal" if sent == received else "partial_loss" if received else "no_reply"
     loss = 100.0 * (sent - received) / sent
     values = None
@@ -310,7 +309,43 @@ def _measured(sent: int, received: int, rtt: tuple[str, ...] = ()) -> PingObserv
                     values = candidate
                 else:
                     evidence = None
-    return PingObservation(status, sent, received, loss, *(values or (None, None, None)), evidence)
+    return PingObservation(
+        status, sent, received, loss, *(values or (None, None, None)),
+        evidence, origin if evidence else None,
+    )
+
+
+def _numbered_replies(replies, repetitions: int) -> bool:
+    if not replies or any(match[2] is None for match in replies):
+        return False
+    indices = [int(match[2]) for match in replies]
+    return len(set(indices)) == len(indices) and all(1 <= n <= repetitions for n in indices)
+
+
+def _from_replies(sent: int, received: int, replies) -> PingObservation:
+    # Only derive statistics when all successful reply times were collected.
+    if not received or len(replies) != received:
+        return _measured(sent, received)
+    times = tuple(match[3] for match in replies)
+    if any(value.startswith("<") for value in times):
+        # The samples themselves are useful evidence, but their mean is unknown.
+        return PingObservation(
+            "normal" if sent == received else "partial_loss",
+            sent,
+            received,
+            100.0 * (sent - received) / sent,
+            rtt_evidence=", ".join(times),
+            rtt_origin="reply_bounds",
+        )
+    values = [float(value) for value in times]
+    if not all(isfinite(value) and value >= 0 for value in values):
+        return _measured(sent, received)
+    return _measured(
+        sent,
+        received,
+        tuple(str(value) for value in (min(values), sum(values) / len(values), max(values))),
+        origin="replies",
+    )
 
 
 def parse_ping_output(
@@ -354,18 +389,29 @@ def parse_ping_output(
         if sent != repetitions or not 0 <= received <= sent:
             return unknown
         reported_loss = float(summaries[0][3])
-        if abs(reported_loss - 100 * (sent - received) / sent) > 1:
+        if not 0 <= reported_loss <= 100 or abs(reported_loss - 100 * (sent - received) / sent) > 1:
             return unknown
         if len(replies) > received:
             return unknown
         if not received and statistics:
             return unknown
-        return _measured(sent, received, statistics[0].groups() if statistics else ())
+        if statistics:
+            return _measured(sent, received, statistics[0].groups(), origin="summary")
+        if replies and _numbered_replies(replies, repetitions):
+            return _from_replies(sent, received, replies)
+        return _measured(sent, received)
     # The documented one-shot response has no summary.
     if repetitions == 1 and len(lines) == 1:
         if len(replies) == 1 and replies[0][2] in (None, "1"):
-            return _measured(1, 1, (replies[0][3],) * 3)
+            return _measured(1, 1, (replies[0][3],) * 3, origin="single_reply")
         if _TIMEOUT.fullmatch(lines[0]):
             return _measured(1, 0)
+    # Some AOS-S builds return one line per successful repetition but omit
+    # a summary. Accept only a complete set of unique matching reply numbers.
+    if (
+        len(replies) == repetitions == len(lines)
+        and _numbered_replies(replies, repetitions)
+    ):
+        return _from_replies(repetitions, repetitions, replies)
     # Without trustworthy full transmission evidence do not infer batch loss.
     return unknown

@@ -144,6 +144,29 @@ class PingOutputTests(unittest.TestCase):
                 self.assertEqual(result.status, "unknown")
                 self.assertIsNone(result.loss_pct)
 
+    def test_complete_numbered_replies_without_summary(self):
+        output = (
+            "198.51.100.10 is alive, iteration 1, time = 1 ms\n"
+            "198.51.100.10 is alive, iteration 2, time = 5 ms\n"
+            "198.51.100.10 is alive, iteration 3, time = 3 ms"
+        )
+        result = self.parse(output, 3)
+        self.assertEqual((result.status, result.rtt_avg_ms, result.rtt_origin), ("normal", 3, "replies"))
+        duplicate = output.replace("iteration 3", "iteration 2")
+        self.assertEqual(self.parse(duplicate, 3).status, "unknown")
+        self.assertEqual(self.parse(output, 4).status, "unknown")
+
+    def test_statistics_from_full_reply_evidence_with_summary(self):
+        output = (
+            "198.51.100.10 is alive, iteration 1, time = <1 ms\n"
+            "198.51.100.10 is alive, iteration 2, time = 3 ms\n"
+            "3 packets transmitted, 2 packets received, 33% packet loss"
+        )
+        result = self.parse(output, 3)
+        self.assertEqual((result.status, result.rtt_origin), ("partial_loss", "reply_bounds"))
+        self.assertIsNone(result.rtt_avg_ms)
+        self.assertEqual(result.rtt_evidence, "<1, 3")
+
     def test_cli_and_source_rejection_not_packet_loss(self):
         self.assertEqual(self.parse("Invalid input: source").status, "cli_error")
         self.assertEqual(self.parse("Invalid source IP address.").status, "source_error")
