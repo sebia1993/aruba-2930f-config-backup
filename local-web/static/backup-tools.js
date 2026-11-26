@@ -28,12 +28,22 @@
   }
   input.addEventListener('input',() => { if (!error.hidden) readIPs(); });
 
-  const choose = button('폴더 찾아보기', () => {
-    run('backup.pick-directory', {}, r => { if (r.directory) $('backupDirectory').value = r.directory; });
+  const pickerNotice = elem('p',
+    'Windows 폴더 선택창을 열고 있습니다. 보이지 않으면 Alt+Tab으로 전환해 확인하세요.', 'hint');
+  pickerNotice.id = 'backupPickerNotice';
+  pickerNotice.setAttribute('role', 'status');
+  pickerNotice.hidden = true;
+  const choose = button('폴더 찾아보기', async () => {
+    pickerNotice.hidden = false;
+    try {
+      await run('backup.pick-directory', {}, r => {
+        if (r.directory) $('backupDirectory').value = r.directory;
+      });
+    } finally { pickerNotice.hidden = true; }
   });
   choose.id = 'chooseBackupDirectory';
   choose.dataset.job = '';
-  $('backupDirectory').closest('label').after(choose);
+  $('backupDirectory').closest('label').after(choose, pickerNotice);
   $('backupDirectory').closest('label').querySelector('.hint').textContent =
     'Windows에서 선택하거나 드라이브·공유 폴더의 전체 경로를 입력하세요. 지정한 폴더가 없으면 백업 시 만듭니다.';
 
