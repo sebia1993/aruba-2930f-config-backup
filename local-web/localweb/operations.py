@@ -466,6 +466,10 @@ class Operations:
             return self._profile(action, body)
         if self.credentials is None:
             raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
+        if action == "ping.trace":
+            from .ping_path import run_route
+
+            return run_route(self, body, cancel)
         if action in {"ports.query", "ports.refresh"}:
             return self._query(
                 _groups(body),
@@ -1136,19 +1140,24 @@ class Operations:
         destination: Destination,
         credentials: Credentials,
         cancel: threading.Event,
+        *,
+        before_send=None,
     ) -> PingPairResult:
-        """Execute one planned pair inside a caller-owned device-operation slot.
+        """Execute a single planned command under the caller's device-operation lease."""
+        preview_command(plan, target, destination)
+        with self._ping_device_session(plan, target, credentials, cancel) as session:
+            if before_send is not None:
+                return session.run_pair(plan, destination, cancel=cancel, before_send=before_send)
+            return session.run_pair(plan, destination, cancel=cancel)
 
-        The credential snapshot must still be current. Each slot opens and
-        closes its own verified session so that a later scheduler may yield
-        between pairs without keeping a connection or holding a device lock.
-        This internal method is not exposed through dispatch or HTTP yet.
-        """
+    @contextmanager
+    def _ping_device_session(self, plan, target, credentials, cancel):
+        """Open a pinned session for one device; the caller owns the lease through close."""
         _abort_if_cancelled(cancel)
         if self.credentials is None or credentials is not self.credentials:
             raise ValueError("SSH 세션이 변경되었습니다. 다시 접수하세요.")
-        # Validate the exact pair before probing or opening any connection.
-        preview_command(plan, target, destination)
+        if target not in plan.targets:
+            raise ValueError("등록된 스위치가 아닙니다.")
         options = CollectionOptions(
             max_attempts=1,
             command_timeout_seconds=plan.options.command_timeout,
@@ -1159,4 +1168,4 @@ class Operations:
             PingSSHSession, target, credentials, options, cancel
         ) as session:
             _abort_if_cancelled(cancel)
-            return session.run_pair(plan, destination, cancel=cancel)
+            yield session

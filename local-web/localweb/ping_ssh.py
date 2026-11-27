@@ -8,6 +8,7 @@ approval through the existing service, and prepare an EXEC session.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 
 from aruba2930f_backup.models import CollectionFailure, DeviceIdentity, ErrorCode
@@ -41,6 +42,8 @@ class PingPairResult:
     verified_source_ip: str | None
     command_may_have_started: bool
     transport_error: ErrorCode | None = None
+    prompt_received_at: float | None = None
+    prompt_received_clock: float | None = None
 
 
 def _check_cancel(cancel: CancellationSignal | None) -> None:
@@ -103,7 +106,12 @@ class PingSSHSession(NetmikoSSHSession):
         return identity
 
     def run_pair(
-        self, plan: PingPlan, destination: Destination, *, cancel: CancellationSignal | None = None
+        self,
+        plan: PingPlan,
+        destination: Destination,
+        *,
+        cancel: CancellationSignal | None = None,
+        before_send=None,
     ) -> PingPairResult:
         """Execute at most one Ping command, with no automatic replay or fallback.
 
@@ -154,9 +162,12 @@ class PingSSHSession(NetmikoSSHSession):
             connection.clear_buffer()
             _check_cancel(cancel)
             wire = connection.normalize_cmd(command)
+            if before_send is not None:
+                before_send()
             may_have_started = True
             connection.write_channel(wire)
             raw = self._read_until_prompt(prompt, cancel_event=cancel, command=command)
+            observed_at, observed_clock = time.time(), time.monotonic()
             output = _strip_command_and_prompt(raw, command, prompt)
             observation = parse_ping_output(
                 output, destination.ip, plan.options.repetitions, completed=True
@@ -168,7 +179,15 @@ class PingSSHSession(NetmikoSSHSession):
                     validate_cli_response(command, output)
                 except CollectionFailure:
                     observation = PingObservation("cli_error")
-            return PingPairResult(identity, observation, requested, verified_ip, True)
+            return PingPairResult(
+                identity,
+                observation,
+                requested,
+                verified_ip,
+                True,
+                prompt_received_at=observed_at,
+                prompt_received_clock=observed_clock,
+            )
         except Exception as exc:
             failure = _mapped_failure(exc, during="command")
             self.close()

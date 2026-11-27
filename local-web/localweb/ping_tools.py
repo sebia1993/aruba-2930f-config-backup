@@ -113,6 +113,20 @@ class Destination:
             raise ValueError("서버 이름은 제어문자 없는 80자 이하여야 합니다.")
 
 
+def parse_destinations(raw):
+    if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_DESTINATIONS:
+        raise ValueError("서버 목록을 1~10대 입력하세요.")
+    result = []
+    for item in raw:
+        entry = _object(item, {"ip", "label"})
+        if "ip" not in entry:
+            raise ValueError("목적지 IPv4 주소를 입력하세요.")
+        result.append(Destination(**entry))
+    if len({d.ip for d in result}) != len(result):
+        raise ValueError("목적지 IP가 중복됩니다.")
+    return tuple(result)
+
+
 @dataclass(frozen=True)
 class PingPlan:
     targets: tuple[DeviceTarget, ...]
@@ -188,15 +202,7 @@ class PingPlan:
             )
             if len(targets) > MAX_SWITCHES:
                 raise ValueError("스위치는 최대 300대입니다.")
-        raw_destinations = body.get("destinations")
-        if not isinstance(raw_destinations, list) or not 1 <= len(raw_destinations) <= 10:
-            raise ValueError("서버 목록을 1~10대 입력하세요.")
-        destinations = []
-        for item in raw_destinations:
-            entry = _object(item, {"ip", "label"})
-            if "ip" not in entry:
-                raise ValueError("목적지 IPv4 주소를 입력하세요.")
-            destinations.append(Destination(**entry))
+        destinations = parse_destinations(body.get("destinations"))
         options = PingOptions.parse(body.get("options", {}))
         sources = body.get("source_ips", {})
         if not isinstance(sources, dict):
@@ -267,10 +273,13 @@ def preview_plan(value: object) -> dict:
     return {
         "switches": len(plan.targets),
         "destinations": len(plan.destinations),
+        "endpoints": [target.endpoint for target in plan.targets],
         "totalPairs": plan.total_pairs,
         "totalRequests": plan.total_requests,
         "requestedConcurrency": plan.options.concurrency,
-        "effectiveConcurrency": 1,
+        "effectiveConcurrency": min(
+            plan.options.concurrency, len({target.ip for target in plan.targets})
+        ),
         "commands": commands,
         "truncated": len(commands) < plan.total_pairs,
         "sourceVerified": False,

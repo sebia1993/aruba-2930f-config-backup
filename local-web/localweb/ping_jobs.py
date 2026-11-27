@@ -1,15 +1,52 @@
 """In-memory, finite general Ping batches. Mutate only under the Jobs lock."""
 
 import time
+from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
 from aruba2930f_backup.models import Credentials, DeviceTarget, ErrorCode
 
 from .ping_ssh import PingPairResult
-from .ping_tools import Destination, PingObservation, PingPlan
+from .ping_tools import MAX_PAIRS, Destination, PingObservation, PingPlan, preview_command
 
 _AUTH_ERRORS = frozenset({ErrorCode.AUTH_FAILED, ErrorCode.ENABLE_FAILED})
+_FAILED_STATUSES = frozenset(
+    {"partial_loss", "no_reply", "unreachable", "source_error", "cli_error", "ssh_failure"}
+)
+
+
+def rerun_indices(request, parent_indices, rows):
+    """Map parent result positions back into the original, immutable device/destination matrix."""
+    mode = request.get("mode")
+    if mode == "selected":
+        if set(request) != {"parentId", "mode", "indices"}:
+            raise ValueError("선택 재실행 요청을 확인하세요.")
+        indices = request["indices"]
+        if (
+            not isinstance(indices, list)
+            or not 1 <= len(indices) <= len(parent_indices) <= MAX_PAIRS
+            or any(type(i) is not int or not 0 <= i < len(parent_indices) for i in indices)
+            or len(set(indices)) != len(indices)
+        ):
+            raise ValueError("재실행할 조합 선택을 확인하세요.")
+        return tuple(sorted(parent_indices[rows[i].get("pairIndex", i)] for i in indices))
+    if set(request) != {"parentId", "mode"}:
+        raise ValueError("재실행 요청을 확인하세요.")
+    if mode == "all":
+        return parent_indices
+    if mode != "failed":
+        raise ValueError("재실행 종류를 확인하세요.")
+    indices = tuple(
+        sorted(
+            parent_indices[row.get("pairIndex", row["index"])]
+            for row in rows
+            if row["status"] in _FAILED_STATUSES
+        )
+    )
+    if not indices:
+        raise ValueError("재실행할 실패 조합이 없습니다.")
+    return indices
 
 
 def _utc():
@@ -26,27 +63,31 @@ class PingSlot:
 
 
 class PingBatch:
-    """One non-replayable command slot at a time, shared with other Jobs work.
+    """Bounded device workers share the general operation slot with the existing Jobs queue."""
 
-    Slot time is a local observation window, not an ICMP packet timestamp.
-    Connection/command concurrency is deliberately one in this initial
-    adapter. Long-running sampling and durable measurement rows are separate.
-    """
-
-    def __init__(self, key: str, plan: PingPlan, credentials: Credentials):
+    def __init__(
+        self, key: str, plan: PingPlan, credentials: Credentials | None, indices, parent_id=None
+    ):
         self.key = key
         self.plan = plan
         self.credentials = credentials
-        self.in_flight: PingSlot | None = None
+        self.indices = indices
+        self.parent_id = parent_id
+        self.in_flight: dict[DeviceTarget, PingSlot] = {}
+        self.workers: set[DeviceTarget] = set()
+        self.remaining: dict[DeviceTarget, deque[int]] = {}
+        for index in range(len(indices)):
+            target, _ = self._pair(index)
+            self.remaining.setdefault(target, deque()).append(index)
+        self.capacity = min(plan.options.concurrency, len({target.ip for target in self.remaining}))
         self.rows: list[dict] = []
+        self.unpersisted_after: int | None = None
         self.stop_reason = ""
         self.stop_state = ""
 
     @property
     def terminal(self):
-        return self.in_flight is None and (
-            bool(self.stop_reason) or len(self.rows) == self.plan.total_pairs
-        )
+        return not self.workers and (bool(self.stop_reason) or len(self.rows) == len(self.indices))
 
     @property
     def state(self):
@@ -60,27 +101,44 @@ class PingBatch:
             self.stop_state = state
 
     def _pair(self, index):
-        device, destination = divmod(index, len(self.plan.destinations))
+        device, destination = divmod(self.indices[index], len(self.plan.destinations))
         return self.plan.targets[device], self.plan.destinations[destination]
 
-    def claim(self):
-        if self.terminal or self.stop_reason or self.in_flight is not None:
+    def next_devices(self):
+        devices = []
+        addresses = set()
+        for target in self.remaining:
+            if target.ip not in addresses:
+                devices.append(target)
+                addresses.add(target.ip)
+                if len(devices) == self.capacity:
+                    break
+        return devices
+
+    def claim(self, target):
+        pending = self.remaining.get(target)
+        if self.stop_reason or not pending:
             return None
-        index = len(self.rows)
+        index = pending.popleft()
+        if not pending:
+            del self.remaining[target]
         target, destination = self._pair(index)
-        self.in_flight = PingSlot(index, target, destination, _utc(), time.monotonic())
-        return self.in_flight
+        slot = PingSlot(index, target, destination, _utc(), time.monotonic())
+        self.in_flight[target] = slot
+        return slot
 
     def _row(self, index, observation, reason, *, may_have_started=False):
         target, destination = self._pair(index)
         return {
-            "index": index,
+            "index": len(self.rows),
+            "pairIndex": index,
             "ip": target.ip,
             "ssh_port": target.port,
             "destination_ip": destination.ip,
             "destination_label": destination.label,
             "source_mode": self.plan.options.source_mode,
             "requested_source": self.plan.requested_source(target),
+            "planned_command": preview_command(self.plan, target, destination),
             "verified_source_ip": None,
             "command_may_have_started": may_have_started,
             "reason_code": reason,
@@ -98,7 +156,7 @@ class PingBatch:
         error: ErrorCode | None = None,
         uncertain=False,
     ):
-        if slot is not self.in_flight:
+        if slot is not self.in_flight.get(slot.target):
             raise ValueError("Ping slot is no longer current.")
         if (result is None) == (error is None):
             raise ValueError("A slot requires exactly one result or error.")
@@ -120,7 +178,7 @@ class PingBatch:
             reason = error
             if uncertain:
                 status = "unknown"
-            elif error is ErrorCode.CANCELLED:
+            elif error in {ErrorCode.CANCELLED, ErrorCode.REPORT_WRITE_FAILED}:
                 status = "not_run"
             elif error in {ErrorCode.MODEL_UNSUPPORTED, ErrorCode.COMMAND_REJECTED}:
                 status = "cli_error"
@@ -141,26 +199,45 @@ class PingBatch:
         if reason in _AUTH_ERRORS:
             self.stop(str(reason), state="failed")
         self.rows.append(row)
-        self.in_flight = None
+        del self.in_flight[slot.target]
 
-    def snapshot(self, *, after=0, complete=False):
+    def snapshot(self, *, after=0, complete=False, durable_only=False):
         rows = self.rows
-        if self.terminal and self.stop_reason:
-            rows = rows + [
-                self._row(index, PingObservation("not_run"), self.stop_reason)
-                for index in range(len(rows), self.plan.total_pairs)
-            ]
-        total = self.plan.total_pairs
+        if durable_only or (self.unpersisted_after is not None and not complete):
+            rows = rows[: self.unpersisted_after]
+        processed = len(rows)
+        possibly_started = sum(row["command_may_have_started"] for row in rows)
+        if self.terminal and self.stop_reason and not durable_only:
+            completed = {row["pairIndex"] for row in rows}
+            rows = list(rows)
+            for index in range(len(self.indices)):
+                if index not in completed:
+                    row = self._row(index, PingObservation("not_run"), self.stop_reason)
+                    row["index"] = len(rows)
+                    rows.append(row)
+        total = len(self.indices)
         after = min(max(after, 0), len(rows))
         page = rows if complete else rows[after : after + 512]
         return {
+            "parentRunId": self.parent_id,
+            "options": asdict(self.plan.options),
             "total": total,
             "completed": len(rows),
-            "processedPairs": len(self.rows),
-            "possiblyStartedPairs": sum(row["command_may_have_started"] for row in self.rows),
-            "effectiveConcurrency": 1,
+            "processedPairs": processed,
+            "possiblyStartedPairs": possibly_started,
+            "effectiveConcurrency": self.capacity,
             "stopReason": self.stop_reason,
-            "slotActive": self.in_flight is not None,
+            "slotActive": bool(self.in_flight),
             "rows": [dict(row) for row in page],
             "cursor": len(rows) if complete else after + len(page),
         }
+
+    def record_interrupted(self, pair_index, started):
+        row = self._row(
+            pair_index,
+            PingObservation("unknown"),
+            "SERVER_RESTART_DURING_COMMAND",
+            may_have_started=True,
+        )
+        row["slot_started_at"] = started
+        self.rows.append(row)

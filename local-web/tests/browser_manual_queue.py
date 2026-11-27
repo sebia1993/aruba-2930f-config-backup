@@ -58,7 +58,28 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
     expect(page.locator("#pingHeading")).to_be_visible()
     page.locator("#pingTargets").fill("192.0.2.11")
     page.locator("#pingDestinations").fill("198.51.100.10\n198.51.100.11")
+    page.locator("#pingAllHelp").click()
+    expect(page.locator("#pingHelpSize")).to_be_visible()
+    expect(page.locator("#pingHelpSource")).to_be_visible()
+    expect(page.locator("#pingAllHelp")).to_have_attribute("aria-expanded", "true")
+    page.locator("#pingSize").fill("1472")
+    page.locator("#pingSourceMode").select_option("auto")
+    expect(page.locator("#pingPresetName")).to_have_text("사용자 지정")
+    page.locator("#pingAllHelp").click()
+    expect(page.locator("#pingHelpSource")).to_be_hidden()
+    page.locator("#pingAdvanced summary").click()
+    expect(page.locator("#pingAdvancedSummary")).to_contain_text("1472 B")
+    page.locator("#pingPreview").click()
+    expect(page.locator("#pingCommands")).to_have_value(re.compile("data-size 1472"))
+    count_help = page.get_by_role("button", name="반복 횟수 도움말")
+    count_help.focus()
+    page.keyboard.press("Enter")
+    expect(page.locator("#pingHelpCount")).to_be_visible()
+    expect(page.locator("#pingCommands")).to_have_value(re.compile("data-size 1472"))
     page.locator('[data-ping-preset="quick"]').click()
+    expect(page.locator("#pingSize")).to_have_value("")
+    expect(page.locator("#pingSourceMode")).to_have_value("ssh_ip")
+    expect(page.locator('[data-ping-preset="quick"]')).to_have_attribute("aria-pressed", "true")
     expect(page.locator("#pingRepetitions")).to_have_value("3")
     expect(page.locator("#pingTimeout")).to_have_value("1")
     page.locator("#pingPreview").click()
@@ -68,6 +89,14 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
     )
     expect(page.locator("#pingPreviewSummary")).to_contain_text("총 6회")
     expect(page.locator("#pingCopy")).to_be_enabled()
+    page.locator("#pingPreviewDest").select_option("198.51.100.11")
+    expect(page.locator("#pingCopy")).to_be_disabled()
+    page.locator("#pingShowPair").click()
+    expect(page.locator("#pingCommands")).to_have_value(
+        "ping 198.51.100.11 repetitions 3 timeout 1 source 192.0.2.11"
+    )
+    page.locator("#pingShowFirst").click()
+    expect(page.locator("#pingCommands")).to_have_value(re.compile("198.51.100.10"))
     page.locator("#pingSourceMode").select_option("vlan")
     expect(page.locator("#pingVlan")).to_be_visible()
     expect(page.locator("#pingCommands")).to_have_value("")
@@ -93,7 +122,13 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
             payload = request.post_data_json
             run_id = payload["requestId"]
             assert re.fullmatch(r"[0-9a-f]{32}", run_id)
-            assert payload["plan"]["options"]["vlan"] == 10
+            if submissions:
+                assert payload == {
+                    "requestId": run_id,
+                    "rerun": {"parentId": submissions[0], "mode": "selected", "indices": [1]},
+                }
+            else:
+                assert payload["plan"]["options"]["vlan"] == 10
             submissions.append(run_id)
             route.abort()
         elif request.method == "POST" and path.endswith("/cancel"):
@@ -120,18 +155,20 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
                 "received": 0,
                 "loss_pct": 100,
             }
-            finished = 2 if cancelled else 0
+            rerun = len(submissions) == 2
+            finished = 1 if rerun else 2 if cancelled else 0
+            results = [dict(second, index=0)] if rerun else [row, second]
             snapshot = {
-                "total": 2,
+                "total": len(results),
                 "completed": finished,
                 "processedPairs": int(bool(cancelled)),
-                "rows": [row, second] if cancelled and not request.url.endswith("after=2") else [],
+                "rows": results if finished and request.url.endswith("after=0") else [],
                 "cursor": finished,
             }
             route.fulfill(
                 json={
                     "id": run_id,
-                    "state": "cancelled" if cancelled else "running",
+                    "state": "done" if rerun else "cancelled" if cancelled else "running",
                     "historyOnly": False,
                     "progress": snapshot,
                 }
@@ -157,6 +194,9 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
         expect(page.locator("#pingRows")).to_contain_text("응답 없음")
         page.locator("#pingRows").get_by_role("button", name="응답 없음", exact=False).click()
         expect(page.locator("#pingDetail")).to_contain_text("198.51.100.11")
+        page.locator("#pingRows").get_by_role(
+            "checkbox", name=re.compile(r"198\.51\.100\.11 선택")
+        ).check()
         page.locator("#pingStatusFilter").select_option("not_run")
         expect(page.locator("#pingFilterCount")).to_contain_text("1 / 수신 2조합")
         expect(page.locator("#pingRows")).to_contain_text("미수신 또는 필터 제외")
@@ -164,15 +204,24 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
         expect(page.locator("#pingRows")).not_to_contain_text("응답 없음")
         page.locator("#pingDestinationFilter").select_option("198.51.100.11")
         expect(page.locator("#pingFilterCount")).to_contain_text("0 / 수신 2조합")
+        expect(page.locator("#pingRerunSelected")).to_have_text("선택 재실행 (1)")
         page.locator("#pingDestinationFilter").select_option("")
         page.locator("#pingStatusFilter").select_option("")
         page.locator("#pingSearch").fill("198.51.100.11")
         expect(page.locator("#pingRows")).to_contain_text("응답 없음")
         expect(page.locator("#pingRows")).not_to_contain_text("미실행")
         assert cancelled == submissions
+        expect(page.locator("#pingRerunAll")).to_be_enabled()
+        expect(page.locator("#pingRerunFailed")).to_be_enabled()
+        page.locator("#pingRerunSelected").click()
+        expect(page.locator("#pingRunStatus")).to_contain_text("작업 종료")
+        assert submissions[0] != submissions[1]
+        expect(page.locator("#pingRunCounts")).to_contain_text("1/1")
+        expect(page.locator("#pingRows")).to_contain_text("198.51.100.11")
+        expect(page.locator("#pingRows")).not_to_contain_text("198.51.100.10")
         page.locator("#pingNew").click()
         expect(page.locator("#pingRequestId")).to_have_text("—")
-        assert len(submissions) == 1
+        assert len(submissions) == 2
     finally:
         page.unroute("**/api/ping/runs**", ping_transport)
     page.locator('nav a[href="#ports"]').click()

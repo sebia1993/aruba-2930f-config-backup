@@ -146,6 +146,19 @@ class LanSharingTests(unittest.TestCase):
             self.assertEqual(detail["state"], "cancelled")
             self.assertEqual(detail["result"]["rows"][0]["status"], "not_run")
             self.assertEqual(self.request(runs, body=body, headers=self.local_auth)[0], 409)
+            child_id = "e" * 32
+            rerun = {"requestId": child_id, "rerun": {"parentId": key, "mode": "all"}}
+            self.assertEqual(self.request(runs, body=rerun, headers=bad)[0], 403)
+            self.assertEqual(self.request(runs, body=rerun, headers=self.local_auth)[0], 202)
+            child = self.request(runs + "/" + child_id, headers=self.local_auth)[2]
+            self.assertEqual(child["progress"]["parentRunId"], key)
+            self.assertEqual(child["progress"]["total"], 1)
+            self.assertEqual(
+                self.request(runs + "/" + child_id + "/cancel", body={}, headers=self.local_auth)[
+                    0
+                ],
+                200,
+            )
             execute.assert_not_called()
 
     def test_ping_storage_errors_do_not_echo_private_details(self):

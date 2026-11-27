@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 import webbrowser
-from contextlib import closing, contextmanager, suppress
+from contextlib import ExitStack, closing, contextmanager, suppress
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -49,6 +49,10 @@ STATIC = {
             "control-tools.js",
             "cable-tools.js",
             "ping-tools.js",
+            "ping-files.js",
+            "ping-long.js",
+            "ping-analysis.js",
+            "ping-path.js",
             "monitoring.js",
             "manual-queue.js",
         )
@@ -293,7 +297,7 @@ class Handler(BaseHTTPRequestHandler):
                         instance=app.instance,
                         lanClient=app.is_lan,
                         session=app.jobs.operations.session_summary(),
-                        busyJob=app.jobs.active,
+                        busyJob=app.jobs.resumable_job(),
                         lastCableJob=app.jobs.latest_cable_job(),
                         monitor=app.jobs.monitor_status(),
                     )
@@ -327,6 +331,32 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(app.jobs.monitor_status())
             elif path == "/api/ping/runs":
                 self._json(app.jobs.current_ping())
+            elif path == "/api/ping/long/runs":
+                self._json(app.jobs.long_ping.current())
+            elif re.fullmatch("/api/ping/long/runs/" + KEY, path):
+                self._json(app.jobs.long_ping.status(path.rsplit("/", 1)[1]))
+            elif path == "/api/ping/routes":
+                from localweb.ping_path import recent_routes
+
+                self._json(recent_routes(app.jobs))
+            elif re.fullmatch("/api/ping/analysis/export/" + KEY + r"\.(csv|xlsx)", path):
+                from localweb.ping_analysis import export_history
+
+                key, ext = path.rsplit("/", 1)[1].split(".")
+                with ExitStack() as cleanup:
+                    try:
+                        report = cleanup.enter_context(
+                            export_history(app.jobs.directory / "ping-history.sqlite", key, ext)
+                        )
+                    except sqlite3.Error, OSError:
+                        return self._fail(
+                            503, "이력을 내보내지 못했습니다. 저장 공간과 데이터 폴더를 확인하세요."
+                        )
+                    # After headers are sent a disconnected client needs no second response.
+                    try:
+                        self._file(report, download=True)
+                    except OSError:
+                        self.close_connection = True
             elif re.fullmatch("/api/ping/runs/" + KEY, path):
                 raw_cursor = parse_qs(urlsplit(self.path).query).get("after", ["0"])[0]
                 after = int(raw_cursor) if re.fullmatch(r"[0-9]{1,9}", raw_cursor) else 0
@@ -348,6 +378,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._file(app.jobs.download(path.rsplit("/", 1)[1]), download=True)
             else:
                 self._fail(404, "요청한 항목을 찾을 수 없습니다.")
+        except sqlite3.Error:
+            self._fail(503, "측정 이력을 읽을 수 없습니다. 저장 공간을 확인하세요.")
         except KeyError, FileNotFoundError, ValueError:
             self._fail(404, "요청한 작업 또는 저장 파일을 찾을 수 없습니다.")
 
@@ -410,6 +442,44 @@ class Handler(BaseHTTPRequestHandler):
                 from localweb.ping_tools import preview_plan
 
                 self._json(preview_plan(data))
+            elif path == "/api/ping/long/preview":
+                self._json(app.jobs.long_ping.preview(data))
+            elif path == "/api/ping/long/runs":
+                self._json(app.jobs.long_ping.submit(data), 202)
+            elif re.fullmatch("/api/ping/long/runs/" + KEY + "/(pause|resume|cancel)", path):
+                key, action = path.split("/")[-2:]
+                revision = data.get("revision")
+                if (action != "cancel" or data) and (
+                    set(data) != {"revision"} or type(revision) is not int or revision < 0
+                ):
+                    return self._fail(400, "최근 상태를 조회하고 다시 시도하세요.")
+                self._json(app.jobs.long_ping.control(key, action, revision))
+            elif path.startswith("/api/ping/analysis/"):
+                from localweb.ping_analysis import analysis_request
+
+                self._json(
+                    analysis_request(
+                        app.jobs.directory / "ping-history.sqlite",
+                        path.rsplit("/", 1)[1],
+                        data,
+                        jobs=app.jobs,
+                    )
+                )
+            elif path.startswith("/api/ping/profiles/"):
+                from localweb.ping_files import profile_request
+
+                self._json(profile_request(app.jobs, path.rsplit("/", 1)[1], data))
+            elif re.fullmatch("/api/ping/runs/" + KEY + "/export", path):
+                from localweb.ping_files import general_excel
+
+                report = general_excel(app.jobs, path.split("/")[4], data)
+                self._headers(
+                    200,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    len(report),
+                    **{"Content-Disposition": 'attachment; filename="ping-results.xlsx"'},
+                )
+                self.wfile.write(report)
             elif path == "/api/ping/runs":
                 try:
                     receipt = app.jobs.submit_ping_receipt(data)
@@ -466,7 +536,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc), "conflicts": conflicts}, 409)
             else:
                 self._fail(409, str(exc))
-        except ValueError, UnicodeError, RecursionError:
+        except sqlite3.Error, OSError:
+            self._fail(
+                503, "로컬 데이터를 읽거나 저장하지 못했습니다. 저장 공간과 권한을 확인하세요."
+            )
+        except ValueError as exc:
+            if (
+                path.startswith(("/api/ping/profiles/", "/api/ping/long/", "/api/ping/analysis/"))
+                and type(exc) is ValueError
+            ):
+                # Only application validation text is safe; codec/parser exceptions may reflect the input.
+                return self._fail(400, "입력 값, 대상 범위와 파일 형식을 확인하세요.")
+            self._fail(400, "요청한 작업과 입력 형식을 확인하세요.")
+        except RecursionError:
             self._fail(400, "요청한 작업과 입력 형식을 확인하세요.")
         except KeyError:
             self._fail(404, "작업을 찾을 수 없습니다.")
@@ -540,6 +622,8 @@ class LocalServer(ThreadingHTTPServer):
             self._stopping = True
             # The socket constructor may close before the app has attached its job manager.
             if hasattr(self, "jobs"):
+                with self.jobs.lock:
+                    self.jobs.long_ping.stop("SERVER_SHUTDOWN")
                 self.jobs.invalidate_pending("서버가 종료되어 예약을 취소했습니다.")
             for connection in self._browsers:
                 with suppress(OSError):
