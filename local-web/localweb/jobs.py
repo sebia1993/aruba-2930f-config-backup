@@ -1413,6 +1413,9 @@ class Jobs:
                     )
                 ):
                     self.monitor = None
+                if action == "ping.trace" and body.get("purpose") == "event" and result:
+                    # Run-owned route details follow the history retention/deletion policy.
+                    result = {"state": result["state"]}
                 self.recent[key].update(state=state, finished=finished, result=result, error=error)
                 self.active = self.cancel_event = self.busy_workspace = None
                 if outcome:

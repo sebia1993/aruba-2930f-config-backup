@@ -148,7 +148,15 @@
     el('Baseline').checked=false;
     for(const id of ['HeatTime','PathTime']) el(id).value=inputTime(d.run.started_at);
     for(const id of ['From','Until']) el(id).value='';
-    const links=['csv','xlsx'].map(ext=>{const a=document.createElement('a');a.href='/api/ping/analysis/export/'+run()+'.'+ext;a.textContent=ext==='csv'?'개별 측정 CSV':'분석 Excel';a.download='';return a;});
+    const runId = d.run.id;
+    if (typeof runId !== 'string' || !/^[a-f0-9]{32}$/.test(runId)) throw new Error('실행 ID를 확인하세요.');
+    const links=['csv','xlsx'].map(ext => {
+      const a=document.createElement('a');
+      a.href='/api/ping/analysis/export/'+encodeURIComponent(runId)+'.'+ext;
+      a.textContent=ext==='csv'?'개별 측정 CSV':'분석 Excel';
+      a.download='';
+      return a;
+    });
     el('Downloads').replaceChildren(links[0],' · ',links[1]); el('Work').hidden=!series.length;
     sampleOffset=eventOffset=alarmOffset=0;
     if(series.length) await report(ticket);else message('저장된 측정 조합이 없습니다.');

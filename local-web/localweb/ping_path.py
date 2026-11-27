@@ -2,16 +2,15 @@
 
 import json
 import re
-import sqlite3
 import time
 from collections import deque
-from contextlib import closing
 from datetime import UTC, datetime
 
 from aruba2930f_backup.models import CollectionFailure, CollectionOptions, ErrorCode
 from aruba2930f_backup.ssh import _mapped_failure, _strip_command_and_prompt
 from aruba2930f_backup.validation import validate_cli_response
 
+from .ping_long_store import history_connection
 from .ping_source import parse_owned_ipv4
 from .ping_ssh import PingSSHSession, _check_cancel
 from .ping_tools import PingPlan, unicast_ipv4, verify_source
@@ -102,16 +101,6 @@ class RouteSession(PingSSHSession):
         }
 
 
-def _store(db):
-    db.execute("""CREATE TABLE IF NOT EXISTS ping_routes (
-        id INTEGER PRIMARY KEY, endpoint TEXT NOT NULL, destination TEXT NOT NULL,
-        source_key TEXT NOT NULL, observed TEXT NOT NULL, purpose TEXT NOT NULL,
-        event_id TEXT, failed_at TEXT, output TEXT NOT NULL)""")
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS ping_route_match ON ping_routes(endpoint,destination,source_key,id)"
-    )
-
-
 def run_route(operations, data, cancel):
     if (
         set(data) - {"plan", "purpose", "eventId", "failedAt"}
@@ -124,6 +113,8 @@ def run_route(operations, data, cancel):
     purpose = data["purpose"]
     event = data.get("eventId")
     failed = data.get("failedAt")
+    history_path = operations.data_dir / "ping-history.sqlite"
+    run_id = None
     if purpose == "event":
         if not isinstance(event, str) or not re.fullmatch(
             r"[0-9a-f]{32}:[0-9]{1,10}:[0-9]{1,5}", event
@@ -135,6 +126,10 @@ def run_route(operations, data, cancel):
             or datetime.fromisoformat(failed).tzinfo is None
         ):
             raise ValueError("장애 관측 시각을 확인하세요.")
+        run_id, series_id, first_attempt = event.split(":")
+        with history_connection(history_path) as db:
+            if not db.execute("SELECT 1 FROM ping_long_runs WHERE id=?", (run_id,)).fetchone():
+                return {"state": "discarded", "reason": "RUN_DELETED", "hops": []}
     elif event is not None or failed is not None:
         raise ValueError("수동 경로 진단 요청을 확인하세요.")
     options = CollectionOptions(max_attempts=1, command_timeout_seconds=32, max_output_bytes=65536)
@@ -175,19 +170,21 @@ def run_route(operations, data, cancel):
         result["delaySeconds"] = (
             datetime.fromisoformat(started) - datetime.fromisoformat(failed)
         ).total_seconds()
-        run_id, series_id, first_attempt = event.split(":")
-        with closing(sqlite3.connect(operations.data_dir / "ping-history.sqlite")) as db:
+    source_key = f"{plan.options.source_mode}:{result['sourceIp'] or ''}:{plan.requested_source(target) or ''}"
+    # Check ownership and publish under the same writer transaction as deletion.
+    # A late result must not recreate an observation after its run was removed.
+    with history_connection(history_path) as db:
+        db.execute("BEGIN IMMEDIATE")
+        if run_id is not None:
+            if not db.execute("SELECT 1 FROM ping_long_runs WHERE id=?", (run_id,)).fetchone():
+                return {"state": "discarded", "reason": "RUN_DELETED", "hops": []}
             recovered = db.execute(
                 """SELECT 1 FROM ping_long_samples
-                    WHERE run_id=? AND series_id=? AND attempt>? AND status='normal'
-                    AND sent=1 AND received=1 AND finished_at<=? LIMIT 1""",
+                   WHERE run_id=? AND series_id=? AND attempt>? AND status='normal'
+                   AND sent=1 AND received=1 AND finished_at<=? LIMIT 1""",
                 (run_id, int(series_id), int(first_attempt), started),
             ).fetchone()
-        result["recoveredBeforeTrace"] = bool(recovered)
-    source_key = f"{plan.options.source_mode}:{result['sourceIp'] or ''}:{plan.requested_source(target) or ''}"
-    # An implicit source cannot establish source equality across observations.
-    with closing(sqlite3.connect(operations.data_dir / "web-history.sqlite")) as db, db:
-        _store(db)
+            result["recoveredBeforeTrace"] = bool(recovered)
         previous = db.execute(
             "SELECT observed,output FROM ping_routes WHERE endpoint=? AND destination=? AND source_key=? AND purpose='baseline' ORDER BY id DESC LIMIT 1",
             (target.endpoint, dest, source_key),
@@ -204,8 +201,9 @@ def run_route(operations, data, cancel):
             # Retain the attempted observation without replacing a healthy baseline.
             purpose = result["purpose"] = "baseline_unconfirmed"
         db.execute(
-            "INSERT INTO ping_routes(endpoint,destination,source_key,observed,purpose,event_id,failed_at,output) VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO ping_routes(run_id,endpoint,destination,source_key,observed,purpose,event_id,failed_at,output) VALUES(?,?,?,?,?,?,?,?,?)",
             (
+                run_id,
                 target.endpoint,
                 dest,
                 source_key,
@@ -217,14 +215,15 @@ def run_route(operations, data, cancel):
             ),
         )
         db.execute(
-            "DELETE FROM ping_routes WHERE id IN (SELECT id FROM ping_routes ORDER BY id DESC LIMIT -1 OFFSET 2000)"
+            """DELETE FROM ping_routes WHERE id IN
+                (SELECT id FROM ping_routes WHERE (run_id IS NULL)=? ORDER BY id DESC LIMIT -1 OFFSET 2000)""",
+            (int(run_id is None),),
         )
     return result
 
 
 def recent_routes(jobs):
-    with closing(sqlite3.connect(jobs.db)) as db:
-        _store(db)
+    with jobs.long_ping.history.connect() as db:
         return {
             "items": [
                 json.loads(row[0])

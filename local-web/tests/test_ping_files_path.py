@@ -1,15 +1,19 @@
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
 from contextlib import closing
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from localweb.ping_analysis import _path_export
 from localweb.ping_files import general_excel, import_profile, profile_request
-from localweb.ping_path import RouteSession, parse_hops, run_route
+from localweb.ping_long_store import LongHistory
+from localweb.ping_path import RouteSession, parse_hops, recent_routes, run_route
 from localweb.ping_tools import PingPlan
 from openpyxl import load_workbook
 
@@ -20,7 +24,12 @@ HOPS = "traceroute to 198.51.100.8\n 1 *\n 2 198.51.100.8 1500 us"
 class PingFileTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.jobs = SimpleNamespace(directory=self.root, db=self.root / "web-history.sqlite")
+        self.history = LongHistory(self.root)
+        self.jobs = SimpleNamespace(
+            directory=self.root,
+            db=self.root / "web-history.sqlite",
+            long_ping=SimpleNamespace(history=self.history),
+        )
 
     def test_profile_roundtrip_and_no_overwrite(self):
         def action(op, **data):
@@ -133,7 +142,7 @@ class PingFileTests(unittest.TestCase):
         second = run_route(op, {"plan": PLAN, "purpose": "recovered"}, None)
         self.assertTrue(second["baselineAt"])
         self.assertEqual(second["changedTtls"], [1])
-        with closing(sqlite3.connect(self.jobs.db)) as db:
+        with self.history.connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM ping_routes").fetchone()[0], 2)
 
     def test_failed_baseline_is_recorded_without_erasing_previous_baseline(self):
@@ -159,3 +168,125 @@ class PingFileTests(unittest.TestCase):
             (failed["state"], failed["purpose"]), ("unsupported", "baseline_unconfirmed")
         )
         self.assertEqual(last["baselineAt"], first["observedAt"])
+
+    def _terminal_run(self, key, when=None):
+        at = when or datetime.now(UTC).isoformat(timespec="milliseconds")
+        with self.history.connect() as db:
+            db.execute(
+                "INSERT INTO ping_long_runs(id,started_at,finished_at,state,fingerprint,settings,initial_eta) VALUES(?,?,?,'done','fixture','{}',1)",
+                (key, at, at),
+            )
+
+    def _fake_route(self):
+        op = MagicMock()
+        op.data_dir = self.root
+        session = op._prepared_diagnostic_session.return_value.__enter__.return_value
+        session.observe.return_value = {
+            "hops": [{"ttl": 1, "ip": "198.51.100.8", "rttMs": 2}],
+            "state": "reached",
+            "sourceIp": "192.0.2.7",
+        }
+        return op
+
+    def _event_route(self, key):
+        return {
+            "purpose": "event",
+            "plan": PLAN,
+            "eventId": key + ":0:1",
+            "failedAt": datetime.now(UTC).isoformat(timespec="milliseconds"),
+        }
+
+    def test_auto_routes_share_delete_and_retention_but_manual_baseline_remains(self):
+        now = "b" * 32
+        old = "c" * 32
+        self._terminal_run(now)
+        self._terminal_run(old, "2000-01-01T00:00:00.000+00:00")
+        # Use distinct result dicts as each real SSH operation does.
+        run_route(self._fake_route(), {"purpose": "baseline", "plan": PLAN}, None)
+        for key in (now, old):
+            run_route(self._fake_route(), self._event_route(key), None)
+        with self.history.connect() as snapshot:
+            snapshot.execute("BEGIN")
+            self.assertEqual(len(list(_path_export(snapshot, now))), 2)
+            with self.history.connect() as db:
+                self.assertTrue(self.history.delete_completed(db, now))
+                self.history.prune(db)
+            # The export transaction that started before deletion remains consistent.
+            self.assertEqual(len(list(_path_export(snapshot, now))), 2)
+        with self.history.connect() as db:
+            self.assertEqual(len(list(_path_export(db, now))), 1)
+            self.assertEqual(len(list(_path_export(db, old))), 1)
+            self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
+        self.assertEqual([r["purpose"] for r in recent_routes(self.jobs)["items"]], ["baseline"])
+
+    def test_trace_finishing_after_run_deletion_does_not_restore_data(self):
+        key = "d" * 32
+        self._terminal_run(key)
+        entered, release = threading.Event(), threading.Event()
+        op = self._fake_route()
+        session = op._prepared_diagnostic_session.return_value.__enter__.return_value
+
+        def observe(plan, cancel):
+            entered.set()
+            release.wait(5)
+            return {"state": "partial", "sourceIp": None, "hops": []}
+
+        session.observe.side_effect = observe
+        result = []
+        worker = threading.Thread(
+            target=lambda: result.append(run_route(op, self._event_route(key), None))
+        )
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            with self.history.connect() as db:
+                self.assertTrue(self.history.delete_completed(db, key))
+        finally:
+            release.set()
+            worker.join(3)
+        self.assertEqual(result, [{"state": "discarded", "reason": "RUN_DELETED", "hops": []}])
+        self.assertEqual(recent_routes(self.jobs)["items"], [])
+        self.assertEqual(run_route(op, self._event_route(key), None), result[0])
+        self.assertEqual(session.observe.call_count, 1)
+
+    def test_legacy_route_transfer_is_replay_safe_and_omits_already_deleted_runs(self):
+        key = "a" * 32
+        self._terminal_run(key)
+        with closing(sqlite3.connect(self.jobs.db)) as old, old:
+            old.execute(
+                "CREATE TABLE ping_routes(id INTEGER PRIMARY KEY,endpoint,destination,source_key,observed,purpose,event_id,failed_at,output)"
+            )
+            for num, purpose, event in [
+                (1, "baseline", None),
+                (2, "event", key + ":0:1"),
+                (3, "event", "f" * 32 + ":0:1"),
+            ]:
+                old.execute(
+                    "INSERT INTO ping_routes VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        num,
+                        "switch",
+                        "dest",
+                        "source",
+                        "date",
+                        purpose,
+                        event,
+                        None,
+                        json.dumps({"purpose": purpose}),
+                    ),
+                )
+        # Destination row already committed on an interrupted older migration pass.
+        with self.history.connect() as db:
+            db.execute(
+                "INSERT INTO ping_routes(legacy_id,endpoint,destination,source_key,observed,purpose,output) VALUES(1,'switch','dest','source','date','baseline','{}')"
+            )
+        migrated = LongHistory(self.root)
+        with migrated.connect() as db:
+            items = [
+                tuple(r) for r in db.execute("SELECT legacy_id,run_id FROM ping_routes ORDER BY id")
+            ]
+            self.assertEqual(items, [(1, None), (2, key)])
+        with closing(sqlite3.connect(self.jobs.db)) as old:
+            self.assertIsNone(
+                old.execute("SELECT 1 FROM sqlite_master WHERE name='ping_routes'").fetchone()
+            )

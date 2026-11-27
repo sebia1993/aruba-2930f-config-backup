@@ -354,7 +354,10 @@ class Handler(BaseHTTPRequestHandler):
                         )
                     # After headers are sent a disconnected client needs no second response.
                     try:
-                        self._file(report, download=True)
+                        self._file(
+                            report,
+                            **{"Content-Disposition": f'attachment; filename="Ping-{key}.{ext}"'},
+                        )
                     except OSError:
                         self.close_connection = True
             elif re.fullmatch("/api/ping/runs/" + KEY, path):

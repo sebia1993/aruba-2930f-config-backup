@@ -5,6 +5,56 @@ from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
 
 
+@contextmanager
+def history_connection(path):
+    with closing(sqlite3.connect(path, timeout=2)) as db, db:
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys=ON")
+        yield db
+
+
+def _migrate_routes(db, directory):
+    """Commit the destination first. A restart may repeat the copy without duplicates."""
+    legacy_path = directory / "web-history.sqlite"
+    if not legacy_path.is_file():
+        return
+    with closing(sqlite3.connect(legacy_path, timeout=2)) as old, old:
+        if not old.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ping_routes'"
+        ).fetchone():
+            return
+        old.execute("BEGIN IMMEDIATE")
+        # No legacy rows are cleared until the history transaction is durable.
+        known = {row[0] for row in db.execute("SELECT id FROM ping_long_runs")}
+        for row in old.execute("""SELECT id,endpoint,destination,source_key,observed,purpose,
+                                 event_id,failed_at,output FROM ping_routes ORDER BY id"""):
+            legacy_id, endpoint, destination, source, observed, purpose, event, failed, output = row
+            owner = None
+            if event is not None or purpose == "event":
+                owner = event.split(":", 1)[0] if isinstance(event, str) else None
+                if owner not in known:
+                    continue
+            db.execute(
+                """INSERT INTO ping_routes
+                            (legacy_id,run_id,endpoint,destination,source_key,observed,purpose,event_id,failed_at,output)
+                          VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(legacy_id) DO NOTHING""",
+                (
+                    legacy_id,
+                    owner,
+                    endpoint,
+                    destination,
+                    source,
+                    observed,
+                    purpose,
+                    event,
+                    failed,
+                    output,
+                ),
+            )
+        db.commit()
+        old.execute("DROP TABLE ping_routes")
+
+
 class LongHistory:
     def __init__(self, directory):
         self.path = directory / "ping-history.sqlite"
@@ -21,6 +71,17 @@ class LongHistory:
                     initial_eta REAL NOT NULL, elapsed REAL NOT NULL DEFAULT 0,
                     paused REAL NOT NULL DEFAULT 0
                 );
+                CREATE TABLE IF NOT EXISTS ping_routes (
+                    id INTEGER PRIMARY KEY, legacy_id INTEGER UNIQUE,
+                    run_id TEXT REFERENCES ping_long_runs(id) ON DELETE CASCADE,
+                    endpoint TEXT NOT NULL, destination TEXT NOT NULL, source_key TEXT NOT NULL,
+                    observed TEXT NOT NULL, purpose TEXT NOT NULL, event_id TEXT,
+                    failed_at TEXT, output TEXT NOT NULL,
+                    CHECK((run_id IS NULL AND event_id IS NULL) OR
+                          (run_id IS NOT NULL AND event_id IS NOT NULL))
+                );
+                CREATE INDEX IF NOT EXISTS ping_route_run ON ping_routes(run_id,id);
+                CREATE INDEX IF NOT EXISTS ping_route_match ON ping_routes(endpoint,destination,source_key,id);
                 CREATE TABLE IF NOT EXISTS ping_long_series (
                     run_id TEXT NOT NULL, series_id INTEGER NOT NULL, switch_ip TEXT NOT NULL,
                     ssh_port INTEGER NOT NULL, destination_ip TEXT NOT NULL,
@@ -47,6 +108,7 @@ class LongHistory:
                 CREATE INDEX IF NOT EXISTS ping_long_times
                   ON ping_long_samples(run_id,scheduled_at);
             """)
+            _migrate_routes(db, directory)
             # A committed pre-write intent may already have reached the device.
             # Never replay or convert a missing prompt to a confirmed timeout.
             db.execute("""UPDATE ping_long_samples SET status='unknown', reason='SERVER_RESTART'
@@ -103,12 +165,8 @@ class LongHistory:
         for row in expired:
             self.delete_completed(db, row[0])
 
-    @contextmanager
     def connect(self):
-        with closing(sqlite3.connect(self.path, timeout=2)) as db, db:
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA foreign_keys=ON")
-            yield db
+        return history_connection(self.path)
 
     def insert_sample(
         self,

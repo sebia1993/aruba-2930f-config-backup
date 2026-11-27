@@ -824,7 +824,7 @@ def _correlation_export(db, run):
             ]
 
 
-def _path_export(history_path, run):
+def _path_export(db, run):
     yield [
         "장비",
         "목적지",
@@ -838,33 +838,23 @@ def _path_export(history_path, run):
         "Hop",
         "RTT ms",
     ]
-    route_path = Path(history_path).with_name("web-history.sqlite")
-    if not route_path.is_file():
-        return
-    with _connection(route_path) as db:
-        if not db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ping_routes'"
-        ).fetchone():
-            return
-        # Automatic route observations carry this run's event ID. Manual observations have no such linkage.
-        for row in db.execute(
-            "SELECT output FROM ping_routes WHERE event_id LIKE ? ORDER BY id", (run + ":%",)
-        ):
-            r = json.loads(row[0])
-            for hop in r.get("hops") or [{}]:
-                yield [
-                    r.get("endpoint"),
-                    r.get("destination"),
-                    r.get("sourceIp"),
-                    r.get("purpose"),
-                    r.get("observedAt"),
-                    r.get("failedAt"),
-                    r.get("delaySeconds"),
-                    r.get("state"),
-                    hop.get("ttl"),
-                    hop.get("ip"),
-                    hop.get("rttMs"),
-                ]
+    # Automatic route observations carry this run's event ID. Manual observations have no such linkage.
+    for row in db.execute("SELECT output FROM ping_routes WHERE run_id=? ORDER BY id", (run,)):
+        r = json.loads(row[0])
+        for hop in r.get("hops") or [{}]:
+            yield [
+                r.get("endpoint"),
+                r.get("destination"),
+                r.get("sourceIp"),
+                r.get("purpose"),
+                r.get("observedAt"),
+                r.get("failedAt"),
+                r.get("delaySeconds"),
+                r.get("state"),
+                hop.get("ttl"),
+                hop.get("ip"),
+                hop.get("rttMs"),
+            ]
 
 
 @contextmanager
@@ -889,7 +879,7 @@ def export_history(path, run, extension):
     if extension not in ("csv", "xlsx"):
         raise ValueError("내보낼 형식을 확인하세요.")
     with TemporaryDirectory(prefix="ping-export-") as folder:
-        file = Path(folder) / f"Ping-{run}.{extension}"
+        file = Path(folder) / ("ping-history.csv" if extension == "csv" else "ping-history.xlsx")
         with _connection(path) as db:
             # Run existence and every measurement worksheet belong to the same snapshot.
             db.execute("BEGIN")
@@ -905,7 +895,7 @@ def export_history(path, run, extension):
                     _sheet(book, "개별 Ping", _sample_export(db, run))
                     _sheet(book, "장애·복구 이벤트", _event_export(db, run, series))
                     _sheet(book, "동시 장애 관측", _correlation_export(db, run))
-                    _sheet(book, "경로 진단", _path_export(path, run))
+                    _sheet(book, "경로 진단", _path_export(db, run))
                     if db.execute(
                         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ping_nms_events'"
                     ).fetchone():
