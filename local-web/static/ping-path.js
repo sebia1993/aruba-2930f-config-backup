@@ -22,7 +22,7 @@
     try {
       const plan = window.readGeneralPingPlan();
       const pairs = plan.inventoryRows ? plan.inventoryRows.reduce((sum, row) =>
-        sum + window.pingInventory.uniqueDestinations(row, plan.inventoryRoles).length, 0) :
+        sum + window.pingInventory.rolesForRow(row, plan.inventoryRoles).length, 0) :
         plan.targets.trim().split(/\r?\n/).filter(Boolean).length * plan.destinations.length;
       if (pairs !== 1)
         throw new Error('경로 진단에 사용할 스위치 한 대와 목적지 한 곳을 입력하세요.');

@@ -3,6 +3,10 @@
 이 프로젝트는 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 형식을
 따르고 [Semantic Versioning](https://semver.org/lang/ko/)을 사용합니다.
 
+## [web-v1.32.0] - 2026-11-27
+
+- 붙여넣은 장비표에서 한 스위치의 GW·BB·NMS를 독립된 SSH 세션으로 동시에 측정합니다. 주소가 같아도 역할별로 결과를 저장하며, 실패한 역할만 골라 재실행할 수 있습니다.
+
 ## [web-v1.31.1] - 2026-11-27
 
 - Ping 장비표와 NMS 장애 이력에서 Excel 파일 업로드를 삭제했습니다. 장비표는 셀을 복사해 붙여넣고, NMS 장애 이력은 CSV로 가져옵니다. 측정 결과는 Excel로 저장할 수 있습니다.

@@ -142,7 +142,14 @@
     el('Groups').value=Object.entries(d.groups||{}).map(([device,group])=>device+', '+group).join('\n');
     const series=d.series.map(m=>[String(m.series_id),metaLabel(m)]);
     for(const id of ['Series','Gateway','Firewall','Server']) options(el(id),series);
-    for(const id of ['HeatDest','NmsDest']) options(el(id),[...new Map(d.series.map(m=>[m.destination_ip,m.destination_label?m.destination_label+' ('+m.destination_ip+')':m.destination_ip])).entries()]);
+    const destinations = new Map();
+    for (const m of d.series) {
+      if (!destinations.has(m.destination_ip)) destinations.set(m.destination_ip, new Set());
+      if (m.destination_label) destinations.get(m.destination_ip).add(m.destination_label);
+    }
+    const destinationOptions = [...destinations].map(([ip,labels]) =>
+      [ip, labels.size ? [...labels].join(' / ')+' ('+ip+')' : ip]);
+    for(const id of ['HeatDest','NmsDest']) options(el(id),destinationOptions);
     if(d.series.length>1) el('Firewall').selectedIndex=1;
     if(d.series.length>2) el('Server').selectedIndex=2;
     el('Baseline').checked=false;

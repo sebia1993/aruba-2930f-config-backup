@@ -151,6 +151,40 @@ class PingPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "2행 · NMS"):
             PingPlan.parse({**raw, "inventoryRows": [rows[0], {**rows[1], "nmsIp": "invalid"}]})
 
+    def test_role_sessions_keep_equal_ips_separate_and_require_a_complete_row(self):
+        shared = "198.51.100.1"
+        row = {"swIp": "192.0.2.1", "gwIp": shared, "bbIp": shared, "nmsIp": shared}
+        raw = {
+            "inventoryRows": [row, dict(row, swIp="192.0.2.2")],
+            "inventoryRoles": ["nmsIp", "bbIp", "gwIp"],
+            "inventoryRoleSessions": True,
+            "options": {"source_mode": "ip", "concurrency": 5},
+            "source_ips": {"192.0.2.1:22": "192.0.2.5", "192.0.2.2:22": "192.0.2.6"},
+        }
+        plan = PingPlan.parse(raw)
+        self.assertEqual([d.label for _, d in plan.pairs], ["GW", "BB", "NMS"] * 2)
+        self.assertEqual(
+            [plan.inventory.pair_roles[p] for p in plan.pairs],
+            [("gwIp",), ("bbIp",), ("nmsIp",)] * 2,
+        )
+        preview = preview_plan(raw)
+        self.assertEqual(
+            (preview["totalPairs"], preview["totalRequests"], preview["effectiveConcurrency"]),
+            (6, 30, 3),
+        )
+        self.assertEqual(
+            [p["command"].split()[-1] for p in preview["commands"]],
+            ["192.0.2.5"] * 3 + ["192.0.2.6"] * 3,
+        )
+        with self.assertRaisesRegex(ValueError, "동시 SSH를 3 이상"):
+            PingPlan.parse({**raw, "options": dict(raw["options"], concurrency=2)})
+        for invalid in (1, None, "true"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                PingPlan.parse(dict(raw, inventoryRoleSessions=invalid))
+        legacy = PingPlan.parse(dict(raw, inventoryRoleSessions=False))
+        self.assertFalse(legacy.inventory_role_sessions)
+        self.assertEqual(legacy.total_pairs, 2)
+
     def test_inventory_limits_count_actual_pairs_and_allow_distinct_gateways(self):
         rows = [
             {"swIp": f"192.0.{i // 250}.{i % 250 + 1}", "gwIp": f"198.51.{i // 250}.{i % 250 + 1}"}

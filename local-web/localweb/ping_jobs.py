@@ -8,7 +8,14 @@ from datetime import UTC, datetime
 from aruba2930f_backup.models import Credentials, DeviceTarget, ErrorCode
 
 from .ping_ssh import PingPairResult
-from .ping_tools import MAX_PAIRS, Destination, PingObservation, PingPlan, preview_command
+from .ping_tools import (
+    MAX_PAIRS,
+    Destination,
+    PingObservation,
+    PingPlan,
+    preview_command,
+    role_session_waves,
+)
 
 _AUTH_ERRORS = frozenset({ErrorCode.AUTH_FAILED, ErrorCode.ENABLE_FAILED})
 _FAILED_STATUSES = frozenset(
@@ -73,20 +80,34 @@ class PingBatch:
         self.credentials = credentials
         self.indices = indices
         self.parent_id = parent_id
-        self.in_flight: dict[DeviceTarget, PingSlot] = {}
-        self.workers: set[DeviceTarget] = set()
+        self.in_flight: dict[int, PingSlot] = {}
+        self.workers: set[int] = set()
         self.remaining: dict[DeviceTarget, deque[int]] = {}
         active_destinations = {}
+        active_roles = {}
         for index in range(len(indices)):
             target, destination = self._pair(index)
             self.remaining.setdefault(target, deque()).append(index)
             if plan.inventory:
-                active_destinations.setdefault(target.ip, []).append(destination.ip)
+                active_destinations.setdefault(target.ip, {})[destination.ip] = None
+                if plan.inventory_role_sessions:
+                    active_roles.setdefault(target.ip, []).extend(
+                        plan.inventory.pair_roles[target, destination]
+                    )
         self.inventory_rows = [
-            {**row, "activeDestinations": active_destinations.get(row["swIp"], [])}
+            {**row, "activeDestinations": list(active_destinations.get(row["swIp"], ()))}
             for row in plan.inventory_rows
         ]
-        self.capacity = min(plan.options.concurrency, len({target.ip for target in self.remaining}))
+        if plan.inventory_role_sessions:
+            for row in self.inventory_rows:
+                row["activeRoles"] = active_roles.get(row["swIp"], [])
+            counts = ((target, len(indices)) for target, indices in self.remaining.items())
+            self.role_waves = deque(role_session_waves(counts, plan.options.concurrency))
+            self.capacity = max(map(len, self.role_waves))
+        else:
+            self.capacity = min(
+                plan.options.concurrency, len({target.ip for target in self.remaining})
+            )
         self.rows: list[dict] = []
         self.unpersisted_after: int | None = None
         self.stop_reason = ""
@@ -111,6 +132,8 @@ class PingBatch:
         return self.plan.pairs[self.indices[index]]
 
     def next_devices(self):
+        if self.plan.inventory_role_sessions:
+            return self.role_waves.popleft()
         devices = []
         addresses = set()
         for target in self.remaining:
@@ -130,7 +153,7 @@ class PingBatch:
             del self.remaining[target]
         target, destination = self._pair(index)
         slot = PingSlot(index, target, destination, _utc(), time.monotonic())
-        self.in_flight[target] = slot
+        self.in_flight[index] = slot
         return slot
 
     def _row(self, index, observation, reason, *, may_have_started=False):
@@ -166,7 +189,7 @@ class PingBatch:
         error: ErrorCode | None = None,
         uncertain=False,
     ):
-        if slot is not self.in_flight.get(slot.target):
+        if slot is not self.in_flight.get(slot.index):
             raise ValueError("Ping slot is no longer current.")
         if (result is None) == (error is None):
             raise ValueError("A slot requires exactly one result or error.")
@@ -209,7 +232,7 @@ class PingBatch:
         if reason in _AUTH_ERRORS:
             self.stop(str(reason), state="failed")
         self.rows.append(row)
-        del self.in_flight[slot.target]
+        del self.in_flight[slot.index]
 
     def snapshot(self, *, after=0, complete=False, durable_only=False):
         rows = self.rows
@@ -243,7 +266,9 @@ class PingBatch:
         }
         if self.plan.inventory:
             snapshot.update(
-                inventoryRows=self.inventory_rows, inventoryRoles=list(self.plan.inventory_roles)
+                inventoryRows=self.inventory_rows,
+                inventoryRoles=list(self.plan.inventory_roles),
+                inventoryRoleSessions=self.plan.inventory_role_sessions,
             )
         return snapshot
 

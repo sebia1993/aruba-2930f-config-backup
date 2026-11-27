@@ -50,6 +50,8 @@ def validated_profile(value):
             "inventoryRows": plan.inventory_rows,
             "inventoryRoles": list(plan.inventory_roles),
         }
+        if plan.inventory_role_sessions:
+            inputs["inventoryRoleSessions"] = True
     else:
         inputs = {
             "targets": "\n".join(t.endpoint for t in plan.targets),
@@ -155,7 +157,7 @@ def _append(sheet, values):
     sheet.append(cells)
 
 
-def append_inventory_sheet(book, rows, roles, results):
+def append_inventory_sheet(book, rows, roles, results, *, role_sessions=False):
     sheet = book.create_sheet("장비별 결과", 0)
     columns = ("gwIp", "bbIp", "nmsIp")
     headers = [
@@ -176,14 +178,16 @@ def append_inventory_sheet(book, rows, roles, results):
         values = [row[key] for key in ("hostname", "swIp", *columns)]
         for role in columns:
             address = row[role]
+            result_key = role if role_sessions else address
+            active = row.get("activeRoles" if role_sessions else "activeDestinations")
             if not address:
                 summary = "대상 없음"
             elif role not in roles:
                 summary = "역할 미선택"
-            elif "activeDestinations" in row and address not in row["activeDestinations"]:
+            elif active is not None and result_key not in active:
                 summary = "실행 범위 제외"
             else:
-                summary = results.get((row["swIp"], address), "내보내기 제외")
+                summary = results.get((row["swIp"], result_key), "내보내기 제외")
             values.append(summary)
         _append(sheet, values)
 
@@ -234,11 +238,17 @@ def general_excel(jobs, key, data):
         raise ValueError("요청한 조합이 없습니다.")
     book = Workbook(write_only=True)
     if inventory := result.get("inventoryRows"):
-        summaries = {(r["ip"], r["destination_ip"]): _general_summary(r) for r in chosen}
+        separate = result.get("inventoryRoleSessions", False)
+        summaries = {}
+        for row in chosen:
+            key = row["inventory_roles"][0] if separate else row["destination_ip"]
+            summaries[row["ip"], key] = _general_summary(row)
         if len(chosen) < result["total"] or result.get("parentRunId"):
             included_devices = {r["ip"] for r in chosen}
             inventory = [row for row in inventory if row["swIp"] in included_devices]
-        append_inventory_sheet(book, inventory, result["inventoryRoles"], summaries)
+        append_inventory_sheet(
+            book, inventory, result["inventoryRoles"], summaries, role_sessions=separate
+        )
     summary = book.create_sheet("요약")
     for pair in [
         ("작업 ID", key),

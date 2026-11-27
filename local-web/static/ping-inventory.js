@@ -13,7 +13,13 @@
   const notify = () => form.dispatchEvent(new Event('input', {bubbles:true}));
   const active = () => mode.value === 'inventory';
   const selectedRoles = () => roles.filter(box => box.checked).map(box => box.dataset.inventoryRole);
-  const uniqueDestinations = (row, keys) => [...new Set(keys.map(key => row[key]).filter(Boolean))];
+  const rolesForRow = (row, keys) => keys.filter(key => row[key]);
+  function minimumConcurrency() {
+    if (!active() || !preview) return 1;
+    const roles = selectedRoles();
+    return preview.rows.reduce((minimum, row) => selected.has(row.rowNumber)
+      ? Math.max(minimum, rolesForRow(row, roles).length) : minimum, 1);
+  }
 
   function targets() {
     const keys = selectedRoles();
@@ -21,10 +27,11 @@
     if (!keys.length) throw new Error('측정할 목적지를 하나 이상 선택하세요.');
     if (!selected.size || selected.size > 300) throw new Error('측정할 장비를 1~300대 선택하세요.');
     const rows = preview.rows.filter(row => selected.has(row.rowNumber));
-    if (!rows.some(row => uniqueDestinations(row, keys).length)) throw new Error('선택한 장비와 목적지에 측정할 IPv4 주소가 없습니다.');
+    if (!rows.some(row => rolesForRow(row, keys).length)) throw new Error('선택한 장비와 목적지에 측정할 IPv4 주소가 없습니다.');
     return {
       inventoryRows:rows.map(row => Object.fromEntries(Object.keys(fields).map(key => [key, row[key]]))),
-      inventoryRoles:keys
+      inventoryRoles:keys,
+      inventoryRoleSessions:true
     };
   }
   function reportSelection() {
@@ -32,7 +39,7 @@
     if (preview.errors.length) { status.textContent = preview.errors.join(' · '); return; }
     const keys = selectedRoles();
     const pairs = preview.rows.reduce((total, row) =>
-      total + (selected.has(row.rowNumber) ? uniqueDestinations(row, keys).length : 0), 0);
+      total + (selected.has(row.rowNumber) ? rolesForRow(row, keys).length : 0), 0);
     const invalid = preview.rows.filter(row => row.errors.length).length;
     status.textContent = '입력 ' + preview.rows.length + '행 · 오류 ' + invalid + '행 · 선택 ' +
       selected.size + '대 · 측정 ' + pairs + '조합' +
@@ -188,5 +195,5 @@
     $('pingInventoryReview').hidden = false;
     chooseValid(); notify();
   }
-  window.pingInventory = {active, targets, applyProfile, uniqueDestinations, roleNames};
+  window.pingInventory = {active, targets, applyProfile, rolesForRow, roleNames, minimumConcurrency};
 })();

@@ -613,7 +613,7 @@ class Jobs:
         self.operations.reset_job_progress()
         for target in batch.next_devices():
             slot = batch.claim(target)
-            batch.workers.add(target)
+            batch.workers.add(slot.index)
             try:
                 Thread(
                     target=self._run_ping_slot,
@@ -625,7 +625,7 @@ class Jobs:
                 self._record_ping_slot(
                     batch, slot, self.cancel_event, error=ErrorCode.UNEXPECTED_ERROR
                 )
-                batch.workers.remove(target)
+                batch.workers.remove(slot.index)
                 self.cancel_event.set()
                 break
         if not batch.workers:
@@ -697,6 +697,7 @@ class Jobs:
 
     def _run_ping_slot(self, batch, slot, cancel):
         target = slot.target
+        worker_index = slot.index
         write_intent = False
 
         def before_send():
@@ -732,7 +733,8 @@ class Jobs:
                         slot = None
                         # Source and transport failures can close the underlying SSH channel.
                         if (
-                            result.transport_error
+                            batch.plan.inventory_role_sessions
+                            or result.transport_error
                             or result.observation.status == "source_error"
                             or self._yield_ping_device(batch)
                         ):
@@ -756,7 +758,7 @@ class Jobs:
                     )
         finally:
             with self.lock:
-                batch.workers.remove(target)
+                batch.workers.remove(worker_index)
                 if batch.stop_state == "failed":
                     cancel.set()
                 if not batch.workers:

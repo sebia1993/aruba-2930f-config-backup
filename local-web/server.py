@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import MANUAL_ACTIONS, Busy, Jobs  # noqa: E402
 
-VERSION = "1.31.1"
+VERSION = "1.32.0"
 STATIC = {
     "/": "index.html",
     "/matrix": "matrix.html",

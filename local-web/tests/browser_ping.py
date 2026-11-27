@@ -138,7 +138,7 @@ def exercise(page, url):
     assert not errors, errors
 
 
-def run_browser_test(flow, device_session=fake_device, pair=observe):
+def run_browser_test(flow, device_session=fake_device):
     with (
         tempfile.TemporaryDirectory() as tmp,
         LocalServer(("127.0.0.1", 0), Handler) as app,
@@ -157,10 +157,7 @@ def run_browser_test(flow, device_session=fake_device, pair=observe):
         worker = threading.Thread(
             target=app.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
         )
-        with (
-            patch.object(app.jobs.operations, "_ping_device_session", side_effect=device_session),
-            patch.object(app.jobs.operations, "_ping_pair", side_effect=pair),
-        ):
+        with patch.object(app.jobs.operations, "_ping_device_session", side_effect=device_session):
             worker.start()
             try:
                 browser = launch_test_browser(pw.chromium)

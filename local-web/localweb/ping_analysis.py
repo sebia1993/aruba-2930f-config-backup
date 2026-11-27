@@ -375,7 +375,7 @@ def _heat(db, run, series, body):
                 group=groups.get(dev),
                 cells=[_heat_cell(b.get(dev, [])) for b in buckets],
             )
-            for dev in devices.values()
+            for dev in dict.fromkeys(devices.values())
         ],
     )
 
@@ -491,9 +491,9 @@ def _alarm_export(db, run, series):
         if f"{m['switch_ip']}:{m['ssh_port']}" in devices
     ]
     index = _alarm_index(db, run, endpoints)
-    destinations = defaultdict(list)
+    destinations = defaultdict(dict)
     for device, dest, _ in endpoints:
-        destinations[device].append(dest)
+        destinations[device][dest] = None
     now = datetime.now(UTC)
     for alarm in alarms:
         device = alarm["device"]
@@ -661,6 +661,8 @@ def _path_points(db, run, series, body):
         != 1
     ):
         raise ValueError("같은 스위치와 Source를 사용한 관측 지점을 선택하세요.")
+    if len({members[s]["destination_ip"] for s in ids}) != 3:
+        raise ValueError("경로 비교에는 목적지 IP가 서로 다른 세 지점이 필요합니다.")
     start = _instant(body.get("start"))
     seconds = _integer(body.get("seconds", 60), 5, 300)
     left, right = _utc(start), _utc(start + timedelta(seconds=seconds))
@@ -774,6 +776,7 @@ def _summary_export(series_metrics):
         "평균 ms",
         "P95 ms",
         "P99 ms",
+        "목적지 이름",
     ]
     for m, metrics in series_metrics:
         yield [
@@ -798,6 +801,7 @@ def _summary_export(series_metrics):
                     "p99",
                 )
             ),
+            m["destination_label"],
         ]
 
 
@@ -829,6 +833,7 @@ def _event_export(db, run, series):
         "연속 손실",
         "상태",
         "시계 불확실",
+        "목적지 이름",
     ]
     for m in series:
         for e in _events(_samples(db, run, m["series_id"])):
@@ -843,6 +848,7 @@ def _event_export(db, run, series):
                 e["count"],
                 e["state"],
                 e["clockUncertain"],
+                m["destination_label"],
             ]
 
 
@@ -965,12 +971,28 @@ def export_history(path, run, extension):
                         ).fetchone()[0]
                     )
                     if inventory := settings.get("inventoryRows"):
+                        separate = settings.get("inventoryRoleSessions", False)
+                        if separate:
+                            result_keys = dict(
+                                db.execute(
+                                    "SELECT series_id,inventory_role FROM ping_long_roles WHERE run_id=?",
+                                    (run,),
+                                )
+                            )
+                        else:
+                            result_keys = {m["series_id"]: m["destination_ip"] for m in series}
                         summaries = {
-                            (m["switch_ip"], m["destination_ip"]): _long_inventory_summary(metrics)
+                            (m["switch_ip"], result_keys[m["series_id"]]): _long_inventory_summary(
+                                metrics
+                            )
                             for m, metrics in series_metrics
                         }
                         append_inventory_sheet(
-                            book, inventory, settings["inventoryRoles"], summaries
+                            book,
+                            inventory,
+                            settings["inventoryRoles"],
+                            summaries,
+                            role_sessions=separate,
                         )
                     _sheet(book, "요약", _summary_export(series_metrics))
                     _sheet(book, "개별 Ping", _sample_export(db, run))

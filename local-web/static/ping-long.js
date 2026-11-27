@@ -76,7 +76,7 @@
       if (revision !== version) return;
       checked = request;
       el('Estimate').textContent = p.pairs+'조합 × '+p.count+'회 = 총 '+p.total+'회 · 실제 동시 SSH '+p.effectiveConcurrency+
-        '대 · 최초 예상 '+time(p.initialEta)+' · 매회 Timeout 가정 '+time(p.timeoutEta)+' · 예상 종료 '+kst(p.estimatedFinish)+' · 한도 '+p.maxHours+'시간'+
+        '개 · 최초 예상 '+time(p.initialEta)+' · 매회 Timeout 가정 '+time(p.timeoutEta)+' · 예상 종료 '+kst(p.estimatedFinish)+' · 한도 '+p.maxHours+'시간'+
         (p.overDeadline ? ' · 예상시간이 실행 한도를 초과하여 목표 전에 끝날 수 있습니다.' : '');
     } catch (err) { if (revision === version) el('Estimate').textContent = err.message; }
     buttons();
@@ -112,12 +112,13 @@
     const grouped = new Map();
     const term = el('Search').value.trim().toLowerCase(), filter = el('Filter').value;
     const inventory = last.settings?.inventoryRows;
+    const roleSessions = last.settings?.inventoryRoleSessions === true;
     const inventoryBySwitch = new Map((inventory || []).map(row => [row.swIp + ':22', row]));
     const roleNames = window.pingInventory.roleNames;
     const narrowed = last.series.filter(row => {
       const device = inventoryBySwitch.get(row.switch);
-      const names = device ? last.settings.inventoryRoles.filter(key => device[key] === row.destination)
-        .map(key => roleNames[key]).join(' ') : '';
+      const names = roleSessions ? roleNames[row.inventoryRole] : device ?
+        last.settings.inventoryRoles.filter(key => device[key] === row.destination).map(key => roleNames[key]).join(' ') : '';
       return (!term || [row.switch,row.destination,device?.hostname,names].join(' ').toLowerCase().includes(term)) &&
         (!filter || filter === (row.completed === row.target ? 'done' : row.started > 0 ? 'active' : 'waiting'));
     });
@@ -125,7 +126,7 @@
       const bySwitch = new Map();
       for (const row of narrowed) {
         if (!bySwitch.has(row.switch)) bySwitch.set(row.switch, new Map());
-        bySwitch.get(row.switch).set(row.destination, row);
+        bySwitch.get(row.switch).set(roleSessions ? row.inventoryRole : row.destination, row);
       }
       const devices = inventory.filter(row => !term && !filter || bySwitch.has(row.swIp + ':22'));
       const pages = Math.max(1, Math.ceil(devices.length/100));
@@ -137,7 +138,7 @@
         columns.push([name + ' 결과', device => {
           if (!device[key]) return '대상 없음';
           if (!last.settings.inventoryRoles.includes(key)) return '미선택';
-          const series = bySwitch.get(device.swIp + ':22')?.get(device[key]);
+          const series = bySwitch.get(device.swIp + ':22')?.get(roleSessions ? key : device[key]);
           if (!series) return '필터 제외';
           return device[key]+' · '+series.completed+'/'+series.target+'회 · 성공 '+series.success+
             ' · 손실 '+series.loss+' · 미측정 '+series.gaps+
