@@ -11,12 +11,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, RLock, Thread
 
-from aruba2930f_backup.models import CollectionFailure
+from aruba2930f_backup.models import CollectionFailure, ErrorCode
 
+from . import ping_general_store
 from .controls import Controls
 from .manual_queue import ManualRequest, manual_outcome
 from .monitoring import PortMonitoring
 from .operations import Operations, TargetInputError, _groups
+from .ping_jobs import PingBatch, rerun_indices
+from .ping_long import LongPing
+from .ping_path import TraceQueue
+from .ping_tools import PingPlan
 from .port_tools import group_targets
 from .power_history import PowerHistory, sampled_rows
 
@@ -34,6 +39,7 @@ ACTIONS = frozenset(
         "targets.preview",
         "targets.apply",
         "profiles.import",
+        "ping.trace",
         "profiles.export",
         "backup.run",
         "backup.history",
@@ -137,6 +143,7 @@ class Jobs:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS closed_manual_receipts (id TEXT PRIMARY KEY, closed TEXT NOT NULL)"
             )
+            ping_general_store.prepare(db)
             db.execute(
                 "UPDATE jobs SET state='cancelled',finished=?,summary=? WHERE state='queued'",
                 (now(), "서버가 다시 시작되어 대기 중이던 예약을 취소했습니다."),
@@ -150,6 +157,7 @@ class Jobs:
                 "UPDATE jobs SET state='interrupted',finished=?,summary=? WHERE state='running'",
                 (now(), "이전 실행 중 서버가 종료되었습니다."),
             )
+            ping_general_store.recover_interrupted(db)
         self.lock = RLock()
         self.receipt_log_lock = RLock()
         self.recent = OrderedDict()
@@ -162,6 +170,15 @@ class Jobs:
         self.closing = False
         self.cancel_event = None
         self.monitor: PortMonitoring | None = None
+        self.ping_batch: PingBatch | None = None
+        self.long_ping = LongPing(self)
+        self.trace_queue = TraceQueue()
+        self.last_ping_lane = "long"
+
+    def offer_ping_trace(self, key, plan, target, dest, event_id, failed_at):
+        self.trace_queue.offer(
+            key, plan, target, dest, event_id, failed_at, self.operations.credentials
+        )
 
     def latest_cable_job(self):
         with self.lock:
@@ -173,6 +190,14 @@ class Jobs:
                 ),
                 None,
             )
+
+    def resumable_job(self):
+        with self.lock:
+            if self.long_ping.owns(self.active) or (
+                self.ping_batch and self.ping_batch.key == self.active
+            ):
+                return None
+            return self.active
 
     def monitor_status(self):
         with self.lock:
@@ -233,8 +258,30 @@ class Jobs:
                 or plan.suspended
                 or time.monotonic() < plan.due
             ):
+                if not self.closing:
+                    self.trace_queue.tick(self)
+                    if self.last_ping_lane == "general":
+                        self.long_ping.tick()
+                        self._tick_ping()
+                    else:
+                        self._tick_ping()
+                        self.long_ping.tick()
+                    if self.active and self.long_ping.owns(self.active):
+                        self.last_ping_lane = "long"
+                    elif self.ping_batch and self.ping_batch.key == self.active:
+                        self.last_ping_lane = "general"
                 return
             occupied = bool(self.active or self.pending or self.controls.awaiting_confirmation())
+            if (
+                occupied
+                and self.active
+                and (
+                    self.long_ping.owns(self.active)
+                    or (self.ping_batch and self.ping_batch.key == self.active)
+                )
+            ):
+                # Leave a due monitor read due while a Ping wave drains.
+                return
             plan.advance_to_next_slot(skipped=occupied)
             if occupied:
                 # A queued manual action always wins the next device slot.
@@ -244,9 +291,13 @@ class Jobs:
 
     def claim_shutdown(self):
         with self.lock:
+            self.long_ping.stop("SERVER_SHUTDOWN")
             if self.active:
                 raise Busy("작업을 마치거나 취소한 후 서버를 종료하세요.")
             self.invalidate_pending("서버 종료로 예약을 취소했습니다.")
+            if self.ping_batch:
+                self.ping_batch.stop("SERVER_SHUTDOWN")
+                self._finish_ping(self.ping_batch)
             self.monitor = None
             self.closing = True
 
@@ -398,6 +449,322 @@ class Jobs:
                 )
         return None
 
+    def submit_ping(self, body):
+        """Admit a finite Ping plan without starting a device operation."""
+        if not isinstance(body, dict) or set(body) not in (
+            {"requestId", "plan"},
+            {"requestId", "rerun"},
+        ):
+            raise ValueError("Ping request requires an ID and plan.")
+        key = body["requestId"]
+        if not isinstance(key, str) or re.fullmatch(r"[0-9a-f]{32}", key) is None:
+            raise ValueError("Invalid Ping request ID.")
+        with self.lock:
+            if self.closing:
+                raise Busy("서버가 종료 중입니다.")
+            parent_id = None
+            if "rerun" in body:
+                request = body["rerun"]
+                if not isinstance(request, dict):
+                    raise ValueError("원본 Ping 요청을 확인하세요.")
+                parent_id = request.get("parentId")
+                if not isinstance(parent_id, str) or not re.fullmatch(r"[0-9a-f]{32}", parent_id):
+                    raise ValueError("원본 Ping 작업 ID를 확인하세요.")
+                with closing(sqlite3.connect(self.db)) as db:
+                    parent = db.execute(
+                        "SELECT plan, pair_indices, result FROM general_ping_runs WHERE id=?",
+                        (parent_id,),
+                    ).fetchone()
+                if parent is None or parent[2] is None:
+                    raise Busy("종료 결과가 보존된 일반 Ping 작업만 재실행할 수 있습니다.")
+                raw_plan = json.loads(parent[0])
+                plan = PingPlan.parse(raw_plan)
+                indices = rerun_indices(
+                    request, tuple(json.loads(parent[1])), json.loads(parent[2])["rows"]
+                )
+            else:
+                raw_plan = body["plan"]
+                plan = PingPlan.parse(raw_plan)
+                indices = tuple(range(plan.total_pairs))
+            if self.ping_batch and self.ping_batch.key == key:
+                if (
+                    self.ping_batch.plan == plan
+                    and self.ping_batch.indices == indices
+                    and self.ping_batch.parent_id == parent_id
+                ):
+                    return key
+                raise Busy("Ping 요청 ID를 이미 사용했습니다.")
+            if self.ping_batch:
+                raise Busy("다른 Ping 작업이 실행 중입니다.")
+            creds = self.operations.credentials
+            if creds is None:
+                raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
+            started = now()
+            # Store acceptance before any SSH slot can be claimed. On restart
+            # the existing running-job recovery marks this as interrupted.
+            with closing(sqlite3.connect(self.db)) as db, db:
+                tables = ("jobs", "manual_aliases", "closed_manual_receipts")
+                if key in self.recent or any(
+                    db.execute(f"SELECT 1 FROM {table} WHERE id=?", (key,)).fetchone()
+                    for table in tables
+                ):
+                    raise Busy("Ping 요청 ID를 이미 사용했습니다. 작업 상태를 확인하세요.")
+                db.execute(
+                    "INSERT INTO jobs VALUES(?,?,?,?,?,?,?)",
+                    (key, "ping.run", "running", started, None, "", "[]"),
+                )
+                db.execute(
+                    "INSERT INTO general_ping_runs (id,plan,pair_indices,parent_id,journal_version) VALUES(?,?,?,?,1)",
+                    (key, json.dumps(raw_plan, ensure_ascii=False), json.dumps(indices), parent_id),
+                )
+            self.ping_batch = PingBatch(key, plan, creds, indices, parent_id)
+            self.recent[key] = dict(
+                id=key,
+                action="ping.run",
+                state="running",
+                started=started,
+                finished=None,
+                error="",
+                result=None,
+            )
+            self._trim_recent()
+            return key
+
+    def submit_ping_receipt(self, body):
+        with self.lock:
+            key = self.submit_ping(body)
+            return {"id": key, "accepted": True, "state": self.recent[key]["state"]}
+
+    def current_ping(self):
+        """Return the current run ID even while a manual or monitor job owns the slot."""
+        with self.lock:
+            return {"id": self.ping_batch.key if self.ping_batch else None}
+
+    def ping_status(self, key, after=0):
+        """Read only Ping-owned IDs; never replay a missing or interrupted job."""
+        with self.lock:
+            item = self.recent.get(key)
+            if item is not None:
+                if item["action"] != "ping.run":
+                    raise KeyError(key)
+                progress = {}
+                result = item["result"]
+                if self.ping_batch and self.ping_batch.key == key:
+                    progress = self.ping_batch.snapshot(after=after)
+                    progress["waitReason"] = self._ping_wait_reason(self.ping_batch)
+                elif result is not None:
+                    result = self._ping_result_page(result, after)
+                return dict(item, result=result, progress=progress, historyOnly=False)
+            with closing(sqlite3.connect(self.db)) as db:
+                row = db.execute(
+                    "SELECT j.state,j.started,j.finished,j.summary,p.result FROM jobs j "
+                    "LEFT JOIN general_ping_runs p ON p.id=j.id WHERE j.id=? AND j.action=?",
+                    (key, "ping.run"),
+                ).fetchone()
+            if row is None:
+                raise KeyError(key)
+            state, started, finished, summary, saved = row
+            # A failed journal update may have left an old running state.
+            # There is no live batch and no recoverable per-pair detail here.
+            if state == "running":
+                state = "interrupted"
+            return {
+                "id": key,
+                "action": "ping.run",
+                "state": state,
+                "started": started,
+                "finished": finished,
+                "summary": summary,
+                "error": "",
+                "result": self._ping_result_page(json.loads(saved), after) if saved else None,
+                "progress": {},
+                "historyOnly": saved is None,
+            }
+
+    @staticmethod
+    def _ping_result_page(result, after):
+        rows = result["rows"]
+        after = min(max(after, 0), len(rows))
+        page = rows[after : after + 512]
+        return dict(result, rows=page, cursor=after + len(page))
+
+    def cancel_ping(self, key):
+        with self.lock:
+            status = self.ping_status(key)
+            if status["state"] != "running" or status["historyOnly"]:
+                return {"requested": False}
+            return self.cancel(key)
+
+    def _tick_ping(self):
+        # Called under the same lock as monitor and manual queue admission.
+        batch = self.ping_batch
+        if batch is None:
+            return
+        if self.closing or batch.credentials is not self.operations.credentials:
+            batch.stop("SESSION_CHANGED")
+        if batch.terminal:
+            self._finish_ping(batch)
+            return
+        if self.active or self.pending or self.controls.awaiting_confirmation():
+            return
+        self.busy_workspace = self.workspace()
+        self.active = batch.key
+        self.cancel_event = Event()
+        self.operations.reset_job_progress()
+        for target in batch.next_devices():
+            slot = batch.claim(target)
+            batch.workers.add(target)
+            try:
+                Thread(
+                    target=self._run_ping_slot,
+                    args=(batch, slot, self.cancel_event),
+                    daemon=True,
+                ).start()
+            except RuntimeError:
+                batch.stop("WORKER_START_FAILED", state="failed")
+                self._record_ping_slot(
+                    batch, slot, self.cancel_event, error=ErrorCode.UNEXPECTED_ERROR
+                )
+                batch.workers.remove(target)
+                self.cancel_event.set()
+                break
+        if not batch.workers:
+            self.active = self.cancel_event = self.busy_workspace = None
+            self._finish_ping(batch)
+
+    def _finish_ping(self, batch):
+        if self.ping_batch is not batch or not batch.terminal:
+            return
+        snapshot = batch.snapshot(complete=True)
+        finished = now()
+        state = batch.state
+        error = batch.stop_reason
+        summary = f"Ping · {snapshot['processedPairs']}/{snapshot['total']}"
+        try:
+            with closing(sqlite3.connect(self.db)) as db, db:
+                ping_general_store.finalize(db, batch.key, snapshot)
+                db.execute(
+                    "UPDATE jobs SET state=?,finished=?,summary=? WHERE id=?",
+                    (state, finished, summary, batch.key),
+                )
+        except sqlite3.Error:
+            state = "failed"
+            error = "PING_HISTORY_WRITE_FAILED"
+            snapshot = batch.snapshot(complete=True, durable_only=True)
+        self.recent[batch.key].update(
+            state=state,
+            finished=finished,
+            error=error,
+            result=snapshot,
+        )
+        self.ping_batch = None
+        self._trim_recent()
+
+    def _ping_wait_reason(self, batch):
+        if self.pending:
+            return "MANUAL_QUEUE"
+        if self.controls.awaiting_confirmation():
+            return "OPERATOR_CONFIRMATION"
+        if self.monitor and not self.monitor.suspended and time.monotonic() >= self.monitor.due:
+            return "MONITOR_DUE"
+        if self.active and self.active != batch.key:
+            return "OTHER_OPERATION"
+        return ""
+
+    def _yield_ping_device(self, batch):
+        if self.closing or batch.credentials is not self.operations.credentials:
+            batch.stop("SESSION_CHANGED")
+        long_run = self.long_ping.run
+        return (
+            batch.stop_reason
+            or self._ping_wait_reason(batch)
+            or self.trace_queue.pending
+            or (long_run and long_run.state == "running")
+        )
+
+    def _record_ping_slot(self, batch, slot, cancel, result=None, *, error=None, uncertain=False):
+        batch.record(slot, result, error=error, uncertain=uncertain)
+        if batch.unpersisted_after is not None:
+            return
+        try:
+            ping_general_store.record(self.db, batch.key, batch.rows[-1])
+        except sqlite3.Error:
+            # Keep the published cursor at the contiguous durable prefix. No later
+            # evidence may claim a position past a missing completion on restart.
+            batch.unpersisted_after = len(batch.rows) - 1
+            batch.stop("PING_HISTORY_WRITE_FAILED", state="failed")
+            cancel.set()
+
+    def _run_ping_slot(self, batch, slot, cancel):
+        target = slot.target
+        write_intent = False
+
+        def before_send():
+            nonlocal write_intent
+            with self.lock:
+                if (
+                    cancel.is_set()
+                    or batch.stop_reason
+                    or batch.credentials is not self.operations.credentials
+                ):
+                    raise CollectionFailure(ErrorCode.CANCELLED, "Ping 전송이 중단되었습니다.")
+                try:
+                    ping_general_store.before_send(self.db, batch.key, slot)
+                    write_intent = True
+                except sqlite3.Error as exc:
+                    batch.stop("PING_HISTORY_WRITE_FAILED", state="failed")
+                    cancel.set()
+                    raise CollectionFailure(
+                        ErrorCode.REPORT_WRITE_FAILED, "Ping 전송 상태 저장 실패"
+                    ) from exc
+
+        try:
+            with self.operations._ping_device_session(
+                batch.plan, target, batch.credentials, cancel
+            ) as session:
+                while slot:
+                    result = session.run_pair(
+                        batch.plan, slot.destination, cancel=cancel, before_send=before_send
+                    )
+                    with self.lock:
+                        self._record_ping_slot(batch, slot, cancel, result)
+                        write_intent = False
+                        slot = None
+                        # Source and transport failures can close the underlying SSH channel.
+                        if (
+                            result.transport_error
+                            or result.observation.status == "source_error"
+                            or self._yield_ping_device(batch)
+                        ):
+                            break
+                        slot = batch.claim(target)
+        except CollectionFailure as exc:
+            with self.lock:
+                if slot:
+                    self._record_ping_slot(
+                        batch, slot, cancel, error=exc.code, uncertain=write_intent
+                    )
+        except Exception:
+            with self.lock:
+                if slot:
+                    self._record_ping_slot(
+                        batch,
+                        slot,
+                        cancel,
+                        error=ErrorCode.UNEXPECTED_ERROR,
+                        uncertain=write_intent,
+                    )
+        finally:
+            with self.lock:
+                batch.workers.remove(target)
+                if batch.stop_state == "failed":
+                    cancel.set()
+                if not batch.workers:
+                    self.active = self.cancel_event = self.busy_workspace = None
+                    if batch.terminal:
+                        self._finish_ping(batch)
+                    self._next_manual()
+
     def submit(self, action, body, *, monitored=False):
         if not isinstance(action, str) or action not in ACTIONS or not isinstance(body, dict):
             raise ValueError("작업 이름과 입력 형식을 확인하세요.")
@@ -429,6 +796,9 @@ class Jobs:
                     queued = bool(
                         self.pending
                         or self.active in self.manual
+                        or (self.ping_batch and self.ping_batch.key == self.active)
+                        or self.long_ping.owns(self.active)
+                        or self.recent.get(self.active, {}).get("action") == "ping.trace"
                         or (self.monitor and self.monitor.job == self.active)
                     )
             else:
@@ -476,6 +846,12 @@ class Jobs:
 
     def submit_receipt(self, action, body):
         with self.lock:
+            if action == "ping.trace" and (
+                not isinstance(body, dict)
+                or set(body) != {"plan", "purpose"}
+                or body["purpose"] not in ("baseline", "incident", "recovered")
+            ):
+                raise ValueError("수동 경로 진단 요청을 확인하세요.")
             key = self.submit(action, body)
             return {
                 "id": key,
@@ -589,6 +965,15 @@ class Jobs:
         with self.lock:
             if key not in self.recent:
                 raise KeyError(key)
+            if self.ping_batch and key == self.ping_batch.key:
+                if queued_only and self.active == key:
+                    return {"requested": False}
+                self.ping_batch.stop("OPERATOR_CANCELLED")
+                if self.active == key:
+                    self.cancel_event.set()
+                else:
+                    self._finish_ping(self.ping_batch)
+                return {"requested": True}
             if key in self.pending:
                 self._cancel_reservations((key,), "운영자가 실행 전에 예약을 취소했습니다.")
                 return {"requested": True}
@@ -614,6 +999,8 @@ class Jobs:
             item.pop("_manual_state", None)
             item.pop("_manual_message", None)
             progress = self.operations.progress_snapshot() if self.active == key else {}
+            if self.ping_batch and key == self.ping_batch.key:
+                progress = self.ping_batch.snapshot(after=after)
             if self.active == key and item["action"] in {"ports.query", "ports.refresh"}:
                 progress.update(self.operations.query_progress(after))
                 if item["action"] == "ports.query" and "targets" in progress:
@@ -1026,6 +1413,9 @@ class Jobs:
                     )
                 ):
                     self.monitor = None
+                if action == "ping.trace" and body.get("purpose") == "event" and result:
+                    # Run-owned route details follow the history retention/deletion policy.
+                    result = {"state": result["state"]}
                 self.recent[key].update(state=state, finished=finished, result=result, error=error)
                 self.active = self.cancel_event = self.busy_workspace = None
                 if outcome:

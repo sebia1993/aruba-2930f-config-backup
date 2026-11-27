@@ -63,6 +63,8 @@ from .backup_destination import copy_backup_files, selected_directory
 from .backup_history import backup_history
 from .backup_tools import BackupProgress, HistoryFolders, pick_directory
 from .cable import CableSession, diagnose_ports
+from .ping_ssh import PingPairResult, PingSSHSession
+from .ping_tools import Destination, PingPlan, preview_command
 from .port_tools import group_targets, matrix_observation, preview_targets, target_table
 
 POWER_SETTLE_SECONDS = 3
@@ -464,6 +466,10 @@ class Operations:
             return self._profile(action, body)
         if self.credentials is None:
             raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
+        if action == "ping.trace":
+            from .ping_path import run_route
+
+            return run_route(self, body, cancel)
         if action in {"ports.query", "ports.refresh"}:
             return self._query(
                 _groups(body),
@@ -1068,7 +1074,13 @@ class Operations:
         }
 
     @contextmanager
-    def _cable_session(self, target, credentials, options, cancel):
+    def _prepared_diagnostic_session(self, session_type, target, credentials, options, cancel):
+        """Share the existing pinned diagnostic login and EXEC preparation.
+
+        The caller must hold the existing global device-operation slot for
+        the entire context. This helper never retries a command or creates a
+        separate SSH concurrency lane.
+        """
         session = None
         try:
             _abort_if_cancelled(cancel)
@@ -1086,7 +1098,7 @@ class Operations:
                 self.host_key_store.approve([check])
             self.host_key_store.require_trusted(observation)
             _abort_if_cancelled(cancel)
-            session = CableSession(target, credentials, options, self.host_key_store)
+            session = session_type(target, credentials, options, self.host_key_store)
             session.connect()
             _abort_if_cancelled(cancel)
             if credentials.enable_secret or not session.get_prompt().endswith("#"):
@@ -1096,6 +1108,17 @@ class Operations:
             _abort_if_cancelled(cancel)
             session.set_terminal_width()
             _abort_if_cancelled(cancel)
+            yield session
+        finally:
+            if session is not None:
+                with suppress(Exception):
+                    session.close()
+
+    @contextmanager
+    def _cable_session(self, target, credentials, options, cancel):
+        with self._prepared_diagnostic_session(
+            CableSession, target, credentials, options, cancel
+        ) as session:
             version = session.send_show("show version", cancel_event=cancel)
             _abort_if_cancelled(cancel)
             try:
@@ -1109,7 +1132,40 @@ class Operations:
             )
             _abort_if_cancelled(cancel)
             yield session
-        finally:
-            if session is not None:
-                with suppress(Exception):
-                    session.close()
+
+    def _ping_pair(
+        self,
+        plan: PingPlan,
+        target: DeviceTarget,
+        destination: Destination,
+        credentials: Credentials,
+        cancel: threading.Event,
+        *,
+        before_send=None,
+    ) -> PingPairResult:
+        """Execute a single planned command under the caller's device-operation lease."""
+        preview_command(plan, target, destination)
+        with self._ping_device_session(plan, target, credentials, cancel) as session:
+            if before_send is not None:
+                return session.run_pair(plan, destination, cancel=cancel, before_send=before_send)
+            return session.run_pair(plan, destination, cancel=cancel)
+
+    @contextmanager
+    def _ping_device_session(self, plan, target, credentials, cancel):
+        """Open a pinned session for one device; the caller owns the lease through close."""
+        _abort_if_cancelled(cancel)
+        if self.credentials is None or credentials is not self.credentials:
+            raise ValueError("SSH 세션이 변경되었습니다. 다시 접수하세요.")
+        if target not in plan.targets:
+            raise ValueError("등록된 스위치가 아닙니다.")
+        options = CollectionOptions(
+            max_attempts=1,
+            command_timeout_seconds=plan.options.command_timeout,
+            max_output_bytes=1024 * 1024,
+            max_output_lines=20_000,
+        )
+        with self._prepared_diagnostic_session(
+            PingSSHSession, target, credentials, options, cancel
+        ) as session:
+            _abort_if_cancelled(cancel)
+            yield session

@@ -3,7 +3,10 @@
 이 프로젝트는 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 형식을
 따르고 [Semantic Versioning](https://semver.org/lang/ko/)을 사용합니다.
 
-## [Unreleased]
+## [web-v1.31.0] - 2026-11-27
+
+- 엑셀 표 붙여넣기와 XLSX 가져오기로 장비별 GW·BB·NMS를 측정하고, 같은 행의 중복 목적지는 한 번만 실행해 역할별 결과로 저장합니다.
+- 로컬 웹에 스위치 기반 일반·장시간 Ping과 조합별 재실행, SQLite 이력, Excel/CSV 출력, NMS 알람 비교와 Traceroute 경로 진단을 추가했습니다.
 
 ## [0.11.0] - 2026-11-23
 
