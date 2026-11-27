@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from aruba2930f_backup.models import CollectionFailure, ErrorCode
 
 from .ping_long_store import LongHistory, sample_category
-from .ping_tools import PingPlan, role_session_waves
+from .ping_tools import PingAccountRequired, PingPlan, role_session_waves
 
 MAX_ATTEMPTS = 200_000
 STARTS_PER_SECOND = 5
@@ -371,7 +371,7 @@ class LongPing:
                 raise ValueError("현재 작업 종료 후 장시간 측정을 시작하세요.")
             credentials = self.jobs.operations.credentials
             if credentials is None:
-                raise ValueError("SSH 접속 정보를 입력하세요.")
+                raise PingAccountRequired()
             self.history.prune(db, at=datetime.fromtimestamp(self.wall(), UTC))
             self._check_disk(plan.total_pairs * settings["count"] * 512)
             run = LongRun(key, plan, settings, self.clock(), self.wall(), credentials)

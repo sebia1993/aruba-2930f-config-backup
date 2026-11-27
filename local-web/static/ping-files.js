@@ -10,7 +10,7 @@
       btn.setAttribute('aria-pressed', String(btn.dataset.pingPane === name));
     }
     $('pingForm').closest('article').hidden = !!analysisTab;
-    $('pingPreview').closest('.bar').hidden = name !== 'general';
+    $('pingGeneralActions').hidden = name !== 'general';
     $('pingPreviewHeading').closest('article').hidden = name !== 'general';
     $('pingRunHeading').closest('article').hidden = name !== 'general';
     $('pingLong').hidden = name !== 'long';

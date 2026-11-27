@@ -21,7 +21,7 @@ from .operations import Operations, TargetInputError, _groups
 from .ping_jobs import PingBatch, rerun_indices
 from .ping_long import LongPing
 from .ping_path import TraceQueue
-from .ping_tools import PingPlan
+from .ping_tools import PingAccountRequired, PingPlan
 from .port_tools import group_targets
 from .power_history import PowerHistory, sampled_rows
 
@@ -498,7 +498,7 @@ class Jobs:
                 raise Busy("다른 Ping 작업이 실행 중입니다.")
             creds = self.operations.credentials
             if creds is None:
-                raise ValueError("먼저 SSH 접속 정보를 입력하세요.")
+                raise PingAccountRequired()
             started = now()
             # Store acceptance before any SSH slot can be claimed. On restart
             # the existing running-job recovery marks this as interrupted.

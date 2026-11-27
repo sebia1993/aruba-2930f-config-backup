@@ -50,6 +50,7 @@ def exercise(page, url):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(url)
     page.evaluate("location.hash = '#ping'")
+    page.locator("#pingInputMode").select_option("list")
     expect(page.locator("#pingTargets")).to_be_visible()
     page.locator("#pingTargets").fill("192.0.2.17")
     page.locator("#pingDestinations").fill("198.51.100.20\tNMS")
@@ -138,14 +139,15 @@ def exercise(page, url):
     assert not errors, errors
 
 
-def run_browser_test(flow, device_session=fake_device):
+def run_browser_test(flow, device_session=fake_device, *, account_set=True):
     with (
         tempfile.TemporaryDirectory() as tmp,
         LocalServer(("127.0.0.1", 0), Handler) as app,
         sync_playwright() as pw,
     ):
         app.jobs = Jobs(Path(tmp))
-        app.jobs.operations.credentials = Credentials("fixture", "fixture")
+        if account_set:
+            app.jobs.operations.credentials = Credentials("fixture", "fixture")
         app.launch, app.cookie_name, app.cookie, app.token, app.instance = (
             "launch",
             "TestLocal",

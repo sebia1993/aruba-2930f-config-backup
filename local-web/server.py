@@ -24,8 +24,9 @@ from urllib.request import ProxyHandler, build_opener
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import MANUAL_ACTIONS, Busy, Jobs  # noqa: E402
+from localweb.ping_tools import PingAccountRequired  # noqa: E402
 
-VERSION = "1.32.0"
+VERSION = "1.33.0"
 STATIC = {
     "/": "index.html",
     "/matrix": "matrix.html",
@@ -552,6 +553,8 @@ class Handler(BaseHTTPRequestHandler):
             self._fail(
                 503, "로컬 데이터를 읽거나 저장하지 못했습니다. 저장 공간과 권한을 확인하세요."
             )
+        except PingAccountRequired as exc:
+            self._json({"error": str(exc), "code": "SSH_ACCOUNT_REQUIRED"}, 400)
         except ValueError as exc:
             if (
                 path.startswith(("/api/ping/profiles/", "/api/ping/long/", "/api/ping/analysis/"))

@@ -6,13 +6,16 @@ from contextlib import contextmanager
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 from browser_ping import observe, run_browser_test
 from localweb.ping_tools import PingObservation
 from openpyxl import load_workbook
 from playwright.sync_api import expect
+
+from aruba2930f_backup.models import CollectionFailure, ErrorCode
 
 SW_A, SW_B = "192.0.2.10", "192.0.2.11"
 SHARED, NMS, BB = "198.51.100.1", "198.51.100.5", "198.51.100.9"
@@ -27,10 +30,13 @@ EXPECTED = Counter(
 )
 calls = []
 cohort = None
+release_first_run = Event()
 
 
 @contextmanager
 def simulated_device(_plan, target, credentials, _cancel):
+    if credentials.username != "fixture" or credentials.password != "fixture":
+        raise CollectionFailure(ErrorCode.AUTH_FAILED, "Fixture switch denied login")
     used = False
 
     def run(plan, dest, *, cancel, before_send=None):
@@ -40,6 +46,8 @@ def simulated_device(_plan, target, credentials, _cancel):
         calls.append((target.ip, dest.label, dest.ip))
         if target.ip == SW_A and cohort is not None:
             cohort.wait()
+        if not release_first_run.wait(20):
+            raise AssertionError("The browser did not observe the active job")
         result = observe(plan, target, dest, credentials, cancel, before_send=before_send)
         if (target.ip, dest.label) in {(SW_A, "BB"), (SW_B, "GW")}:
             return replace(
@@ -53,17 +61,29 @@ def simulated_device(_plan, target, credentials, _cancel):
 def exercise(page, url):
     global cohort
     errors = []
+    submissions = []
+
+    def record_run_submission(request):
+        path = urlsplit(request.url).path
+        if request.method == "POST" and path in {"/api/ping/runs", "/api/ping/long/runs"}:
+            submissions.append(path)
+
+    page.on("request", record_run_submission)
     page.on("pageerror", lambda exc: errors.append(str(exc)))
+    page.set_viewport_size({"width": 1280, "height": 720})
+    pending_bootstrap = []
+    page.route("**/api/bootstrap", lambda route: pending_bootstrap.append(route), times=1)
     page.goto(url)
     page.evaluate("location.hash = '#ping'")
-    page.locator("#pingInputMode").select_option("inventory")
+    expect(page.locator("#pingInputMode")).to_have_value("inventory")
     page.locator("#pingInventoryText").fill(
         "GW IP\t장비 hostanme\t장비 주소\r\n198.51.100.20\tSW-1\t192.0.2.1"
     )
-    page.locator("#pingInventoryRead").click()
+    expect(page.locator("#pingInventoryStatus")).to_contain_text("로컬 서버 연결을 기다리는 중")
+    expect(page.locator("#pingStart")).to_be_disabled()
+    pending_bootstrap[0].continue_()
     expect(page.locator("#pingInventoryStatus")).to_contain_text("SW IP 열을 선택")
     page.locator('[data-inventory-field="swIp"]').select_option("2")
-    page.locator("#pingInventoryApply").click()
     expect(page.locator("#pingInventoryStatus")).to_contain_text("측정 1조합")
     page.locator("#pingPreview").click()
     expect(page.locator("#pingCommands")).to_have_value(
@@ -73,7 +93,6 @@ def exercise(page, url):
         f"SW-{i}\t10.0.{i // 250}.{1 + i % 250}\t{BB}" for i in range(301)
     ]
     page.locator("#pingInventoryText").fill("\r\n".join(many))
-    page.locator("#pingInventoryRead").click()
     expect(page.locator("#pingInventoryStatus")).to_contain_text("선택 0대")
     page.get_by_role("checkbox", name="2행 SW-0 선택", exact=True).check()
     expect(page.locator("#pingInventoryAll")).to_be_disabled()
@@ -99,21 +118,23 @@ def exercise(page, url):
             ]
         )
     )
-    page.locator("#pingInventoryRead").click()
     expect(page.locator("#pingInventoryStatus")).to_contain_text("오류 1행")
     expect(page.locator("#pingInventoryRows")).to_contain_text("6행 BB")
     expect(page.get_by_role("checkbox", name="6행 입력오류 선택")).to_be_disabled()
     page.get_by_role("checkbox", name="5행 제외 선택").uncheck()
     page.locator("#pingInventoryMap summary").click()
     page.locator('[data-inventory-field="hostname"]').select_option("")
+    expect(page.get_by_role("checkbox", name="3행 " + SW_B + " 선택")).to_be_visible()
+    if not page.locator("#pingInventoryMap").evaluate("node => node.open"):
+        page.locator("#pingInventoryMap summary").click()
     page.locator('[data-inventory-field="hostname"]').select_option("2")
-    page.locator("#pingInventoryApply").click()
     expect(page.locator("#pingInventoryStatus")).to_contain_text("측정 5조합")
     expect(page.get_by_role("checkbox", name="5행 제외 선택")).not_to_be_checked()
     page.locator('[data-inventory-role="nmsIp"]').uncheck()
     expect(page.locator("#pingInventoryStatus")).to_contain_text("측정 4조합")
     page.locator('[data-inventory-role="nmsIp"]').check()
     expect(page.locator("#pingInventoryStatus")).to_contain_text("측정 5조합")
+    page.locator("#pingOptions > summary").click()
     page.locator("#pingSourceMode").select_option("ip")
     page.locator("#pingSources").fill(f"{SW_A}:22,192.0.2.200\n{SW_B}:22,192.0.2.201")
     page.get_by_role("checkbox", name="3행 B동 선택").uncheck()
@@ -149,6 +170,7 @@ def exercise(page, url):
     page.locator("#pingConcurrency").fill("1")
     expect(page.locator("#pingAdvancedSummary")).to_contain_text("동시 SSH 한도 3개")
     page.locator("#pingAdvanced summary").click()
+    page.locator("#pingOptions > summary").click()
     page.locator("#pingPreview").click()
     expect(page.locator("#pingPreviewSummary")).to_contain_text("5조합 · 총 25회")
     expect(page.locator("#pingPreviewDest option")).to_have_count(3)
@@ -160,10 +182,55 @@ def exercise(page, url):
     expect(page.locator("#pingCommands")).to_have_value(
         f"ping {BB} repetitions 5 timeout 2 source {SW_B}"
     )
-    assert not calls, calls
+    # Paste a fresh standard table after the optional preview. Start must use the
+    # newly parsed input without another read, mapping confirmation, or preview.
+    page.locator("#pingInventoryText").fill(
+        "\n".join(
+            [
+                "장비 Hostname\tSW IP\tGW IP\tBB\tNMS server",
+                f"A동\t{SW_A}\t{SHARED}\t{SHARED}\t{NMS}",
+                f"B동\t{SW_B}\t{SHARED}\t{BB}\t",
+                "미지정\t192.0.2.13\t\t\t",
+            ]
+        )
+    )
+    expect(page.locator("#pingInventoryStatus")).to_contain_text("측정 5조합")
+    expect(page.locator("#pingInventoryReview")).to_have_js_property("open", False)
+    assert not calls and not submissions
     cohort = Barrier(3, timeout=10)
     page.locator("#pingStart").click()
+    dialog = page.locator("#queryCredentials")
+    expect(dialog).to_be_visible()
+    page.locator("#cancelQueryCredentials").click()
+    expect(dialog).to_be_hidden()
+    expect(page.locator("#pingPreviewStatus")).to_contain_text("취소")
+    # Wait for an actual discovery poll to prove cancellation survives refresh.
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "GET" and urlsplit(response.url).path == "/api/ping/runs"
+        )
+    ) as discovery:
+        pass
+    assert discovery.value.json()["id"] is None and not submissions and not calls
+    expect(page.locator("#pingPreviewStatus")).to_contain_text("취소")
+    page.locator("#pingStart").click()
+    expect(dialog).to_be_visible()
+    page.locator("#queryUsername").fill("fixture")
+    page.locator("#queryPassword").fill("fixture")
+    try:
+        page.locator("#submitQueryCredentials").click()
+        expect(dialog).to_be_hidden()
+        expect(page.locator("#pingRunStatus")).to_contain_text("진행", timeout=10000)
+        near_start = page.locator("#pingPreviewStatus")
+        expect(near_start).to_contain_text("SSH 접속 및 Ping 측정 중", timeout=10000)
+        expect(near_start).to_contain_text("0/5")
+        expect(near_start).to_be_in_viewport()
+        assert submissions == ["/api/ping/runs"]
+    finally:
+        release_first_run.set()
     expect(page.locator("#pingRunStatus")).to_contain_text("작업 종료", timeout=20000)
+    expect(near_start).to_contain_text("작업 종료")
+    expect(near_start).to_contain_text("5/5")
     assert Counter(calls) == EXPECTED
     cohort = None
     page.reload()
@@ -206,14 +273,25 @@ def exercise(page, url):
     page.locator("#pingProfileLoad").click()
     expect(page.locator("#pingInventoryStatus")).to_contain_text("측정 5조합")
     page.locator("#pingProfiles summary").click()
+    page.evaluate("location.hash = '#connect'")
+    page.locator("#logout").click()
+    expect(page.locator("#connectionState")).to_have_text("계정 미설정")
+    page.evaluate("location.hash = '#ping'")
     page.locator('[data-ping-pane="long"]').click()
     page.locator("#pingLongCount").fill("1")
-    page.locator("#pingLongPreview").click()
     expect(page.locator("#pingLongEstimate")).to_contain_text("총 5회")
+    expect(page.locator("#pingLongCount")).to_be_focused()
     cohort = Barrier(3, timeout=10)
     page.locator("#pingLongStart").click()
+    expect(dialog).to_be_visible()
+    assert "/api/ping/long/runs" not in submissions
+    page.locator("#queryUsername").fill("fixture")
+    page.locator("#queryPassword").fill("fixture")
+    page.locator("#submitQueryCredentials").click()
+    expect(dialog).to_be_hidden()
     expect(page.locator("#pingLongStatus")).to_contain_text("목표 완료", timeout=25000)
     cohort = None
+    assert submissions.count("/api/ping/long/runs") == 1
     page.locator("#pingLongDetail summary").click()
     long_rows = page.locator("#pingLongDevices tbody tr")
     expect(long_rows).to_have_count(3)
@@ -247,11 +325,29 @@ def exercise(page, url):
     legacy.locator('[data-label="GW 결과"] input').check()
     expect(legacy.locator('[data-label="BB 결과"] input')).to_be_checked()
     assert calls[-1] == (SW_A, "GW / BB", SHARED)
+    # A locally registered account can still be denied by the switch. Check
+    # that the operator can correct it from the persistent message beside Start.
+    page.locator("#pingNew").click()
+    page.evaluate("location.hash = '#connect'")
+    page.locator("#username").fill("fixture-denied")
+    page.locator("#password").fill("fixture-denied")
+    page.locator("#loginForm button.primary").click()
+    expect(page.locator("#connectionState")).to_contain_text("fixture-denied")
+    page.evaluate("location.hash = '#ping'")
+    page.locator("#pingInventoryText").fill(f"SW IP\tGW IP\n{SW_A}\t{SHARED}")
+    expect(page.locator("#pingInventoryStatus")).to_contain_text("측정 1조합")
+    page.locator("#pingStart").click()
+    expect(page.locator("#pingPreviewStatus")).to_contain_text("AUTH_FAILED", timeout=15000)
+    expect(page.locator("#pingAccountSettings")).to_be_visible()
+    page.locator("#pingRefresh").click()
+    expect(page.locator("#pingPreviewStatus")).to_contain_text("비밀번호")
+    page.locator("#pingAccountSettings").click()
+    expect(page.locator("#loginForm")).to_be_visible()
     assert not errors, errors
 
 
 if __name__ == "__main__":
-    run_browser_test(exercise, simulated_device)
+    run_browser_test(exercise, simulated_device, account_set=False)
     print(
-        "PASS inventory paste, mapping, profile, preview, per-device results, Excel export, rerun and long Ping."
+        "PASS automatic inventory input, SSH account prompt, visible run progress, results, export and rerun."
     )

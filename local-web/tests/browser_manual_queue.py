@@ -56,6 +56,7 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
     page.goto(url)
     page.locator('nav a[href="#ping"]').click()
     expect(page.locator("#pingHeading")).to_be_visible()
+    page.locator("#pingInputMode").select_option("list")
     page.locator("#pingTargets").fill("192.0.2.11")
     page.locator("#pingDestinations").fill("198.51.100.10\n198.51.100.11")
     page.locator("#pingAllHelp").click()
@@ -178,6 +179,7 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
     try:
         expect(page.locator("#pingStart")).to_be_enabled()
         page.locator("#pingStart").click()
+        enter_ssh_credentials(page, power_switch)
         expect(page.locator("#pingRunStatus")).to_contain_text("작업 진행 중")
         expect(page.locator("#pingStart")).to_be_disabled()
         assert len(submissions) == 1
@@ -228,7 +230,6 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
     page.locator("#queryTargets").fill(f"{power} 1\n{cable} 1")
     expect(page.locator("#monitorInterval")).to_have_value("1")
     page.locator("#monitorToggle").click()
-    enter_ssh_credentials(page, power_switch)
     frame = page.frame_locator("#matrixViewer")
     tiles = {
         address: frame.locator(f'#matrix [data-port-key="{address}/1"]')

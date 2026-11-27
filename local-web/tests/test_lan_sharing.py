@@ -125,6 +125,14 @@ class LanSharingTests(unittest.TestCase):
             preview["commands"][0]["command"],
             "ping 198.51.100.10 repetitions 5 timeout 2 source 192.0.2.11",
         )
+        for route, request in (
+            (runs, body),
+            ("/api/ping/long/runs", {"requestId": key, "settings": {"plan": plan, "count": 1}}),
+        ):
+            status, _, error = self.request(route, body=request, headers=self.local_auth)
+            self.assertEqual((status, error.get("code")), (400, "SSH_ACCOUNT_REQUIRED"))
+            self.assertIn("SSH", error["error"])
+            self.assertIsNone(self.request(route, headers=self.local_auth)[2]["id"])
         self.host.jobs.operations.credentials = Credentials("fixture-reader", "fixture")
         with (
             patch.object(self.host.jobs.controls, "awaiting_confirmation", return_value=True),
