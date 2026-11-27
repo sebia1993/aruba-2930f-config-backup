@@ -626,7 +626,7 @@ class PingJobsTests(unittest.TestCase):
         self.assertEqual(result["result"]["stopReason"], "SESSION_CHANGED")
 
     def test_300_devices_reuse_sessions_and_publish_stable_completion_pages(self):
-        wave_timeout = 30  # Each wave commits up to 200 separate durable command boundaries.
+        stall_timeout = 30
         self.body["plan"].update(
             targets="\n".join(f"192.0.{2 + i // 250}.{i % 250 + 1}" for i in range(300)),
             destinations=[{"ip": f"198.51.100.{i + 1}"} for i in range(10)],
@@ -637,6 +637,24 @@ class PingJobsTests(unittest.TestCase):
         live = set()
         sessions = {}
         peak = 0
+
+        def wait_while_committing(done):
+            # A wave makes 200 real SQLite commits on the Windows runner.
+            # Bound lack of progress, independently of the disk's write throughput.
+            completed = -1
+            deadline = time.monotonic() + stall_timeout
+            while True:
+                with self.jobs.lock:
+                    if done():
+                        return
+                    batch = self.jobs.ping_batch
+                    current = len(batch.rows) if batch else 0
+                if current != completed:
+                    completed = current
+                    deadline = time.monotonic() + stall_timeout
+                elif time.monotonic() >= deadline:
+                    self.fail(f"no progress after {completed} stored results")
+                time.sleep(0.02)
 
         @contextmanager
         def device(plan, target, creds, cancel):
@@ -650,9 +668,9 @@ class PingJobsTests(unittest.TestCase):
                 if len(live) == 10:
                     opened.set()
             try:
-                self.assertTrue(opened.wait(wave_timeout))
+                self.assertTrue(opened.wait(stall_timeout))
                 if target.ip == "192.0.2.1":
-                    self.assertTrue(release.wait(wave_timeout))
+                    release.wait()
 
                 def run(_plan, destination, *, cancel, before_send):
                     before_send()
@@ -668,20 +686,24 @@ class PingJobsTests(unittest.TestCase):
 
         with patch.object(self.jobs.operations, "_ping_device_session", side_effect=device):
             key = self.jobs.submit_ping(self.body)
-            self.jobs.tick_monitor()
             try:
-                self.assertTrue(nine_done.wait(wave_timeout))
+                self.jobs.tick_monitor()
+                wait_while_committing(nine_done.is_set)
                 progress = self.jobs.ping_status(key)["progress"]
                 self.assertEqual(progress["completed"], 90)
                 first = progress["rows"][0]
                 self.assertEqual(first["index"], 0)
                 self.assertNotEqual(first["pairIndex"], 0)
+                release.set()
+                wait_while_committing(lambda: self.jobs.active is None)
+                for _ in range(29):
+                    self.jobs.tick_monitor()
+                    wait_while_committing(lambda: self.jobs.active is None)
             finally:
                 release.set()
-            self.wait_idle(wave_timeout)
-            for _ in range(29):
-                self.jobs.tick_monitor()
-                self.wait_idle(wave_timeout)
+                if self.jobs.ping_batch:
+                    self.jobs.cancel(key)
+                    self.wait_idle(stall_timeout)
         self.assertEqual((len(sessions), peak, len(live)), (300, 10, 0))
         self.assertTrue(all(len(x) == len(set(x)) == 10 for x in sessions.values()))
         reloaded = Jobs(self.jobs.directory)
