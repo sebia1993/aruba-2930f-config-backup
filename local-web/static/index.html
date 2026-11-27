@@ -179,7 +179,14 @@
           <p class="hint">요청 ID: <code id="pingRequestId">—</code></p>
           <progress id="pingRunProgress" aria-label="서버 확인 조합 진행률" max="1"></progress>
           <p class="hint" id="pingRunCounts">아직 확인된 측정 결과가 없습니다.</p>
+          <div class="formgrid" aria-label="Ping 결과 필터">
+            <label>검색 (스위치/IP/서버)<input id="pingSearch" type="search" maxlength="200" autocomplete="off"></label>
+            <label>상태<select id="pingStatusFilter"><option value="">전체</option><option value="normal">정상</option><option value="partial_loss">부분 손실</option><option value="no_reply">응답 없음</option><option value="unreachable">도달 불가</option><option value="source_error">Source 오류</option><option value="cli_error">CLI 오류</option><option value="ssh_failure">SSH 실패</option><option value="unknown">결과 미확인</option><option value="not_run">미실행</option></select></label>
+            <label>목적지<select id="pingDestinationFilter"><option value="">전체</option></select></label>
+          </div>
+          <div class="bar"><label>결과 보기<select id="pingResultView"><option value="list">상세 목록</option><option value="matrix">스위치 × 목적지</option></select></label><span class="hint" id="pingFilterCount"></span></div>
           <div id="pingRows"></div>
+          <div id="pingDetail" aria-label="선택한 조합 상세" hidden></div>
           <div class="bar"><button type="button" id="pingPrev" disabled>이전</button><span id="pingPage">1 / 1</span><button type="button" id="pingNext" disabled>다음</button></div>
         </div>
       </article>

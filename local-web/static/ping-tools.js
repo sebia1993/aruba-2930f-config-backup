@@ -147,6 +147,7 @@
   let cursor = 0;
   let pageIndex = 0;
   let rows = [];
+  let selectedRowIndex = null;
   try {
     const saved = sessionStorage.getItem(storageKey);
     if (saved && idPattern.test(saved)) trackedId = saved;
@@ -178,30 +179,122 @@
     cursor = 0;
     pageIndex = 0;
     rows = [];
+    selectedRowIndex = null;
+    $('pingSearch').value = '';
+    $('pingStatusFilter').value = '';
+    $('pingDestinationFilter').value = '';
     running = terminal = missingReceipt = false;
     $('pingRunProgress').removeAttribute('value');
     $('pingRunCounts').textContent = '아직 확인된 측정 결과가 없습니다.';
     paintRows();
   }
+  function switchKey(row) {
+    return row.ip + ':' + row.ssh_port;
+  }
+  function stateLabel(row) {
+    return labels[row.status] || '결과 미확인';
+  }
+  function responseSummary(row) {
+    const counts = row.sent == null || row.received == null ? '—' : row.received + '/' + row.sent;
+    const loss = row.loss_pct == null ? '—' : row.loss_pct + '%';
+    const rtt = row.rtt_avg_ms == null ? '—' : row.rtt_avg_ms + ' ms';
+    return stateLabel(row) + ' · ' + counts + ' · ' + loss + ' · ' + rtt;
+  }
+  function detailButton(row, label = '상세') {
+    const control = elem('button', label);
+    control.type = 'button';
+    control.addEventListener('click', () => {
+      selectedRowIndex = row.index;
+      paintDetail();
+    });
+    return control;
+  }
+  function paintDetail() {
+    const panel = $('pingDetail');
+    const row = rows.find(item => item.index === selectedRowIndex);
+    panel.hidden = !row;
+    panel.replaceChildren();
+    if (!row) return;
+    const close = elem('button', '상세 닫기');
+    close.type = 'button';
+    close.addEventListener('click', () => {
+      selectedRowIndex = null;
+      paintDetail();
+    });
+    const data = [
+      ['스위치', switchKey(row)], ['호스트명', row.hostname], ['모델', row.model],
+      ['OS', row.software_version], ['목적지', row.destination_ip],
+      ['Source 모드', row.source_mode], ['요청 Source', row.requested_source],
+      ['검증 Source', row.verified_source_ip], ['측정 판정', responseSummary(row)],
+      ['RTT 근거', row.rtt_evidence], ['RTT 출처', row.rtt_origin],
+      ['슬롯 시작 (UTC)', row.slot_started_at], ['슬롯 종료 (UTC)', row.slot_finished_at],
+      ['슬롯 소요 (ms)', row.duration_ms], ['오류 사유', row.reason_code],
+      ['명령 실행 가능성', row.command_may_have_started === true ? '있음' :
+        row.command_may_have_started === false ? '없음' : '미확인']
+    ];
+    panel.append(elem('h3', '선택 조합 상세'), close,
+      elem('p', '슬롯 시각은 SSH 작업의 관측 범위이며 개별 ICMP 송수신 시각이 아닙니다.', 'hint'),
+      simpleTable([['항목', r => r[0]], ['값', r => r[1]]], data));
+  }
   function paintRows() {
     const pageSize = 100;
-    const pages = Math.max(1, Math.ceil(rows.length / pageSize));
-    pageIndex = Math.min(pageIndex, pages - 1);
-    $('pingRows').replaceChildren(simpleTable([
-      ['스위치', r => r.ip + ':' + r.ssh_port],
+    const destination = $('pingDestinationFilter');
+    const chosen = destination.value;
+    const destinations = [...new Set(rows.map(row => row.destination_ip))];
+    destination.replaceChildren(new Option('전체', ''));
+    for (const ip of destinations) destination.add(new Option(ip, ip));
+    if (destinations.includes(chosen)) destination.value = chosen;
+    const query = $('pingSearch').value.trim().toLowerCase();
+    const wanted = $('pingStatusFilter').value;
+    const filtered = rows.filter(row =>
+      (!wanted || row.status === wanted) &&
+      (!destination.value || row.destination_ip === destination.value) &&
+      (!query || [switchKey(row), row.hostname, row.destination_ip, row.destination_label]
+        .some(value => String(value ?? '').toLowerCase().includes(query))));
+    const matrix = $('pingResultView').value === 'matrix';
+    let items = filtered;
+    let columns = [
+      ['스위치', switchKey],
       ['목적지', r => r.destination_ip + (r.destination_label ? ' (' + r.destination_label + ')' : '')],
       ['확인 Source', 'verified_source_ip'],
-      ['상태', r => labels[r.status] || '결과 미확인'],
+      ['상태', stateLabel],
       ['송신', 'sent'], ['응답', 'received'],
       ['손실률', r => r.loss_pct == null ? '—' : r.loss_pct + '%'],
       ['RTT min/avg/max (ms)', r => r.rtt_evidence ?? (
         r.rtt_avg_ms == null ? '—' : [r.rtt_min_ms, r.rtt_avg_ms, r.rtt_max_ms].join('/')
       )],
-      ['사유', 'reason_code']
-    ], rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize)));
-    $('pingPage').textContent = (pageIndex + 1) + ' / ' + pages + ' · 수신 ' + rows.length + '행';
+      ['사유', 'reason_code'], ['상세', r => detailButton(r)]
+    ];
+    if (matrix) {
+      const grouped = new Map();
+      for (const row of filtered) {
+        const key = switchKey(row);
+        if (!grouped.has(key)) grouped.set(key, {key, cells: new Map()});
+        grouped.get(key).cells.set(row.destination_ip, row);
+      }
+      items = [...grouped.values()];
+      columns = [['스위치', 'key'], ...destinations
+        .filter(ip => !destination.value || ip === destination.value)
+        .map(ip => [ip, group => {
+          const row = group.cells.get(ip);
+          return row ? detailButton(row, responseSummary(row)) : '미수신 또는 필터 제외';
+        }])];
+    }
+    const pages = Math.max(1, Math.ceil(items.length / pageSize));
+    pageIndex = Math.max(0, Math.min(pageIndex, pages - 1));
+    $('pingRows').replaceChildren(simpleTable(columns,
+      items.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize)));
+    $('pingFilterCount').textContent = '필터 결과 ' + filtered.length + ' / 수신 ' + rows.length + '조합';
+    $('pingPage').textContent = (pageIndex + 1) + ' / ' + pages + (matrix ? ' · 스위치 단위' : ' · 조합 단위');
     $('pingPrev').disabled = pageIndex === 0;
     $('pingNext').disabled = pageIndex + 1 >= pages;
+    paintDetail();
+  }
+  for (const id of ['pingSearch', 'pingStatusFilter', 'pingDestinationFilter', 'pingResultView']) {
+    $(id).addEventListener(id === 'pingSearch' ? 'input' : 'change', () => {
+      pageIndex = 0;
+      paintRows();
+    });
   }
   $('pingPrev').addEventListener('click', () => { pageIndex--; paintRows(); });
   $('pingNext').addEventListener('click', () => { pageIndex++; paintRows(); });

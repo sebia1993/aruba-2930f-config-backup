@@ -57,15 +57,16 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
     page.locator('nav a[href="#ping"]').click()
     expect(page.locator("#pingHeading")).to_be_visible()
     page.locator("#pingTargets").fill("192.0.2.11")
-    page.locator("#pingDestinations").fill("198.51.100.10")
+    page.locator("#pingDestinations").fill("198.51.100.10\n198.51.100.11")
     page.locator('[data-ping-preset="quick"]').click()
     expect(page.locator("#pingRepetitions")).to_have_value("3")
     expect(page.locator("#pingTimeout")).to_have_value("1")
     page.locator("#pingPreview").click()
     expect(page.locator("#pingCommands")).to_have_value(
-        "ping 198.51.100.10 repetitions 3 timeout 1 source 192.0.2.11"
+        "ping 198.51.100.10 repetitions 3 timeout 1 source 192.0.2.11\n"
+        "ping 198.51.100.11 repetitions 3 timeout 1 source 192.0.2.11"
     )
-    expect(page.locator("#pingPreviewSummary")).to_contain_text("총 3회")
+    expect(page.locator("#pingPreviewSummary")).to_contain_text("총 6회")
     expect(page.locator("#pingCopy")).to_be_enabled()
     page.locator("#pingSourceMode").select_option("vlan")
     expect(page.locator("#pingVlan")).to_be_visible()
@@ -74,7 +75,8 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
     page.locator("#pingVlan").fill("10")
     page.locator("#pingPreview").click()
     expect(page.locator("#pingCommands")).to_have_value(
-        "ping 198.51.100.10 repetitions 3 timeout 1 source 10"
+        "ping 198.51.100.10 repetitions 3 timeout 1 source 10\n"
+        "ping 198.51.100.11 repetitions 3 timeout 1 source 10"
     )
     expect(page.locator("#pingPreviewStatus")).to_contain_text("미실행")
     # Mock the browser-facing receipt and result transport only: no real Ping
@@ -109,12 +111,22 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
                 "destination_ip": "198.51.100.10",
                 "status": "not_run",
             }
+            second = {
+                **row,
+                "index": 1,
+                "destination_ip": "198.51.100.11",
+                "status": "no_reply",
+                "sent": 3,
+                "received": 0,
+                "loss_pct": 100,
+            }
+            finished = 2 if cancelled else 0
             snapshot = {
-                "total": 1,
-                "completed": int(bool(cancelled)),
-                "processedPairs": 0,
-                "rows": [row] if cancelled and not request.url.endswith("after=1") else [],
-                "cursor": int(bool(cancelled)),
+                "total": 2,
+                "completed": finished,
+                "processedPairs": int(bool(cancelled)),
+                "rows": [row, second] if cancelled and not request.url.endswith("after=2") else [],
+                "cursor": finished,
             }
             route.fulfill(
                 json={
@@ -140,6 +152,23 @@ def exercise(page, url, power_switch, cable_switch, _shots, _backup):
         expect(page.locator("#pingRunStatus")).to_contain_text("작업 취소됨")
         expect(page.locator("#pingRows")).to_contain_text("미실행")
         expect(page.locator("#pingNew")).to_be_enabled()
+        page.locator("#pingResultView").select_option("matrix")
+        expect(page.locator("#pingRows")).to_contain_text("198.51.100.11")
+        expect(page.locator("#pingRows")).to_contain_text("응답 없음")
+        page.locator("#pingRows").get_by_role("button", name="응답 없음", exact=False).click()
+        expect(page.locator("#pingDetail")).to_contain_text("198.51.100.11")
+        page.locator("#pingStatusFilter").select_option("not_run")
+        expect(page.locator("#pingFilterCount")).to_contain_text("1 / 수신 2조합")
+        expect(page.locator("#pingRows")).to_contain_text("미수신 또는 필터 제외")
+        page.locator("#pingResultView").select_option("list")
+        expect(page.locator("#pingRows")).not_to_contain_text("응답 없음")
+        page.locator("#pingDestinationFilter").select_option("198.51.100.11")
+        expect(page.locator("#pingFilterCount")).to_contain_text("0 / 수신 2조합")
+        page.locator("#pingDestinationFilter").select_option("")
+        page.locator("#pingStatusFilter").select_option("")
+        page.locator("#pingSearch").fill("198.51.100.11")
+        expect(page.locator("#pingRows")).to_contain_text("응답 없음")
+        expect(page.locator("#pingRows")).not_to_contain_text("미실행")
         assert cancelled == submissions
         page.locator("#pingNew").click()
         expect(page.locator("#pingRequestId")).to_have_text("—")
