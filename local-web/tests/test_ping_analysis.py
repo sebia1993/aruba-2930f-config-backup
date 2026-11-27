@@ -98,6 +98,48 @@ class AnalysisTests(unittest.TestCase):
             finally:
                 book.close()
 
+    def test_role_sessions_history_keeps_collocated_roles_distinct_and_counts_one_switch(self):
+        first = dict(hostname="SW-A", swIp="192.0.2.11", gwIp=DEST, bbIp=DEST, nmsIp="")
+        settings = dict(
+            inventoryRows=[first], inventoryRoles=["gwIp", "bbIp"], inventoryRoleSessions=True
+        )
+        with self.history.connect() as db:
+            db.execute(
+                "DELETE FROM ping_long_series WHERE run_id=? AND series_id NOT IN (1,4)", (RUN,)
+            )
+            db.execute(
+                "UPDATE ping_long_runs SET settings=? WHERE id=?", (json.dumps(settings), RUN)
+            )
+            db.execute(
+                "UPDATE ping_long_series SET destination_label='GW' WHERE run_id=? AND series_id=1",
+                (RUN,),
+            )
+            db.execute(
+                "UPDATE ping_long_series SET destination_ip=?,destination_label='BB' WHERE run_id=? AND series_id=4",
+                (DEST, RUN),
+            )
+            db.executemany(
+                "INSERT INTO ping_long_roles(run_id,series_id,inventory_role) VALUES(?,?,?)",
+                [(RUN, 1, "gwIp"), (RUN, 4, "bbIp")],
+            )
+        self.sample(1, 1, 0, 1, "normal", rtt=2)
+        self.sample(4, 1, 0, 1, "no_reply")
+        heat = self.api("heat", destination=DEST, start=stamp(0))["rows"]
+        device_rows = [row for row in heat if row["device"] == "192.0.2.11:22"]
+        self.assertEqual(len(device_rows), 1)
+        self.assertEqual(
+            (device_rows[0]["cells"][0]["success"], device_rows[0]["cells"][0]["loss"]), (1, 1)
+        )
+        with export_history(self.history.path, RUN, "xlsx") as file:
+            book = load_workbook(file, read_only=True)
+            try:
+                row = next(book["장비별 결과"].iter_rows(min_row=2, values_only=True))
+                self.assertIn("응답 1", row[5])
+                self.assertIn("확인 손실 1", row[6])
+                self.assertNotEqual(row[5], row[6])
+            finally:
+                book.close()
+
     def test_gap_interrupts_event_preserves_open_ends_and_loss_denominator(self):
         self.sample(1, 1, 0, 1, "no_reply")
         self.sample(1, 2, 2, 3, "no_reply")

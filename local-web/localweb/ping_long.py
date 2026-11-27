@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 import threading
 import time
-from collections import Counter
+from collections import Counter, defaultdict, deque
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,9 +16,10 @@ from datetime import UTC, datetime
 from aruba2930f_backup.models import CollectionFailure, ErrorCode
 
 from .ping_long_store import LongHistory, sample_category
-from .ping_tools import PingPlan
+from .ping_tools import PingPlan, role_session_waves
 
 MAX_ATTEMPTS = 200_000
+STARTS_PER_SECOND = 5
 DISK_RESERVE = 32 * 1024 * 1024
 TERMINAL = frozenset({"done", "cancelled", "failed", "interrupted"})
 STOP_ERRORS = {ErrorCode.AUTH_FAILED, ErrorCode.ENABLE_FAILED}
@@ -72,6 +73,8 @@ def parse_settings(body):
         settings.update(
             inventoryRows=plan.inventory_rows, inventoryRoles=list(plan.inventory_roles)
         )
+        if plan.inventory_role_sessions:
+            settings["inventoryRoleSessions"] = True
     return plan, settings
 
 
@@ -81,6 +84,7 @@ class Series:
     target: object
     destination: object
     due: float
+    inventory_role: str | None = None
     started: int = 0
     completed: int = 0
     success: int = 0
@@ -97,6 +101,10 @@ class Series:
     blocked: str = ""
     streak_start: int = 0
     streak_time: str | None = None
+
+    @property
+    def slot_key(self):
+        return self.index if self.inventory_role else self.target.ip
 
 
 @dataclass
@@ -119,7 +127,11 @@ class LongRun:
         self.slots = {}
         self.stop_event = threading.Event()
         self.stop_state = "cancelled"
-        self.capacity = min(5, plan.options.concurrency, len({t.ip for t in plan.targets}))
+        if plan.inventory_role_sessions:
+            limit = min(5, plan.options.concurrency)
+            self.capacity = max(map(len, role_session_waves(plan.role_counts.items(), limit)))
+        else:
+            self.capacity = min(5, plan.effective_concurrency)
         self.pause_at = None
         self.paused = 0
         self.busy_since = None
@@ -130,32 +142,52 @@ class LongRun:
         self.clock_uncertain = False
         self.last_send = float("-inf")
         self.dest_sends = {}
+        self.recent_role_sends = deque()
         self.duration = max(0.5, plan.options.timeout / 2)
         self.samples = 0
         self.series = [
             Series(i, target, dest, clock) for i, (target, dest) in enumerate(plan.pairs)
         ]
+        self.role_groups = defaultdict(list)
+        if plan.inventory_role_sessions:
+            for s in self.series:
+                (s.inventory_role,) = plan.inventory.pair_roles[s.target, s.destination]
+                self.role_groups[s.target].append(s)
         self.initial_eta = self.estimate(clock)[0]
 
     def estimate(self, clock, duration=None):
-        # A shared coordinator lease, one CLI per switch, five starts/sec globally, two per destination.
-        # Initial expected occupancy assumes half the response timeout (one second by default).
-        # Live estimates use measured worker duration including SSH and device preparation.
+        # Live occupancy includes SSH and device preparation.
         duration = self.duration if duration is None else duration
         count, interval = self.settings["count"], self.settings["interval"]
         remaining = {s.index: 0 if s.blocked else count - s.completed for s in self.series}
         total = sum(remaining.values())
-        destinations = Counter()
-        devices = Counter()
-        for s in self.series:
-            destinations[s.destination.ip] += remaining[s.index]
-            devices[s.target.ip] += remaining[s.index]
-        contention = max(
-            total / 5,
-            total * duration / self.capacity,
-            max(destinations.values()) / 2,
-            max(devices.values()) * duration,
-        )
+        contention = max(total / STARTS_PER_SECOND, total * duration / self.capacity)
+        if self.role_groups:
+            # Rows needing three workers cannot share a five-worker round.
+            row_counts = [
+                sorted((remaining[s.index] for s in group), reverse=True)
+                for group in self.role_groups.values()
+            ]
+            for width in range(2, max(map(len, row_counts)) + 1):
+                rounds = sum(counts[width - 1] for counts in row_counts if len(counts) >= width)
+                contention = max(contention, rounds * duration / (self.capacity // width))
+            destination_rounds = Counter()
+            for group in self.role_groups.values():
+                visits = Counter()
+                for s in group:
+                    ip = s.destination.ip
+                    visits[ip] = max(visits[ip], remaining[s.index])
+                destination_rounds.update(visits)
+            contention = max(contention, max(destination_rounds.values()) / 2)
+        else:
+            destinations = Counter()
+            devices = Counter()
+            for s in self.series:
+                destinations[s.destination.ip] += remaining[s.index]
+                devices[s.target.ip] += remaining[s.index]
+            contention = max(
+                contention, max(destinations.values()) / 2, max(devices.values()) * duration
+            )
         estimates = {}
         largest = max(remaining.values(), default=0)
         for s in self.series:
@@ -178,7 +210,7 @@ class LongRun:
             return "BLOCKED"
         if s.completed == self.settings["count"]:
             return "DONE"
-        slot = self.slots.get(s.target.ip)
+        slot = self.slots.get(s.slot_key)
         if slot and slot.series is s:
             return "IN_FLIGHT" if slot.row_id else "SSH_PREPARATION"
         if self.state != "running":
@@ -211,6 +243,7 @@ class LongRun:
                 index=s.index,
                 switch=s.target.endpoint,
                 destination=s.destination.ip,
+                inventoryRole=s.inventory_role,
                 target=target,
                 started=s.started,
                 completed=s.completed,
@@ -371,6 +404,11 @@ class LongPing:
                     for s in run.series
                 ],
             )
+            if plan.inventory_role_sessions:
+                db.executemany(
+                    "INSERT INTO ping_long_roles(run_id,series_id,inventory_role) VALUES(?,?,?)",
+                    [(key, s.index, s.inventory_role) for s in run.series],
+                )
             db.commit()
             self.run = run
             return {"id": key, "state": run.state}
@@ -404,6 +442,7 @@ class LongPing:
                 )
                 SELECT s.series_id AS 'index',s.switch_ip || ':' || s.ssh_port AS switch,
                     s.destination_ip AS destination, s.target_count AS target, b.reason AS blockReason,
+                    role.inventory_role AS inventoryRole,
                     COUNT(m.attempt) AS started,COUNT(m.attempt) AS completed,
                     COUNT(CASE WHEN m.category='success' THEN 1 END) AS success,
                     COUNT(CASE WHEN m.category='loss' THEN 1 END) AS loss,
@@ -414,6 +453,7 @@ class LongPing:
                 FROM ping_long_series s LEFT JOIN samples m
                 ON m.run_id=s.run_id AND m.series_id=s.series_id
                 LEFT JOIN ping_long_blocks b ON b.run_id=s.run_id AND b.series_id=s.series_id
+                LEFT JOIN ping_long_roles role ON role.run_id=s.run_id AND role.series_id=s.series_id
                 WHERE s.run_id=? GROUP BY s.series_id ORDER BY s.series_id""",
                     (key, key),
                 )
@@ -589,6 +629,12 @@ class LongPing:
                 run.wait = "OTHER_OPERATION"
                 return
             run.wait = ""
+            for series in self._next_series(run, clock):
+                if not self._start_slot(run, series, clock, wall):
+                    break
+
+    def _next_series(self, run, clock):
+        if not run.role_groups:
             candidates = [
                 s
                 for s in run.series
@@ -602,33 +648,73 @@ class LongPing:
                 )
                 <= clock
             ]
-            if not candidates:
-                return
-            s = min(candidates, key=lambda item: (item.due, item.completed, item.index))
-            interval = run.settings["interval"]
-            missed = int((clock - s.due) // interval)
-            old_due = s.due
-            s.due += missed * interval
-            slot = Slot(s, stamp(wall - (clock - s.due)), clock, run.stop_event)
-            try:
-                self._check_disk()
-                if missed:
-                    with self.history.connect() as db:
-                        self._gap(
-                            db, run, s, stamp(wall - (clock - old_due)), missed, "SCHEDULE_DELAY"
-                        )
-                s.due += interval
-                if not run.slots:
-                    run.busy_since = clock
-                    self.jobs.busy_workspace = self.jobs.workspace()
-                    self.jobs.active, self.jobs.cancel_event = run.lease, slot.event
-                run.slots[s.target.ip] = slot
-                threading.Thread(target=self._work, args=(run, slot), daemon=True).start()
-            except OSError, ValueError, sqlite3.Error:
-                self._storage_failed(run)
-            except RuntimeError:
-                self._release(run, slot)
-                self._fail(run, "WORKER_START_FAILED")
+            return (
+                [min(candidates, key=lambda s: (s.due, s.completed, s.index))] if candidates else []
+            )
+
+        # Reserve each pending destination for its row while SSH is preparing.
+        # Siblings may send together; another row waits from the last actual write.
+        preparing_destinations = {
+            slot.series.destination.ip for slot in run.slots.values() if slot.row_id is None
+        }
+        ready_groups = []
+        for row in run.role_groups.values():
+            if any(s.index in run.slots for s in row):
+                continue
+            group = [
+                s
+                for s in row
+                if not s.blocked
+                and s.completed < run.settings["count"]
+                and (not s.failures or s.due <= clock)
+            ]
+            if group and all(
+                s.due <= clock
+                and s.destination.ip not in preparing_destinations
+                and run.dest_sends.get(s.destination.ip, float("-inf")) + 0.5 <= clock
+                for s in group
+            ):
+                ready_groups.append(group)
+        if not ready_groups:
+            return []
+        group = min(ready_groups, key=lambda g: (max(s.due for s in g), g[0].index))
+        # Reserve write capacity for every SSH session still preparing. A delayed
+        # login can then send independently without exceeding five writes in a rolling second.
+        while run.recent_role_sends and run.recent_role_sends[0] <= clock - 1:
+            run.recent_role_sends.popleft()
+        preparing = sum(slot.row_id is None for slot in run.slots.values())
+        write_capacity = STARTS_PER_SECOND - len(run.recent_role_sends) - preparing
+        if len(group) > min(run.capacity - len(run.slots), write_capacity):
+            return []
+        return group
+
+    def _start_slot(self, run, s, clock, wall):
+        interval = run.settings["interval"]
+        missed = int((clock - s.due) // interval)
+        old_due = s.due
+        s.due += missed * interval
+        slot = Slot(s, stamp(wall - (clock - s.due)), clock, run.stop_event)
+        try:
+            self._check_disk()
+            if missed:
+                with self.history.connect() as db:
+                    self._gap(db, run, s, stamp(wall - (clock - old_due)), missed, "SCHEDULE_DELAY")
+        except OSError, ValueError, sqlite3.Error:
+            self._storage_failed(run)
+            return False
+        s.due += interval
+        if not run.slots:
+            run.busy_since = clock
+            self.jobs.busy_workspace = self.jobs.workspace()
+            self.jobs.active, self.jobs.cancel_event = run.lease, slot.event
+        run.slots[s.slot_key] = slot
+        try:
+            threading.Thread(target=self._work, args=(run, slot), daemon=True).start()
+        except OSError, RuntimeError:
+            self._release(run, slot)
+            self._fail(run, "WORKER_START_FAILED")
+            return False
+        return True
 
     def _before_send(self, run, slot):
         # Prep can finish out of order on different switches. Reserve the real
@@ -645,7 +731,8 @@ class LongPing:
         with self.jobs.lock:
             clock, wall = self.clock(), self.wall()
             if (
-                run.slots.get(slot.series.target.ip) is not slot
+                run.slots.get(slot.series.slot_key) is not slot
+                or slot.series.blocked
                 or run.state != "running"
                 or slot.event.is_set()
                 or run.credentials is not self.jobs.operations.credentials
@@ -655,12 +742,16 @@ class LongPing:
             if slot.row_id is not None:
                 raise RuntimeError("Ping command intent already exists")
             s = slot.series
-            delay = (
-                max(run.last_send + 0.2, run.dest_sends.get(s.destination.ip, float("-inf")) + 0.5)
-                - clock
-            )
-            if delay > 0:
-                return delay
+            if not s.inventory_role:
+                delay = (
+                    max(
+                        run.last_send + 0.2,
+                        run.dest_sends.get(s.destination.ip, float("-inf")) + 0.5,
+                    )
+                    - clock
+                )
+                if delay > 0:
+                    return delay
             try:
                 self._check_disk()
                 with self.history.connect() as db:
@@ -686,11 +777,15 @@ class LongPing:
             if s.last_send is not None:
                 spacing = max(0, clock - s.last_send)
                 s.interval = spacing if s.interval is None else 0.7 * s.interval + 0.3 * spacing
-            s.last_send = run.last_send = run.dest_sends[s.destination.ip] = clock
+            s.last_send = run.dest_sends[s.destination.ip] = clock
+            if s.inventory_role:
+                run.recent_role_sends.append(clock)
+            else:
+                run.last_send = clock
             s.due = max(s.due, clock + run.settings["interval"])
 
     def _release(self, run, slot):
-        run.slots.pop(slot.series.target.ip, None)
+        run.slots.pop(slot.series.slot_key, None)
         if run.slots:
             return
         if run.busy_since is not None:

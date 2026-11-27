@@ -50,6 +50,11 @@
   function lines(value) {
     return value.split(/\r?\n/).filter(line => line.trim() !== '');
   }
+  function sessionLimit() {
+    const requested = $('pingConcurrency').valueAsNumber;
+    return Number.isInteger(requested) && requested >= 1
+      ? Math.max(requested, window.pingInventory.minimumConcurrency()) : requested;
+  }
   function syncSource() {
     const mode = $('pingSourceMode').value;
     for (const [name, field, input] of [
@@ -61,9 +66,11 @@
       $(input).disabled = !active;
       $(input).required = active;
     }
+    const limit = sessionLimit();
     $('pingAdvancedSummary').textContent = ' · 데이터 ' +
       ($('pingSize').value === '' ? '장비 기본값' : $('pingSize').value + ' B') +
-      ' · 요청 동시 SSH ' + ($('pingConcurrency').value || '—') + '대';
+      ' · 동시 SSH 한도 ' + (Number.isFinite(limit) ? limit + '개' : '—') +
+      (limit > $('pingConcurrency').valueAsNumber ? ' (장비별 역할 수 적용)' : '');
   }
   function invalidate() {
     generation++;
@@ -84,7 +91,7 @@
       repetitions: $('pingRepetitions').valueAsNumber,
       timeout: $('pingTimeout').valueAsNumber,
       source_mode: mode,
-      concurrency: $('pingConcurrency').valueAsNumber
+      concurrency: sessionLimit()
     };
     if ($('pingSize').value !== '') options.data_size = $('pingSize').valueAsNumber;
     if (mode === 'vlan') options.vlan = $('pingVlan').valueAsNumber;
@@ -108,7 +115,7 @@
       }
       if (body.inventoryRows) {
         const endpoints = new Set(body.inventoryRows.filter(row =>
-          window.pingInventory.uniqueDestinations(row, body.inventoryRoles).length
+          window.pingInventory.rolesForRow(row, body.inventoryRoles).length
         ).map(row => row.swIp + ':22'));
         body.source_ips = Object.fromEntries(Object.entries(sources).filter(([key]) => endpoints.has(key)));
       } else body.source_ips = sources;
@@ -174,31 +181,32 @@
     if (!plan.inventoryRows) return plan.destinations;
     const device = plan.inventoryRows.find(row => row.swIp + ':22' === target);
     if (!device) return [];
-    return window.pingInventory.uniqueDestinations(device, plan.inventoryRoles).map(ip => ({
-      ip, label:plan.inventoryRoles.filter(key => device[key] === ip).map(key => window.pingInventory.roleNames[key]).join(' / ')
+    return window.pingInventory.rolesForRow(device, plan.inventoryRoles).map(role => ({
+      ip:device[role], role, label:window.pingInventory.roleNames[role]
     }));
   }
   function syncPreviewDestinations() {
     if (!previewedPlan) return;
     const dests = previewDestinations(previewedPlan, $('pingPreviewTarget').value);
     $('pingPreviewDest').replaceChildren(...dests.map(dest =>
-      new Option(dest.ip + (dest.label ? ' · ' + dest.label : ''), dest.ip)));
+      new Option(dest.ip + (dest.label ? ' · ' + dest.label : ''), dest.role || dest.ip)));
   }
   $('pingShowPair').addEventListener('click', async () => {
     const reviewed = previewedPlan;
     if (!reviewed) return;
     const target = $('pingPreviewTarget').value;
-    const dest = previewDestinations(reviewed, target).find(entry => entry.ip === $('pingPreviewDest').value);
+    const dest = previewDestinations(reviewed, target).find(entry => (entry.role || entry.ip) === $('pingPreviewDest').value);
     if (!dest) return;
     const sequence = ++pairPreviewSequence;
-    const subset = {targets: target, destinations: [dest], options: reviewed.options};
+    const subset = {targets: target, destinations: [{ip:dest.ip, label:dest.label}], options: reviewed.options};
     if (reviewed.source_ips) subset.source_ips = {[target]: reviewed.source_ips[target]};
     try {
       const selection = await api('/api/ping/preview', subset, undefined, 15000);
       if (reviewed !== previewedPlan || sequence !== pairPreviewSequence) return;
       currentCommands = commands.value = selection.commands[0].command;
       copy.disabled = false;
-      status.textContent = target + ' → ' + dest.ip + ' · 선택한 조합의 명령입니다. 작업 시작에는 전체 검토 조건이 적용됩니다.';
+      status.textContent = target + ' → ' + dest.ip + (dest.label ? ' (' + dest.label + ')' : '') +
+        ' · 선택한 조합의 명령입니다. 작업 시작에는 전체 검토 조건이 적용됩니다.';
     } catch (error) {
       if (reviewed === previewedPlan && sequence === pairPreviewSequence) status.textContent = error.message;
     }
@@ -258,7 +266,7 @@
   let cursor = 0;
   let pageIndex = 0;
   let rows = [];
-  let inventoryRows = null, inventoryRoles = [];
+  let inventoryRows = null, inventoryRoles = [], inventoryRoleSessions = false;
   let selectedRowIndex = null;
   const selectedIndices = new Set();
   const failedStatuses = new Set(['partial_loss', 'no_reply', 'unreachable', 'source_error', 'cli_error', 'ssh_failure']);
@@ -297,9 +305,10 @@
     $('pingRerunSelectedFailed').disabled = !rerunReady ||
       !rows.some(row => selectedIndices.has(row.index) && failedStatuses.has(row.status));
   }
-  function setResultInventory(devices, roles) {
+  function setResultInventory(devices, roles, roleSessions = false) {
     inventoryRows = devices || null;
     inventoryRoles = roles || [];
+    inventoryRoleSessions = roleSessions;
     const select = $('pingResultView');
     for (const [name, available] of [['inventory', !!inventoryRows], ['matrix', !inventoryRows]]) {
       const opt = select.querySelector('option[value="' + name + '"]');
@@ -348,7 +357,7 @@
     box.type = 'checkbox';
     box.checked = selectedIndices.has(row.index);
     box.dataset.pingResultIndex = row.index;
-    box.setAttribute('aria-label', switchKey(row) + ' → ' + row.destination_ip + ' 선택');
+    box.setAttribute('aria-label', switchKey(row) + ' → ' + destinationLabel(row) + ' 선택');
     box.addEventListener('change', () => {
       if (box.checked) selectedIndices.add(row.index);
       else selectedIndices.delete(row.index);
@@ -373,7 +382,7 @@
     });
     const data = [
       ['스위치', switchKey(row)], ['호스트명', row.hostname], ['모델', row.model],
-      ['OS', row.software_version], ['목적지', row.destination_ip],
+      ['OS', row.software_version], ['목적지', destinationLabel(row)],
       ['Source 모드', row.source_mode], ['요청 Source', row.requested_source],
       ['계획한 Ping 명령', row.planned_command],
       ['검증 Source', row.verified_source_ip], ['측정 판정', responseSummary(row)],
@@ -387,13 +396,19 @@
       elem('p', '슬롯 시각은 SSH 작업의 관측 범위이며 개별 ICMP 송수신 시각이 아닙니다.', 'hint'),
       simpleTable([['항목', r => r[0]], ['값', r => r[1]]], data));
   }
+  function destinationLabel(row) {
+    return row.destination_ip + (row.destination_label ? ' (' + row.destination_label + ')' : '');
+  }
+  function destinationFilterKey(row) {
+    return inventoryRoleSessions ? switchKey(row) + '/' + row.inventory_roles[0] : row.destination_ip;
+  }
   function filteredRows() {
     const destination = $('pingDestinationFilter');
     const query = $('pingSearch').value.trim().toLowerCase();
     const wanted = $('pingStatusFilter').value;
     return rows.filter(row =>
       (!wanted || row.status === wanted) &&
-      (!destination.value || row.destination_ip === destination.value) &&
+      (!destination.value || destinationFilterKey(row) === destination.value) &&
       (!query || [switchKey(row), row.hostname, row.inventory_hostname, row.destination_ip, row.destination_label,
         ...(row.inventory_roles || []).map(key => window.pingInventory.roleNames[key])]
         .some(value => String(value ?? '').toLowerCase().includes(query))));
@@ -406,10 +421,12 @@
     const pageSize = 100;
     const destination = $('pingDestinationFilter');
     const chosen = destination.value;
-    const destinations = [...new Set(rows.map(row => row.destination_ip))];
+    const destinations = new Map();
+    for (const row of rows) destinations.set(destinationFilterKey(row),
+      inventoryRoleSessions ? switchKey(row) + ' → ' + destinationLabel(row) : row.destination_ip);
     destination.replaceChildren(new Option('전체', ''));
-    for (const ip of destinations) destination.add(new Option(ip, ip));
-    if (destinations.includes(chosen)) destination.value = chosen;
+    for (const [key, label] of destinations) destination.add(new Option(label, key));
+    if (destinations.has(chosen)) destination.value = chosen;
     const filtered = filteredRows();
     const matrix = $('pingResultView').value === 'matrix';
     const inventory = $('pingResultView').value === 'inventory' && inventoryRows;
@@ -417,7 +434,7 @@
     let columns = [
       ['선택', selectionBox],
       ['스위치', switchKey],
-      ['목적지', r => r.destination_ip + (r.destination_label ? ' (' + r.destination_label + ')' : '')],
+      ['목적지', destinationLabel],
       ['확인 Source', 'verified_source_ip'],
       ['상태', stateLabel],
       ['송신', 'sent'], ['응답', 'received'],
@@ -431,7 +448,7 @@
       const bySwitch = new Map();
       for (const row of filtered) {
         if (!bySwitch.has(row.ip)) bySwitch.set(row.ip, new Map());
-        bySwitch.get(row.ip).set(row.destination_ip, row);
+        bySwitch.get(row.ip).set(inventoryRoleSessions ? row.inventory_roles[0] : row.destination_ip, row);
       }
       const filtering = !!($('pingSearch').value.trim() || $('pingStatusFilter').value || chosen);
       items = inventoryRows.filter(row => !filtering || bySwitch.has(row.swIp));
@@ -441,8 +458,9 @@
         columns.push([name + ' 결과', device => {
           const ip = device[key];
           if (!ip) return '대상 없음';
-          if (!inventoryRoles.includes(key) || !device.activeDestinations.includes(ip)) return '미선택';
-          const row = bySwitch.get(device.swIp)?.get(ip);
+          if (!inventoryRoles.includes(key)) return '미선택';
+          if (inventoryRoleSessions ? !device.activeRoles.includes(key) : !device.activeDestinations.includes(ip)) return '미선택';
+          const row = bySwitch.get(device.swIp)?.get(inventoryRoleSessions ? key : ip);
           if (!row) return filtering ? '필터 제외' : '결과 대기';
           const cell = elem('span');
           cell.append(selectionBox(row), detailButton(row, responseSummary(row)));
@@ -457,7 +475,7 @@
         grouped.get(key).cells.set(row.destination_ip, row);
       }
       items = [...grouped.values()];
-      columns = [['스위치', 'key'], ...destinations
+      columns = [['스위치', 'key'], ...[...destinations.keys()]
         .filter(ip => !destination.value || ip === destination.value)
         .map(ip => [ip, group => {
           const row = group.cells.get(ip);
@@ -504,7 +522,7 @@
         snapshot.cursor <= snapshot.completed &&
         snapshot.rows.every((row, index) => row.index === cursor + index)) {
       const firstInventory = !inventoryRows && Array.isArray(snapshot.inventoryRows) && snapshot.inventoryRows.length > 0;
-      if (firstInventory) setResultInventory(snapshot.inventoryRows, snapshot.inventoryRoles);
+      if (firstInventory) setResultInventory(snapshot.inventoryRows, snapshot.inventoryRoles, snapshot.inventoryRoleSessions === true);
       if (snapshot.rows.length || firstInventory) {
         rows.push(...snapshot.rows);
         cursor = snapshot.cursor;

@@ -8,6 +8,7 @@ before interpreting a response. Never use partial/deadline output as evidence.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from functools import cached_property
 from ipaddress import IPv4Address
@@ -152,9 +153,12 @@ class InventoryRow(NamedTuple):
 class PingInventory:
     rows: tuple[InventoryRow, ...]
     roles: tuple[str, ...]
+    role_sessions: bool = False
 
     @classmethod
-    def parse(cls, raw, roles):
+    def parse(cls, raw, roles, role_sessions=False):
+        if type(role_sessions) is not bool:
+            raise ValueError("역할별 SSH 세션 설정을 확인하세요.")
         if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_SWITCHES:
             raise ValueError("테스트할 장비 행을 1~300개 선택하세요.")
         if (
@@ -187,7 +191,9 @@ class PingInventory:
                 raise ValueError(f"{number}행 · SW IP가 {seen[row.swIp]}행과 중복됩니다.")
             seen[row.swIp] = number
             rows.append(row)
-        result = cls(tuple(rows), tuple(role for role in INVENTORY_ROLES if role in roles))
+        result = cls(
+            tuple(rows), tuple(role for role in INVENTORY_ROLES if role in roles), role_sessions
+        )
         if not result.pair_roles:
             raise ValueError("선택한 장비와 열에 테스트할 목적지 IP가 없습니다.")
         return result
@@ -200,7 +206,11 @@ class PingInventory:
             by_ip = {}
             for role in self.roles:
                 address = getattr(row, role)
-                if address:
+                if not address:
+                    continue
+                if self.role_sessions:
+                    pairs[target, Destination(address, INVENTORY_ROLES[role])] = (role,)
+                else:
                     by_ip.setdefault(address, []).append(role)
             for ip, roles in by_ip.items():
                 label = " / ".join(INVENTORY_ROLES[role] for role in roles)
@@ -210,6 +220,18 @@ class PingInventory:
     @cached_property
     def by_ip(self):
         return {row.swIp: row for row in self.rows}
+
+
+def role_session_waves(counts, limit):
+    """Keep each switch's selected roles together under the global SSH limit."""
+    wave = []
+    for target, count in counts:
+        if len(wave) + count > limit:
+            yield wave
+            wave = []
+        wave.extend([target] * count)
+    if wave:
+        yield wave
 
 
 @dataclass(frozen=True)
@@ -227,6 +249,12 @@ class PingPlan:
             raise ValueError("서버는 1~10대를 지정하세요.")
         if self.total_pairs > MAX_PAIRS:
             raise ValueError("테스트 조합은 최대 3,000개입니다.")
+        if self.inventory_role_sessions:
+            widest = max(self.role_counts.values())
+            if self.options.concurrency < widest:
+                raise ValueError(
+                    f"선택한 역할을 동시에 측정하려면 동시 SSH를 {widest} 이상으로 지정하세요."
+                )
         for target in self.targets:
             unicast_ipv4(target.ip)
             _integer(target.port, 1, 65535, "SSH 포트")
@@ -262,6 +290,21 @@ class PingPlan:
         return self.inventory.roles if self.inventory else ()
 
     @property
+    def inventory_role_sessions(self):
+        return self.inventory is not None and self.inventory.role_sessions
+
+    @cached_property
+    def role_counts(self):
+        return Counter(target for target, _ in self.pairs)
+
+    @property
+    def effective_concurrency(self):
+        if self.inventory_role_sessions:
+            waves = role_session_waves(self.role_counts.items(), self.options.concurrency)
+            return max(map(len, waves))
+        return min(self.options.concurrency, len({target.ip for target in self.targets}))
+
+    @property
     def total_requests(self) -> int:
         return self.total_pairs * self.options.repetitions
 
@@ -281,8 +324,21 @@ class PingPlan:
     def parse(cls, value: object) -> PingPlan:
         inventory = None
         if isinstance(value, dict) and ("inventoryRows" in value or "inventoryRoles" in value):
-            body = _object(value, {"inventoryRows", "inventoryRoles", "options", "source_ips"})
-            inventory = PingInventory.parse(body.get("inventoryRows"), body.get("inventoryRoles"))
+            body = _object(
+                value,
+                {
+                    "inventoryRows",
+                    "inventoryRoles",
+                    "inventoryRoleSessions",
+                    "options",
+                    "source_ips",
+                },
+            )
+            inventory = PingInventory.parse(
+                body.get("inventoryRows"),
+                body.get("inventoryRoles"),
+                body.get("inventoryRoleSessions", False),
+            )
             targets = tuple(dict.fromkeys(target for target, _ in inventory.pair_roles))
             destinations = tuple({d.ip: d for _, d in inventory.pair_roles}.values())
         else:
@@ -386,9 +442,7 @@ def preview_plan(value: object) -> dict:
         "totalPairs": plan.total_pairs,
         "totalRequests": plan.total_requests,
         "requestedConcurrency": plan.options.concurrency,
-        "effectiveConcurrency": min(
-            plan.options.concurrency, len({target.ip for target in plan.targets})
-        ),
+        "effectiveConcurrency": plan.effective_concurrency,
         "commands": commands,
         "truncated": len(commands) < plan.total_pairs,
         "sourceVerified": False,

@@ -183,6 +183,48 @@ class PingFileTests(unittest.TestCase):
         subset = report([0])
         self.assertEqual((subset.max_row, subset["A2"].value), (2, "SW-B"))
 
+    def test_role_sessions_export_only_the_selected_role_even_when_addresses_match(self):
+        shared = "198.51.100.9"
+        device = dict(hostname="SW-A", swIp="192.0.2.1", gwIp=shared, bbIp=shared, nmsIp="")
+        plan = dict(
+            inventoryRows=[device], inventoryRoles=["gwIp", "bbIp"], inventoryRoleSessions=True
+        )
+        profile = profile_request(self.jobs, "portable", {"plan": plan})
+        self.assertIs(
+            import_profile(json.dumps(profile), self.root)["plan"]["inventoryRoleSessions"], True
+        )
+        device = dict(device, activeRoles=["gwIp", "bbIp"], activeDestinations=[shared])
+        common = dict(ip=device["swIp"], destination_ip=shared, status="normal", sent=1, received=1)
+        rows = [
+            dict(common, index=0, inventory_roles=["bbIp"], status="no_reply", received=0),
+            dict(common, index=1, inventory_roles=["gwIp"]),
+        ]
+        result = dict(
+            total=2,
+            completed=2,
+            inventoryRows=[device],
+            inventoryRoles=plan["inventoryRoles"],
+            inventoryRoleSessions=True,
+            rows=rows,
+        )
+        self.jobs.ping_status = lambda key: dict(
+            state="done", started="", finished="", result=result
+        )
+
+        def cells(indices):
+            wb = load_workbook(BytesIO(general_excel(self.jobs, "a" * 32, {"indices": indices})))
+            self.addCleanup(wb.close)
+            sheet = wb["장비별 결과"]
+            return sheet["F2"].value, sheet["G2"].value
+
+        gw, bb = cells([0, 1])
+        self.assertIn("정상", gw)
+        self.assertIn("응답 없음", bb)
+        self.assertEqual(cells([0]), ("내보내기 제외", bb))
+        device["activeRoles"] = ["bbIp"]
+        result.update(total=1, completed=1, rows=rows[:1], parentRunId="b" * 32)
+        self.assertEqual(cells([0]), ("실행 범위 제외", bb))
+
     def test_route_forces_limited_command_and_verifies_source_before_write(self):
         session = MagicMock(spec=RouteSession)
         session._identify.return_value = SimpleNamespace(

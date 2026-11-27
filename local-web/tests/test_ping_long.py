@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -145,6 +146,224 @@ class LongPingTests(unittest.TestCase):
         self.assertEqual(archived["settings"], self.status()["settings"])
         self.assertEqual(archived["settings"]["inventoryRows"][0]["hostname"], "North")
         self.assertEqual(archived["settings"]["inventoryRoles"], ["gwIp", "bbIp", "nmsIp"])
+
+    def use_role_inventory(self, switches, *, count=1, capacity=5):
+        self.settings.update(
+            count=count,
+            interval=1,
+            plan={
+                "inventoryRoleSessions": True,
+                "inventoryRoles": ["gwIp", "bbIp", "nmsIp"],
+                "inventoryRows": [
+                    dict(swIp=ip, gwIp="198.51.100.1", bbIp="198.51.100.1", nmsIp="198.51.100.1")
+                    for ip in switches
+                ],
+                "options": {"concurrency": capacity},
+            },
+        )
+
+    def wait_for_release(self):
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            with self.jobs.lock:
+                if not self.jobs.active:
+                    return
+            time.sleep(0.005)
+        self.fail("role sessions did not release the lease")
+
+    def test_three_independent_role_sessions_overlap_and_next_row_waits_for_full_capacity(self):
+        switches = ["192.0.2.1", "192.0.2.2"]
+        self.use_role_inventory(switches)
+        preview = self.engine.preview(self.settings)
+        self.assertEqual((preview["pairs"], preview["effectiveConcurrency"]), (6, 3))
+        self.start()
+        sent = threading.Semaphore(0)
+        release = threading.Event()
+        opened, closed = [], []
+
+        @contextmanager
+        def session(_plan, target, _credentials, _cancel):
+            def observe(_plan, dest, *, cancel, before_send):
+                before_send()
+                self.calls.append((target.ip, dest.ip, dest.label, ssh))
+                sent.release()
+                release.wait(4)
+                observation = {
+                    "GW": PingObservation("normal", 1, 1, 0, rtt_avg_ms=2),
+                    "BB": PingObservation("no_reply", 1, 0, 100),
+                    "NMS": PingObservation("unknown"),
+                }[dest.label]
+                return SimpleNamespace(
+                    observation=observation, transport_error=None, verified_source_ip=target.ip
+                )
+
+            ssh = SimpleNamespace(run_pair=observe)
+            opened.append(ssh)
+            try:
+                yield ssh
+            finally:
+                closed.append(ssh)
+
+        with patch.object(self.jobs.operations, "_ping_device_session", side_effect=session):
+            try:
+                self.jobs.tick_monitor()
+                self.assertTrue(all(sent.acquire(timeout=2) for _ in range(3)))
+                self.assertEqual(closed, [])
+                self.assertEqual({ip for ip, _, _, _ in self.calls}, {switches[0]})
+                self.assertEqual({role for _, _, role, _ in self.calls}, {"GW", "BB", "NMS"})
+                self.assertEqual(len({id(ssh) for *_, ssh in self.calls}), 3)
+                self.clock.value = 0.6
+                self.jobs.tick_monitor()
+                self.assertEqual(len(self.engine.run.slots), 3)
+            finally:
+                release.set()
+            self.wait_for_release()
+            self.jobs.tick_monitor()
+            self.assertEqual(len(opened), 3)
+            self.clock.value = 1
+            self.jobs.tick_monitor()
+            self.wait_for_release()
+            self.assertEqual(len(opened), 6)
+            self.assertCountEqual(opened, closed)
+
+        for snap in (self.status(), LongPing(self.jobs).status(self.key)):
+            self.assertEqual((snap["state"], snap["completed"]), ("done", 6))
+            self.assertTrue(snap["settings"]["inventoryRoleSessions"])
+            self.assertEqual(
+                [
+                    (r["inventoryRole"], r["success"], r["loss"], r["unknown"])
+                    for r in snap["series"]
+                ],
+                [("gwIp", 1, 0, 0), ("bbIp", 0, 1, 0), ("nmsIp", 0, 0, 1)] * 2,
+            )
+
+    def test_role_cohorts_hold_shared_nms_until_another_switch_can_send(self):
+        first, second = "192.0.2.1", "192.0.2.2"
+        self.use_role_inventory([first, second])
+        rows = self.settings["plan"]["inventoryRows"]
+        rows[0].update(gwIp="198.51.100.10", bbIp="198.51.100.11")
+        rows[1].update(gwIp="198.51.100.20", bbIp="")
+        self.start()
+        waiting, release = threading.Event(), threading.Event()
+        sent = threading.Semaphore(0)
+
+        def delayed_nms(plan, target, dest, creds, cancel, *, before_send):
+            if target.ip == first and dest.label == "NMS":
+                waiting.set()
+                release.wait(4)
+            result = self.fake_send(plan, target, dest, creds, cancel, before_send=before_send)
+            sent.release()
+            return result
+
+        with patch.object(self.jobs.operations, "_ping_pair", side_effect=delayed_nms):
+            try:
+                self.jobs.tick_monitor()
+                self.assertTrue(waiting.wait(2))
+                self.assertTrue(all(sent.acquire(timeout=2) for _ in range(2)))
+                self.clock.value = 1
+                self.jobs.tick_monitor()
+                # The old global permits have expired; only the first row's pending
+                # NMS login prevents the second row from starting its cohort.
+                with self.jobs.lock:
+                    self.assertFalse(
+                        any(
+                            slot.series.target.ip == second
+                            for slot in self.engine.run.slots.values()
+                        )
+                    )
+                self.assertFalse(any(endpoint == second + ":22" for _, endpoint, _ in self.calls))
+            finally:
+                release.set()
+                self.wait_for_release()
+            for clock, expected in [(1.499, 3), (1.5, 5)]:
+                self.clock.value = clock
+                self.jobs.tick_monitor()
+                self.wait_for_release()
+                self.assertEqual(len(self.calls), expected)
+        self.assertEqual(self.status()["state"], "done")
+        self.assertCountEqual([t for t, _, dest in self.calls if dest == "198.51.100.1"], [1, 1.5])
+
+    def test_role_estimate_counts_one_shared_endpoint_visit_per_row_and_round(self):
+        self.use_role_inventory([f"192.0.2.{i}" for i in range(1, 11)], count=100)
+        for row in self.settings["plan"]["inventoryRows"]:
+            row.update(gwIp="", bbIp="")
+        self.assertEqual(self.engine.preview(self.settings)["initialEta"], 500)
+        # An additional role sharing NMS within the same row does not double the endpoint wait.
+        for row in self.settings["plan"]["inventoryRows"]:
+            row["bbIp"] = row["nmsIp"]
+        self.assertEqual(self.engine.preview(self.settings)["initialEta"], 500)
+
+    def test_role_backoff_does_not_stall_healthy_siblings(self):
+        self.use_role_inventory(["192.0.2.1"], count=2)
+        self.start()
+
+        def initially_unreachable(plan, target, dest, creds, cancel, *, before_send):
+            if dest.label == "BB" and self.clock.value == 0:
+                raise CollectionFailure(ErrorCode.TCP_TIMEOUT, "fixture")
+            return self.fake_send(plan, target, dest, creds, cancel, before_send=before_send)
+
+        for clock, completed in [(0, 2), (1, 4), (4, 4), (5, 5), (6, 6)]:
+            self.clock.value = clock
+            self.tick(initially_unreachable)
+            self.assertEqual(self.status()["completed"], completed)
+        self.assertEqual(self.status()["state"], "done")
+
+    def test_role_cancel_during_ssh_preparation_prevents_every_command(self):
+        self.use_role_inventory(["192.0.2.1"])
+        self.start()
+        ready = threading.Semaphore(0)
+        release = threading.Event()
+
+        def prepare(*args, before_send):
+            ready.release()
+            release.wait(4)
+            return self.fake_send(*args, before_send=before_send)
+
+        with patch.object(self.jobs.operations, "_ping_pair", side_effect=prepare):
+            try:
+                self.jobs.tick_monitor()
+                self.assertTrue(all(ready.acquire(timeout=2) for _ in range(3)))
+                self.assertEqual(self.engine.control(self.key, "cancel")["state"], "stopping")
+            finally:
+                release.set()
+            self.wait_for_release()
+        self.assertEqual(self.status()["state"], "cancelled")
+        self.assertEqual(self.status()["started"], 0)
+        self.assertEqual(self.calls, [])
+
+    def test_partially_started_role_cohort_releases_every_lease_on_thread_failure(self):
+        self.use_role_inventory(["192.0.2.1"])
+        self.start()
+        entered, release = threading.Event(), threading.Event()
+        real_start = threading.Thread.start
+        launches = []
+
+        def cannot_spawn_second(worker):
+            launches.append(worker)
+            if len(launches) == 2:
+                raise OSError("fixture thread limit")
+            real_start(worker)
+
+        def first_worker(*args, before_send):
+            entered.set()
+            release.wait(3)
+            return self.fake_send(*args, before_send=before_send)
+
+        with (
+            patch.object(threading.Thread, "start", cannot_spawn_second),
+            patch.object(self.jobs.operations, "_ping_pair", side_effect=first_worker),
+        ):
+            try:
+                self.jobs.tick_monitor()
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(len(self.engine.run.slots), 1)
+                self.assertEqual(self.status()["reason"], "WORKER_START_FAILED")
+            finally:
+                release.set()
+            self.wait_for_release()
+        self.assertEqual(self.status()["state"], "failed")
+        self.assertEqual(self.status()["started"], 0)
+        self.assertFalse(self.engine.run.slots)
 
     def test_live_and_archived_mean_use_only_successful_numeric_rtts(self):
         self.settings["count"] = 4

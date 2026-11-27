@@ -97,6 +97,12 @@ class LongHistory:
                     requested_source TEXT, target_count INTEGER NOT NULL,
                     PRIMARY KEY(run_id,series_id)
                 );
+                CREATE TABLE IF NOT EXISTS ping_long_roles (
+                    run_id TEXT NOT NULL, series_id INTEGER NOT NULL, inventory_role TEXT NOT NULL,
+                    PRIMARY KEY(run_id,series_id),
+                    FOREIGN KEY(run_id,series_id) REFERENCES ping_long_series(run_id,series_id)
+                        ON DELETE CASCADE
+                );
                 CREATE TABLE IF NOT EXISTS ping_long_blocks (
                     run_id TEXT NOT NULL REFERENCES ping_long_runs(id) ON DELETE CASCADE,
                     series_id INTEGER NOT NULL, reason TEXT NOT NULL,
