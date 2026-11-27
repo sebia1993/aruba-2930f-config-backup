@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from browser_ping import observe, run_browser_test
 from localweb.ping_tools import PingObservation
-from openpyxl import Workbook, load_workbook
+from openpyxl import load_workbook
 from playwright.sync_api import expect
 
 SW_A, SW_B = "192.0.2.10", "192.0.2.11"
@@ -34,27 +34,6 @@ def simulated_device(_plan, target, credentials, _cancel):
         return simulated_pair(plan, target, dest, credentials, cancel, before_send=before_send)
 
     yield SimpleNamespace(run_pair=run)
-
-
-def inventory_file():
-    workbook = Workbook()
-    workbook.active.title = "안내"
-    workbook.active.append(["설명"])
-    sheet = workbook.create_sheet("장비")
-    sheet.append(["BB", "NMS server", "장비 hostanme", "GW IP", "SW IP"])
-    sheet.append([SHARED, NMS, "A동", SHARED, SW_A])
-    sheet.append([BB, "", "B동", SHARED, SW_B])
-    sheet.append(["", "", "미지정", "", "192.0.2.13"])
-    sheet.append(["", "", "제외", SHARED, "192.0.2.14"])
-    sheet.append(["invalid", "", "입력오류", "", "192.0.2.15"])
-    buffer = BytesIO()
-    workbook.save(buffer)
-    workbook.close()
-    return dict(
-        name="장비.xlsx",
-        mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        buffer=buffer.getvalue(),
-    )
 
 
 def exercise(page, url):
@@ -84,8 +63,28 @@ def exercise(page, url):
     page.get_by_role("checkbox", name="2행 SW-0 선택", exact=True).check()
     expect(page.locator("#pingInventoryAll")).to_be_disabled()
     expect(page.locator("#pingInventoryStatus")).to_contain_text("측정 1조합")
-    page.locator("#pingInventoryFile").set_input_files(inventory_file())
-    page.locator("#pingInventorySheet").select_option("장비")
+    expect(page.locator('#pingInventory input[type="file"]')).to_have_count(0)
+    rejected = page.evaluate("""async () => {
+      const response = await fetch('/api/ping/inventory/preview', {
+        method:'POST', headers:{'Content-Type':'application/json','X-Local-Token':ui.token},
+        body:JSON.stringify({text:'SW IP\\tBB\\n192.0.2.1\\t198.51.100.1', filename:'old.xlsx'})
+      });
+      return response.status;
+    }""")
+    assert rejected == 400
+    page.locator("#pingInventoryText").fill(
+        "\r\n".join(
+            [
+                "BB\tNMS server\t장비 hostanme\tGW IP\tSW IP",
+                f"{SHARED}\t{NMS}\tA동\t{SHARED}\t{SW_A}",
+                f"{BB}\t\tB동\t{SHARED}\t{SW_B}",
+                "\t\t미지정\t\t192.0.2.13",
+                f"\t\t제외\t{SHARED}\t192.0.2.14",
+                "invalid\t\t입력오류\t\t192.0.2.15",
+            ]
+        )
+    )
+    page.locator("#pingInventoryRead").click()
     expect(page.locator("#pingInventoryStatus")).to_contain_text("오류 1행")
     expect(page.locator("#pingInventoryRows")).to_contain_text("6행 BB")
     expect(page.get_by_role("checkbox", name="6행 입력오류 선택")).to_be_disabled()
@@ -188,5 +187,5 @@ def exercise(page, url):
 if __name__ == "__main__":
     run_browser_test(exercise, simulated_device, simulated_pair)
     print(
-        "PASS inventory paste, XLSX, mapping, profile, preview, per-device results, export, rerun and long Ping."
+        "PASS inventory paste, mapping, profile, preview, per-device results, Excel export, rerun and long Ping."
     )

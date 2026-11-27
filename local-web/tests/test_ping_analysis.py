@@ -11,7 +11,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier
 from unittest.mock import patch
-from zipfile import ZipFile
 
 from localweb.ping_analysis import _export_book, _sheet, analysis_request, export_history
 from localweb.ping_long_store import LongHistory
@@ -216,15 +215,16 @@ class AnalysisTests(unittest.TestCase):
     def test_nms_csv_review_bindings_and_reimport(self):
         text = (
             "switch,event,opened,closed\r\n"
-            "192.0.2.11,=alarm,2026-01-01 09:00:00,2026-01-01 09:00:05\r\n"
-            "192.0.2.11,=alarm,2026-01-01 09:00:00,2026-01-01 09:00:05\r\n"
+            "192.0.2.11,=장애,2026-01-01 09:00:00,2026-01-01 09:00:05\r\n"
+            "192.0.2.11,=장애,2026-01-01 09:00:00,2026-01-01 09:00:05\r\n"
             "192.0.2.12,open,2026-01-01 09:00:10,\r\n"
             "192.0.2.77,open,2026-01-01 09:00:11,\r\n"
             "192.0.2.11,backward,2026-01-01 09:01:11,2026-01-01 09:00:00"
         )
         body = dict(
             name="알람.csv",
-            file=base64.b64encode(text.encode()).decode(),
+            file=base64.b64encode(text.encode("cp949")).decode(),
+            encoding="cp949",
             zone="KST",
             polling=30,
             columns=dict(device=0, message=1, opened=2, closed=3),
@@ -250,35 +250,54 @@ class AnalysisTests(unittest.TestCase):
             try:
                 rows = list(wb["NMS 이력"].values)
                 message_col = rows[0].index("message")
-                self.assertIn("'=alarm", [r[message_col] for r in rows])
+                self.assertIn("'=장애", [r[message_col] for r in rows])
             finally:
                 wb.close()
 
-    def test_xlsx_requires_zone_for_naive_and_excludes_formula_cells(self):
+    def test_excel_files_are_rejected_for_preview_and_import(self):
         book = Workbook()
-        sheet = book.active
-        sheet.title = "관측"
-        sheet.append(["장비", "사유", "발생", "복구"])
-        sheet.append(["192.0.2.11", "alarm", datetime(2026, 1, 1), None])
-        sheet.append(["192.0.2.11", "formula", "2026-01-01T00:00:00+00:00", "=NOW()"])
-        out = io.BytesIO()
-        book.save(out)
+        book.active.append(["device", "message", "opened"])
+        book.active.append(["192.0.2.11", "alarm", stamp(0)])
+        data = io.BytesIO()
+        book.save(data)
         book.close()
-        file = base64.b64encode(out.getvalue()).decode()
-        body = dict(
-            file=file,
-            name="이력.xlsx",
-            zone="embedded",
-            columns=dict(device=0, message=1, opened=2, closed=3),
-        )
-        self.assertEqual(self.api("nms-file", **body)["valid"], 0)
-        body["zone"] = "UTC"
-        self.assertEqual(self.api("nms-file", **body)["valid"], 1)
-        payload = io.BytesIO()
-        with ZipFile(payload, "w") as zipfile:
-            zipfile.writestr("xl/vbaProject.bin", b"sample")
-        with self.assertRaises(ValueError):
-            self.api("nms-file", **{**body, "file": base64.b64encode(payload.getvalue()).decode()})
+        csv_data = b"switch,event,time\n192.0.2.11,alarm,2026-01-01T00:00:00Z"
+        for name, raw in (
+            ("alarms.xlsx", data.getvalue()),
+            ("alarms.XLS", csv_data),
+            ("alarms.xlsm", csv_data),
+            ("renamed.csv", data.getvalue()),
+            ("legacy.csv", bytes.fromhex("d0cf11e0a1b11ae1") + csv_data),
+        ):
+            for action in ("nms-file", "nms-commit"):
+                with (
+                    self.subTest(name=name, action=action),
+                    self.assertRaisesRegex(ValueError, "CSV"),
+                ):
+                    self.api(action, name=name, file=base64.b64encode(raw).decode())
+        with self.history.connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM ping_nms_events").fetchone()[0], 0)
+
+    def test_historical_workbook_alarm_remains_queryable_and_exportable(self):
+        self.api("nms-compare", destination=DEST)
+        with self.history.connect() as db:
+            db.execute(
+                """INSERT INTO ping_nms_events(
+                    run_id, dedup, device, message, opened, closed, file_name, sheet, row_number)
+                    VALUES(?, 'prior', '192.0.2.11:22', '이전 알람', ?, ?, '이전.xlsx', '장애', 4)""",
+                (RUN, stamp(0), stamp(10)),
+            )
+        self.sample(1, 1, 2, 3, "no_reply")
+        row = self.api("nms-compare", destination=DEST)["rows"][0]
+        self.assertEqual((row["message"], row["strictLoss"]), ("이전 알람", 1))
+        with export_history(self.history.path, RUN, "xlsx") as path:
+            book = load_workbook(path, read_only=True)
+            try:
+                header, values = list(book["NMS 이력"].values)
+                saved = dict(zip(header, values, strict=True))
+                self.assertEqual((saved["file_name"], saved["sheet"]), ("이전.xlsx", "장애"))
+            finally:
+                book.close()
 
     def test_csv_follows_run_uses_formula_safe_label_and_null_rtt(self):
         self.sample(1, 1, 0, 1, "no_reply")

@@ -37,6 +37,23 @@ def exercise(page, url, _switch, _second, _shots, backup):
     page.locator("#paHeat").click()
     expect(page.locator("#paHeatResult")).to_contain_text("무응답")
     page.locator('[data-pa-tab="nms"]').click()
+    expect(page.locator("#paFile")).to_have_attribute("accept", ".csv")
+    expect(page.locator("#paSheet")).to_have_count(0)
+    uploads = []
+    page.on(
+        "request",
+        lambda request: uploads.append(request.url) if request.url.endswith("/nms-file") else None,
+    )
+    page.locator("#paFile").set_input_files(
+        {
+            "name": "alarms.xlsx",
+            "mimeType": "application/octet-stream",
+            "buffer": b"unread workbook",
+        }
+    )
+    page.locator("#paHeaders").click()
+    expect(page.locator("#paStatus")).to_contain_text("CSV")
+    assert not uploads
     page.locator("#paFile").set_input_files(
         {
             "name": "alarms.csv",

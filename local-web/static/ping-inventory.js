@@ -6,7 +6,8 @@
   const mode = $('pingInputMode'), form = $('pingForm'), panel = $('pingInventory');
   const status = $('pingInventoryStatus'), roles = [...panel.querySelectorAll('[data-inventory-role]')];
   const pageSize = 50;
-  let source = null, preview = null, revision = 0, page = 0;
+  const textInput = $('pingInventoryText');
+  let preview = null, revision = 0, page = 0;
   let explicitSelection = false, mappedSelection = null;
   const selected = new Set();
   const notify = () => form.dispatchEvent(new Event('input', {bubbles:true}));
@@ -96,11 +97,11 @@
     $('pingInventoryRows').replaceChildren();
     notify();
   }
-  function resetSource() {
-    revision++; source = null;
+  function resetInput() {
+    revision++;
     mappedSelection = null; explicitSelection = false;
     clearReview();
-    $('pingInventorySheetField').hidden = $('pingInventoryMap').hidden = true;
+    $('pingInventoryMap').hidden = true;
     status.textContent = '';
   }
   function syncMode() {
@@ -116,8 +117,8 @@
   }
   mode.addEventListener('change', syncMode);
   syncMode();
-  $('pingInventoryText').addEventListener('input', () => {
-    resetSource(); $('pingInventoryFile').value = '';
+  textInput.addEventListener('input', () => {
+    resetInput();
     status.textContent = '붙여넣은 표 읽기를 눌러 입력을 확인하세요.';
   });
   function rememberMappedSelection() {
@@ -144,22 +145,17 @@
     $('pingInventoryMap').hidden = false;
     $('pingInventoryMap').open = !!result.errors.length;
   }
-  async function inspect(input, mapping, sheet) {
+  async function inspect(mapping) {
     const version = ++revision;
     if (!mapping) { mappedSelection = null; explicitSelection = false; }
     else rememberMappedSelection();
-    source = input;
     clearReview();
     $('pingInventoryMap').hidden = true;
     status.textContent = '표를 읽는 중입니다.';
     try {
-      const data = await api('/api/ping/inventory/preview', {...input, ...(mapping && {mapping}), ...(sheet && {sheet})}, undefined, 20000);
+      const data = await api('/api/ping/inventory/preview', {text:textInput.value, mapping}, undefined, 20000);
       if (revision !== version) return;
       preview = data;
-      const sheets = data.sheets || [];
-      $('pingInventorySheetField').hidden = sheets.length < 2;
-      $('pingInventorySheet').replaceChildren(...sheets.map(name => new Option(name, name)));
-      $('pingInventorySheet').value = data.sheet || '';
       mappingControls(data);
       $('pingInventoryReview').hidden = !data.rows.length;
       chooseValid(mappedSelection);
@@ -167,41 +163,26 @@
     } catch (err) { if (revision === version) status.textContent = err.message; }
   }
   $('pingInventoryRead').onclick = () => {
-    const text = $('pingInventoryText').value;
-    resetSource(); $('pingInventoryFile').value = '';
+    const text = textInput.value;
+    resetInput();
     if (text.length > 3 * 1024 * 1024 || new Blob([text]).size > 3 * 1024 * 1024) {
       status.textContent = '3 MiB 이하의 표를 붙여넣으세요.';
     }
-    else if (text.trim()) inspect({text});
+    else if (text.trim()) inspect();
     else status.textContent = '열 이름과 장비 행을 함께 붙여넣으세요.';
   };
-  $('pingInventoryFile').onchange = event => {
-    const file = event.target.files[0];
-    resetSource();
-    if (!file) return;
-    $('pingInventoryText').value = '';
-    if (file.size > 3 * 1024 * 1024) { status.textContent = '3 MiB 이하의 .xlsx 파일을 선택하세요.'; return; }
-    const version = revision;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (revision === version) inspect({filename:file.name, content:String(reader.result).split(',')[1]});
-    };
-    reader.onerror = () => { if (revision === version) status.textContent = '파일을 읽을 수 없습니다.'; };
-    reader.readAsDataURL(file);
-  };
-  $('pingInventorySheet').onchange = () => { if (source) inspect(source, null, $('pingInventorySheet').value); };
   $('pingInventoryApply').onclick = () => {
     const map = {};
     for (const select of $('pingInventoryMapping').querySelectorAll('select')) {
       map[select.dataset.inventoryField] = select.value === '' ? null : Number(select.value);
     }
-    if (source) inspect(source, map, $('pingInventorySheet').value);
+    inspect(map);
   };
   function applyProfile(plan) {
     mode.value = plan?.inventoryRows ? 'inventory' : 'list';
     syncMode();
     if (!plan?.inventoryRows) return;
-    resetSource(); $('pingInventoryText').value = $('pingInventoryFile').value = '';
+    resetInput(); textInput.value = '';
     preview = {errors:[], rows:plan.inventoryRows.map((row, index) => ({...row, rowNumber:index + 2, errors:[]}))};
     roles.forEach(box => { box.checked = plan.inventoryRoles.includes(box.dataset.inventoryRole); });
     $('pingInventoryReview').hidden = false;

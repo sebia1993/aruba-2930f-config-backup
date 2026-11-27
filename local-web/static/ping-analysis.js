@@ -30,8 +30,8 @@
             <details><summary>공통 경로 그룹</summary><label>스위치 IP:SSH포트와 상위 그룹 (한 줄에 하나 · 쉼표 구분)<textarea id="paGroups" rows="3" maxlength="30000"></textarea></label><button id="paGroupSave">이 실행의 그룹 저장</button></details><button id="paHeat">12개 시간 구간 비교</button><div id="paHeatResult"></div>
             <p class="hint">같은 목적지에 대한 서로 다른 스위치의 실패 명령 관측 시간창이 겹칠 때 공통 경로를 점검할 수 있습니다. 물리 장애 원인과 패킷 시각은 확정할 수 없습니다.</p></section>
           <section data-pa-pane="nms" hidden>
-            <div class="formgrid"><label>알람 파일 (CSV/XLSX · 3 MiB 이하)<input id="paFile" type="file" accept=".csv,.xlsx"></label>
-            <label>CSV 문자 인코딩<select id="paEncoding"><option value="utf-8-sig">UTF-8</option><option value="cp949">CP949</option></select></label><label>Excel 시트<select id="paSheet"></select></label></div>
+            <div class="formgrid"><label>알람 파일 (CSV · 3 MiB 이하)<input id="paFile" type="file" accept=".csv"></label>
+            <label>CSV 문자 인코딩<select id="paEncoding"><option value="utf-8-sig">UTF-8</option><option value="cp949">CP949</option></select></label></div>
             <button id="paHeaders">파일의 열 확인</button><div class="formgrid" id="paMap"></div>
             <details><summary>발생·복구가 별도 행인 파일</summary><label><input type="checkbox" id="paSplit"> 두 행을 장비·이벤트 키·시각으로 연결</label><div class="formgrid"><label>발생/복구 구분 열<select id="paKind"></select></label><label>공통 이벤트 키 열<select id="paCategory"></select></label>
             <label>발생값<input id="paOccurs" maxlength="80"></label><label>복구값<input id="paRecovers" maxlength="80"></label></div><label>중복 후보 수동 연결 (복구 행,발생 행 · 한 줄에 하나)<textarea id="paPairs" rows="2"></textarea></label></details>
@@ -82,7 +82,7 @@
     for(const id of ['Metrics','Events','Samples','HeatResult','PathResult','ImportResult','Comparison','Downloads']) el(id).replaceChildren();
     el('Chart').getContext('2d').clearRect(0,0,900,155);
     el('NextAlarm').disabled=el('PrevAlarm').disabled=true;
-    options(el('Sheet'),[]); el('Map').replaceChildren();
+    el('Map').replaceChildren();
   }
   // Every asynchronous view update belongs to exactly one selection and operation.
   async function request(action, payload, ticket) {
@@ -207,16 +207,15 @@
     await request('delete',{confirm:true},t);runOffset=0;await load(t);message('선택한 종료 이력을 삭제했습니다.');
   });
   let uploaded=null;
-  const resetFile=()=>{++token;uploaded=null;invalidateImport();el('ImportResult').replaceChildren();el('Map').replaceChildren();options(el('Sheet'),[]);};
+  const resetFile=()=>{++token;uploaded=null;invalidateImport();el('ImportResult').replaceChildren();el('Map').replaceChildren();};
   el('File').onchange=el('Encoding').onchange=resetFile;
   async function readFile() {
-    const file=el('File').files[0];if(!file||file.size>3*1024*1024)throw new Error('3 MiB 이하의 CSV 또는 XLSX를 선택하세요.');
+    const file=el('File').files[0];if(!file||!file.name.toLowerCase().endsWith('.csv')||file.size>3*1024*1024)throw new Error('3 MiB 이하의 CSV 파일을 선택하세요.');
     const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('파일을 읽지 못했습니다.'));reader.readAsDataURL(file);});
     return {name:file.name,file:data,encoding:el('Encoding').value};
   }
   async function headers(t) {
-    const data=await readFile();const d=await request('nms-file',{...data,sheet:el('Sheet').value||null},t);uploaded=data;invalidateImport();
-    options(el('Sheet'),d.sheets.map(s=>[s,s]));el('Sheet').value=d.sheet;
+    const data=await readFile();const d=await request('nms-file',data,t);uploaded=data;invalidateImport();
     el('Map').replaceChildren();
     for(const [id,title] of [['device','장비 IP 또는 IP:SSH포트'],['message','알람 종류/메시지'],['opened','발생 시각'],['closed','복구 시각 (선택)']]){
       const label=document.createElement('label'), select=document.createElement('select');select.id='paCol'+id;label.textContent=title;
@@ -225,12 +224,12 @@
     for(const id of ['Kind','Category']) options(el(id),[['','선택'],...d.headers.map((h,i)=>[String(i),(i+1)+'. '+(h||'빈 헤더')])]);
     message(d.total+'행 · 해당 열과 시간대를 선택한 뒤 미리보기를 누르세요.');
   }
-  bind('Headers',headers);el('Sheet').onchange=()=>el('Headers').click();
+  bind('Headers',headers);
   for(const id of ['Zone','Poll','Split','Kind','Category','Occurs','Recovers','Pairs'])el(id).oninput=()=>{++token;invalidateImport();};
   bind('NmsPreview',async t=>{
     invalidateImport();if(!uploaded||!el('Coldevice'))throw new Error('먼저 파일의 열을 확인하세요.');
     const columns=Object.fromEntries(['device','message','opened','closed'].map(k=>[k,el('Col'+k).value===''?null:Number(el('Col'+k).value)]));
-    const settings={...uploaded,columns,sheet:el('Sheet').value||null,zone:el('Zone').value,polling:el('Poll').value===''?null:el('Poll').valueAsNumber};
+    const settings={...uploaded,columns,zone:el('Zone').value,polling:el('Poll').value===''?null:el('Poll').valueAsNumber};
     if(el('Split').checked){
       if(!el('Kind').value||!el('Category').value)throw new Error('발생/복구 구분과 공통 이벤트 키 열을 지정하세요.');
       const pairs=Object.create(null);
