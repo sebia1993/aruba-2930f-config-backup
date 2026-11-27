@@ -23,6 +23,9 @@ _BUCKETS = (5, 10, 30, 60, 300)
 _HEAT_COLUMNS = 12
 _PAGE = 100
 _EXCEL_DATA_ROWS = 1_048_575
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_MICROSECOND = timedelta(microseconds=1)
+_SECOND_US = 1_000_000
 
 
 def _integer(value, low, high):
@@ -50,6 +53,47 @@ def _category(row):
 
 def _weight(row):
     return max(1, row["gap_count"] or 0)
+
+
+def _ticks(dt):
+    return (dt - _EPOCH) // _MICROSECOND
+
+
+def _stamp_at(ticks):
+    return _utc(_EPOCH + ticks * _MICROSECOND)
+
+
+def _run_interval(db, run):
+    settings = db.execute("SELECT settings FROM ping_long_runs WHERE id=?", (run,)).fetchone()[0]
+    return json.loads(settings).get("interval")
+
+
+def _gap_slots(row, interval):
+    """Nominal UTC slots for the scheduler's two compressed gap records."""
+    if (
+        type(interval) is int
+        and interval > 0
+        and row["reason"] in ("USER_PAUSED", "SCHEDULE_DELAY")
+        and row["status"] == "not_run"
+        and row["gap_count"] > 0
+        and not row["clock_uncertain"]
+    ):
+        start = _ticks(_instant(row["scheduled_at"]))
+        step = interval * _SECOND_US
+        return range(start, start + row["gap_count"] * step, step)
+    return None
+
+
+def _slot_buckets(slots, origin, width, size):
+    """Count slots in half-open bins without expanding long scheduler pauses."""
+    low = max(0, (slots[0] - origin) // width)
+    high = min(size - 1, (slots[-1] - origin) // width)
+    previous = bisect_left(slots, origin + low * width)
+    for i in range(low, high + 1):
+        following = bisect_left(slots, origin + (i + 1) * width)
+        if following > previous:
+            yield i, following - previous
+        previous = following
 
 
 def _percent(num, den):
@@ -167,52 +211,50 @@ def _series_report(db, run, meta, body):
         query += " AND coalesce(received_at,finished_at,scheduled_at)>=?"
         params.append(_utc(start))
     if end:
-        query += " AND coalesce(received_at,finished_at,scheduled_at)<=?"
-        params.append(_utc(end))
-    rows = db.execute(query + " ORDER BY id", params).fetchall()
+        query += " AND (coalesce(received_at,finished_at,scheduled_at)<=? OR scheduled_at<=?)"
+        params.extend((_utc(end), _utc(end)))
+    interval = _run_interval(db, run)
+    left = _ticks(start) if start else None
+    right = _ticks(end) if end else None
+    rows, times = [], []
+    for row in db.execute(query + " ORDER BY id", params):
+        slots = _gap_slots(row, interval)
+        if slots is not None:
+            first = bisect_left(slots, left) if left is not None else 0
+            stop = bisect_right(slots, right) if right is not None else len(slots)
+            slots = slots[first:stop]
+            if not slots:
+                continue
+            if len(slots) != row["gap_count"]:
+                row = dict(row, gap_count=len(slots), scheduled_at=_stamp_at(slots[0]))
+        else:
+            t = _ticks(_instant(row["received_at"] or row["finished_at"] or row["scheduled_at"]))
+            if (left is not None and t < left) or (right is not None and t > right):
+                continue
+            slots = range(t, t + 1)
+        rows.append(row)
+        times.append(slots)
     metrics = _metrics(rows, meta["target_count"])
     events = list(_events(rows))
     points = []
-    timed = [
-        (r, _instant(r["received_at"] or r["finished_at"] or r["scheduled_at"]).timestamp())
-        for r in rows
-    ]
-    if timed:
-        earliest = min(t for _, t in timed)
-        latest = max(t for _, t in timed)
-        width = max(1, math.ceil((latest - earliest + 1) / 120))
-        bins = {}
-        for r, t in timed:
-            key = int((t - earliest) // width)
-            bucket = bins.setdefault(
-                key,
-                dict(
-                    utc=_utc(datetime.fromtimestamp(earliest + key * width, UTC)),
-                    success=0,
-                    loss=0,
-                    gap=0,
-                    unknown=0,
-                    maxRtt=None,
-                ),
-            )
-            category = _category(r)
-            bucket[category] += _weight(r)
-            if category == "success" and r["rtt_ms"] is not None:
-                bucket["maxRtt"] = max(bucket["maxRtt"] or 0, r["rtt_ms"])
+    if times:
+        earliest = min(slots[0] for slots in times)
+        latest = max(slots[-1] for slots in times)
+        width = math.ceil((latest - earliest + _SECOND_US) / (120 * _SECOND_US)) * _SECOND_US
         points = [
-            bins.get(
-                k,
-                dict(
-                    utc=_utc(datetime.fromtimestamp(earliest + k * width, UTC)),
-                    success=0,
-                    loss=0,
-                    gap=0,
-                    unknown=0,
-                    maxRtt=None,
-                ),
-            )
-            for k in range(max(bins) + 1)
+            dict(utc=_stamp_at(t), success=0, loss=0, gap=0, unknown=0, maxRtt=None)
+            for t in range(earliest, latest + 1, width)
         ]
+        for r, slots in zip(rows, times, strict=True):
+            category = _category(r)
+            if len(slots) == 1:
+                bucket = points[(slots[0] - earliest) // width]
+                bucket[category] += _weight(r)
+                if category == "success" and r["rtt_ms"] is not None:
+                    bucket["maxRtt"] = max(bucket["maxRtt"] or 0, r["rtt_ms"])
+            else:
+                for i, count in _slot_buckets(slots, earliest, width, len(points)):
+                    points[i]["gap"] += count
     return dict(
         series=meta,
         metrics=metrics,
@@ -284,8 +326,16 @@ def _heat(db, run, series, body):
     # A clock jump disqualifies concurrency evidence; the receipt bucket still shows coverage.
     query = """SELECT s.* FROM ping_long_samples s JOIN ping_long_series m USING(run_id,series_id)
         WHERE s.run_id=? AND m.destination_ip=? AND coalesce(s.received_at,s.finished_at,s.scheduled_at)>=?
-        AND coalesce(s.started_at,s.received_at,s.finished_at,s.scheduled_at)<? ORDER BY s.id"""
-    for row in db.execute(query, (run, dest, left, right)):
+        AND (coalesce(s.started_at,s.received_at,s.finished_at,s.scheduled_at)<=? OR s.scheduled_at<=?)
+        ORDER BY s.id"""
+    interval = _run_interval(db, run)
+    origin = _ticks(first)
+    for row in db.execute(query, (run, dest, left, right, right)):
+        slots = _gap_slots(row, interval)
+        if slots is not None:
+            for i, count in _slot_buckets(slots, origin, seconds * _SECOND_US, len(buckets)):
+                buckets[i][devices[row["series_id"]]].append(dict(row, gap_count=count))
+            continue
         finish = _instant(row["received_at"] or row["finished_at"] or row["scheduled_at"])
         start = (
             _instant(row["started_at"])

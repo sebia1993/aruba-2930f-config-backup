@@ -123,6 +123,81 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(filtered["sampleCount"], 2)
         self.assertEqual(filtered["metrics"]["lossRate"], 0)
 
+    def scheduler_gap(self, start, end, count, interval, reason):
+        with self.history.connect() as db:
+            db.execute(
+                "UPDATE ping_long_runs SET settings=? WHERE id=?",
+                (json.dumps({"interval": interval}), RUN),
+            )
+            db.execute(
+                """INSERT INTO ping_long_samples(run_id,series_id,scheduled_at,finished_at,
+                    status,reason,gap_count) VALUES(?,1,?,?,'not_run',?,?)""",
+                (RUN, stamp(start), stamp(end), reason, count),
+            )
+
+    def test_report_counts_only_nominal_gap_slots_in_inclusive_window(self):
+        self.scheduler_gap(5, 103, 20, 5, "USER_PAUSED")
+        self.sample(1, 1, 104, 107, "normal", rtt=2)
+        self.sample(1, None, 108, 112, "ssh_failure", gaps=1)
+        inside = self.api("report", series=1, start=stamp(10), end=stamp(90))
+        self.assertEqual(inside["metrics"]["gap"], 17)
+        self.assertEqual(inside["sampleCount"], 1)
+        self.assertEqual(inside["samples"][0]["gap_count"], 17)
+        self.assertEqual(
+            [point["utc"] for point in inside["points"] if point["gap"]],
+            [stamp(t) for t in range(10, 91, 5)],
+        )
+        for start, end, gap, success in (
+            (0, 5, 1, 0),
+            (100, 100, 1, 0),
+            (100.001, 103, 0, 0),
+            (95, 107, 2, 1),
+            (104, 106, 0, 0),
+            (108, 111, 0, 0),
+            (112, 112, 1, 0),
+        ):
+            with self.subTest(start=start, end=end):
+                view = self.api("report", series=1, start=stamp(start), end=stamp(end))
+                self.assertEqual(
+                    (view["metrics"]["gap"], view["metrics"]["success"]), (gap, success)
+                )
+        complete = self.api("report", series=1)
+        self.assertEqual((complete["metrics"]["gap"], complete["sampleCount"]), (21, 3))
+        self.assertEqual(complete["metrics"]["rttCount"], 1)
+        self.assertEqual(self.api("report", series=1, end=stamp(10))["metrics"]["gap"], 2)
+        self.assertEqual(self.api("report", series=1, start=stamp(95))["metrics"]["gap"], 3)
+
+    def test_heat_apportions_scheduler_delay_to_half_open_buckets(self):
+        self.scheduler_gap(5, 107, 20, 5, "SCHEDULE_DELAY")
+        for start, width, expected in (
+            (0, 5, [0] + [1] * 11),
+            (10, 10, [2] * 9 + [1, 0, 0]),
+            (10, 60, [12, 7] + [0] * 10),
+        ):
+            with self.subTest(width=width):
+                heat = self.api("heat", destination=DEST, bucket=width, start=stamp(start))
+                device = next(row for row in heat["rows"] if row["device"] == "192.0.2.11:22")
+                self.assertEqual([cell["gap"] for cell in device["cells"]], expected)
+                self.assertTrue(
+                    all(cell["loss"] == cell["success"] == 0 for cell in device["cells"])
+                )
+                self.assertTrue(all(not cell["devices"] for cell in heat["overlap"]))
+
+    def test_large_gap_is_one_history_record_with_bounded_proportional_chart(self):
+        self.scheduler_gap(0, 10000, 10000, 1, "SCHEDULE_DELAY")
+        report = self.api("report", series=1)
+        self.assertEqual((report["sampleCount"], report["metrics"]["gap"]), (1, 10000))
+        points = report["points"]
+        self.assertGreater(len(points), 1)
+        self.assertLessEqual(len(points), 120)
+        counts = [point["gap"] for point in points]
+        self.assertEqual(sum(counts), 10000)
+        self.assertEqual(points[0]["utc"], stamp(0))
+        boundaries = [datetime.fromisoformat(point["utc"]) for point in points]
+        boundaries.append(BASE + timedelta(seconds=10000))
+        for left, right, count in zip(boundaries[:-1], boundaries[1:], counts, strict=True):
+            self.assertEqual((right - left).total_seconds(), count)
+
     def test_time_window_overlap_not_only_same_bucket_and_healthy_counterevidence(self):
         self.sample(1, 1, 1, 2, "no_reply")
         self.sample(2, 1, 3, 4, "no_reply")
