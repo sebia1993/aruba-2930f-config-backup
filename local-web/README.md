@@ -1,6 +1,6 @@
-# Aruba 2930F 로컬 웹 1.32.0
+# Aruba 2930F 로컬 웹 1.33.0
 
-장비표를 붙여넣어 실행하면 같은 SW IP에서 선택한 GW·BB·NMS를 각각 독립된 SSH 세션으로 동시에 검사합니다. **Ping 테스트**의 장비표 입력, 장시간 측정 한도와 이력 보존 방법은 [기능 안내](FEATURES_KO.md)에 있습니다.
+**Ping 테스트**에 장비표를 붙여넣고 **Ping 시작**을 누르세요. SSH 계정이 필요하면 같은 화면에서 입력합니다. 실행하면 같은 SW IP에서 선택한 GW·BB·NMS를 각각 독립된 SSH 세션으로 동시에 검사합니다. **Ping 테스트**의 장비표 입력, 장시간 측정 한도와 이력 보존 방법은 [기능 안내](FEATURES_KO.md)에 있습니다.
 
 지원 장비는 Aruba 2930F와 **Aruba 2930M-24G-PoE+ (JL320A)**입니다. 장비에 SSH로 로그인하면 로컬 웹이 스위치 모델을 확인합니다. HPE에서 2930M의 `WC.17.02.0006`은 Boot ROM 버전으로 안내합니다. 실행 중인 ArubaOS-Switch 소프트웨어 버전은 장비의 `show version` 출력에서 별도로 확인할 수 있습니다. [HPE 2930M/F 버전 안내](https://arubanetworking.hpe.com/techdocs/AOS-Switch-RN/Content/16.10RN/WC/Upgrade%20information.htm)
 

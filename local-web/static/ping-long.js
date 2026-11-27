@@ -12,6 +12,7 @@
     <label><input type="checkbox" id="pingLongTrace"> 3회 연속 확인된 손실에서 제한된 경로 진단 실행</label>
     <details><summary>측정 주기와 종료 정책</summary><p>Timeout은 스위치가 응답을 기다리는 시간입니다. 목표 주기는 같은 조합의 명령을 시작하려는 간격입니다. SSH 준비, 다른 작업과의 경합, 목적지별 전송 제한으로 간격과 ETA가 늘어날 수 있습니다. 관측 시각은 수집 PC의 명령 처리 시각입니다. 일시정지·미측정은 손실에서 제외하며 실제 경과 시간 한도는 유지합니다. 마지막 브라우저 탭을 닫으면 측정이 중단될 수 있습니다.</p></details>
     <div class="bar"><button id="pingLongPreview" type="button">예상시간 계산</button><button id="pingLongStart" class="primary" type="button" disabled>검토한 설정으로 장시간 측정 시작</button></div>
+    <p id="pingLongStartFeedback" role="status" class="hint" hidden></p>
     <p id="pingLongEstimate" class="hint" role="status">대상과 목표 횟수를 선택한 후 예상시간을 확인하세요.</p>
     <div class="bar"><button id="pingLongPause" type="button" disabled>일시정지</button><button id="pingLongResume" type="button" disabled>재개</button><button id="pingLongCancel" type="button" disabled>측정 중지</button><button id="pingLongRefresh" type="button">상태 확인</button></div>
     <p id="pingLongStatus" role="status"></p><progress id="pingLongProgress" aria-label="장시간 Ping 진행률" max="1" value="0"></progress>
@@ -31,24 +32,29 @@
   const kst = value => value ? new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',hour12:false})+' KST' : '—';
   const settings = () => ({plan:window.readGeneralPingPlan(),count:el('Count').valueAsNumber,
     interval:Number(el('Interval').value), maxHours:el('Hours').valueAsNumber, autoTrace:el('Trace').checked});
-  let known = null, checked = null, revision = 0, working = false, discovered = false, last = null, fresh = false, at = 0;
+  let known = null, checked = null, revision = 0, navigationRevision = 0, operation = null, discoveringAccount = false, discovered = false, last = null, fresh = false, at = 0;
   const phase = {DONE:'완료',IN_FLIGHT:'응답 대기',SSH_PREPARATION:'SSH 준비',PAUSING:'정리 중',PAUSED:'일시정지',
     STOPPING:'중지 중',CANCELLED:'부분 종료',FAILED:'오류',INTERRUPTED:'중단',OTHER_OPERATION:'다른 작업에 양보',
     RECONNECT:'재연결 대기',DEVICE_BUSY:'장비 사용 중',INTERVAL:'다음 예정 시각 대기',QUEUED:'실행 대기',BLOCKED:'조합 중단'};
-  let storageAvailable = true, freezeAt = null, lastStatusText = '';
+  let storageAvailable = true, freezeAt = null, lastStatusText = '', uncertainStartId = null;
   try { known = sessionStorage.getItem(storageKey); }
   catch { storageAvailable = false; }
   function buttons() {
     const live = last && !terminal.has(last.state);
-    el('Start').disabled = working || !storageAvailable || !discovered || !checked || !!live || (!!known && !last);
-    el('Pause').disabled = working || last?.state !== 'running';
-    el('Resume').disabled = working || last?.state !== 'paused';
-    el('Cancel').disabled = working || !live || last?.state === 'stopping';
+    el('Start').disabled = !!operation || discoveringAccount || !storageAvailable || !discovered || !checked || !!live || (!!known && !last);
+    el('Pause').disabled = !!operation || last?.state !== 'running';
+    el('Resume').disabled = !!operation || last?.state !== 'paused';
+    el('Cancel').disabled = !!operation || !live || last?.state === 'stopping';
+  }
+  function startFeedback(message='') {
+    el('StartFeedback').textContent=message;
+    el('StartFeedback').hidden=!message;
   }
   let previewTimer = null;
   function clear() {
     revision++;
     checked = null;
+    startFeedback();
     el('Estimate').textContent = '설정이 바뀌었습니다. 예상시간을 다시 계산하세요.';
     clearTimeout(previewTimer);
     const hasInput = window.pingInventory.active() ? !$('pingInventoryReview').hidden :
@@ -58,12 +64,12 @@
     }
     buttons();
   }
-  for (const type of ['input','change']) {
-    mount.addEventListener(type, e => {
-      if (['pingLongCount','pingLongInterval','pingLongHours','pingLongTrace'].includes(e.target.id)) clear();
-    });
-    document.getElementById('pingForm').addEventListener(type,clear);
-  }
+  // Text and number controls also fire change on blur, after the edited value was previewed.
+  // Disabling Start again during mouse-down would discard the operator's first click.
+  mount.addEventListener('input', e => {
+    if (['pingLongCount','pingLongInterval','pingLongHours','pingLongTrace'].includes(e.target.id)) clear();
+  });
+  document.getElementById('pingForm').addEventListener('input',clear);
   document.getElementById('pingForm').addEventListener('click', e => { if (e.target.closest('[data-ping-preset]')) clear(); });
   document.querySelector('[data-ping-pane="long"]')?.addEventListener('click', () => queueMicrotask(clear));
   el('Preview').onclick = async () => {
@@ -94,6 +100,7 @@
       ' · 예상 종료 '+kst(last.estimatedFinish)+(Number.isFinite(last.activeSeconds) ? ' · 측정 '+time(last.activeSeconds)+' / 대기 '+time(last.waitingSeconds)+' / 일시정지 '+time(last.pausedSeconds) : '')+' · 마지막 갱신 '+kst(last.estimatedAt);
   }
   function render(result) {
+    if (result.id === uncertainStartId) { uncertainStartId=null; startFeedback(); }
     last = result; fresh = true; freezeAt=null; at = performance.now();
     el('Status').textContent = (last.staleControl ? '다른 화면에서 상태가 변경되어 요청을 적용하지 않았습니다. · ' : '')+(labels[last.state] || last.state)+' · '+last.completed+'/'+last.target+
       '회 처리 · 성공 '+last.success+' · 확인된 손실 '+last.loss+' · 그 외 처리 '+(last.completed-last.success-last.loss)+
@@ -199,6 +206,10 @@
       try { render(await api(base+'/runs/'+known,undefined,undefined,10000)); }
       catch (err) {
         if (err.status === 404) {
+          if (known===uncertainStartId) {
+            uncertainStartId=null;
+            startFeedback('이 요청의 접수 기록이 없습니다. 설정을 확인하고 시작을 다시 누르세요.');
+          }
           remember(null); last=null; discovered=false;
           el('Status').textContent = '기존 ID의 접수 기록을 찾지 못했습니다. 현재 작업을 다시 확인하세요.';
         }
@@ -208,20 +219,66 @@
       el('Status').textContent = '실행 중인 장시간 작업이 없습니다.';
     }
   }
-  async function perform(fn) {
-    if (working || !ui.token) return;
-    working = true; buttons();
-    try { await fn(); }
-    catch (err) { if (fresh) freezeAt=Math.min(15,Math.floor((performance.now()-at)/1000)); fresh=false; countdown(); el('Status').textContent = '상태 확인 필요 · '+err.message+(lastStatusText ? ' · 마지막 확인 '+lastStatusText : ''); }
-    finally { working=false; buttons(); }
+  function perform(fn,onError) {
+    if (operation || !ui.token) return operation;
+    operation=Promise.resolve().then(fn).catch(err=>{
+      if (fresh) freezeAt=Math.min(15,Math.floor((performance.now()-at)/1000));
+      fresh=false; countdown();
+      el('Status').textContent = '상태 확인 필요 · '+err.message+(lastStatusText ? ' · 마지막 확인 '+lastStatusText : '');
+      onError?.(err);
+    }).finally(()=>{ operation=null; buttons(); });
+    buttons();
+    return operation;
   }
-  el('Start').onclick = () => perform(async () => {
-    if (!checked || JSON.stringify(settings()) !== JSON.stringify(checked)) { clear(); return; }
-    const id = Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');
-    remember(id); last=null;
-    await api(base+'/runs',{requestId:id,settings:checked},undefined,15000);
-    await read();
-  });
+  el('Start').onclick = async () => {
+    if (el('Start').disabled) return;
+    const reviewed=checked, previousId=known, requestNavigation=navigationRevision;
+    const stillRequested=()=>requestNavigation===navigationRevision &&
+      location.hash==='#ping' && !mount.hidden && checked===reviewed &&
+      known===previousId && (!last || terminal.has(last.state));
+    discoveringAccount=true; buttons();
+    startFeedback('스위치 SSH 계정을 확인하고 있습니다.');
+    try {
+      if (!await ensurePingSshAccount(stillRequested)) {
+        startFeedback(stillRequested() ? '계정 입력을 취소했습니다. 장시간 Ping을 시작하려면 시작을 다시 누르세요.' : '');
+        return;
+      }
+      startFeedback();
+      // The operator may spend several poll cycles entering their account.
+      await operation;
+      if (!stillRequested()) { startFeedback(); return; }
+      await perform(async () => {
+        const current=await api(base+'/runs',undefined,undefined,10000);
+        if (!stillRequested()) { startFeedback(); return; }
+        if (current.id && current.id!==previousId) {
+          startFeedback('다른 화면에서 시작한 장시간 측정의 상태를 표시합니다.');
+          remember(current.id); last=null;
+          await read();
+          return;
+        }
+        if (JSON.stringify(settings()) !== JSON.stringify(reviewed)) { clear(); return; }
+        const id=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');
+        const previousResult=last;
+        remember(id); last=null;
+        startFeedback('장시간 Ping 시작을 요청하고 있습니다.');
+        try {
+          await api(base+'/runs',{requestId:id,settings:reviewed},undefined,15000);
+        } catch (err) {
+          if (err.serverRejection && [400,403,409,413,415].includes(err.status)) {
+            remember(previousId); last=previousResult;
+            startFeedback(err.message);
+            return;
+          }
+          uncertainStartId=id;
+          startFeedback('접수 여부를 확인 중입니다. 기존 요청의 상태를 조회합니다.');
+          throw err;
+        }
+        startFeedback();
+        await read();
+      },err=>{ if (!uncertainStartId) startFeedback(err.message); });
+    } catch (err) { startFeedback(err.message); }
+    finally { discoveringAccount=false; buttons(); }
+  };
   for (const [id,action] of Object.entries(actions)) {
     el(id).onclick = () => perform(async () => { if (known) render(await api(base+'/runs/'+known+'/'+action,{revision:last.revision},undefined,10000)); });
   }
@@ -229,7 +286,8 @@
   const poll = () => { if (!document.hidden && location.hash === '#ping') perform(read); };
   setInterval(poll,5000);
   setInterval(countdown,1000);
-  window.addEventListener('hashchange',poll);
+  window.addEventListener('hashchange',()=>{ navigationRevision++; poll(); });
+  document.addEventListener('pingpane',e=>{ if (e.detail!=='long') navigationRevision++; });
   document.addEventListener('visibilitychange',poll);
   buttons(); poll();
 })();

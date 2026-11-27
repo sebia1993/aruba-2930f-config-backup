@@ -8,12 +8,20 @@
   const pageSize = 50;
   const textInput = $('pingInventoryText');
   let preview = null, revision = 0, page = 0;
+  let readTimer, waitingForToken = false;
   let explicitSelection = false, mappedSelection = null;
   const selected = new Set();
-  const notify = () => form.dispatchEvent(new Event('input', {bubbles:true}));
   const active = () => mode.value === 'inventory';
+  const notify = () => {
+    if (active()) form.dispatchEvent(new Event('input', {bubbles:true}));
+  };
   const selectedRoles = () => roles.filter(box => box.checked).map(box => box.dataset.inventoryRole);
   const rolesForRow = (row, keys) => keys.filter(key => row[key]);
+  function hasTargets() {
+    if (!preview || preview.errors.length || !selected.size || selected.size > 300) return false;
+    const keys = selectedRoles();
+    return preview.rows.some(row => selected.has(row.rowNumber) && keys.some(key => row[key]));
+  }
   function minimumConcurrency() {
     if (!active() || !preview) return 1;
     const roles = selectedRoles();
@@ -23,7 +31,7 @@
 
   function targets() {
     const keys = selectedRoles();
-    if (!preview || preview.errors.length) throw new Error('열 연결과 입력 오류를 확인한 뒤 표를 다시 읽으세요.');
+    if (!preview || preview.errors.length) throw new Error('표의 열 제목과 입력 상태를 확인하세요.');
     if (!keys.length) throw new Error('측정할 목적지를 하나 이상 선택하세요.');
     if (!selected.size || selected.size > 300) throw new Error('측정할 장비를 1~300대 선택하세요.');
     const rows = preview.rows.filter(row => selected.has(row.rowNumber));
@@ -105,6 +113,8 @@
     notify();
   }
   function resetInput() {
+    clearTimeout(readTimer);
+    waitingForToken = false;
     revision++;
     mappedSelection = null; explicitSelection = false;
     clearReview();
@@ -124,9 +134,17 @@
   }
   mode.addEventListener('change', syncMode);
   syncMode();
-  textInput.addEventListener('input', () => {
+  textInput.addEventListener('input', event => {
     resetInput();
-    status.textContent = '붙여넣은 표 읽기를 눌러 입력을 확인하세요.';
+    const text = textInput.value;
+    if (!text.trim()) return;
+    if (text.length > 3 * 1024 * 1024 || new Blob([text]).size > 3 * 1024 * 1024) {
+      status.textContent = '3 MiB 이하의 표를 붙여넣으세요.';
+      return;
+    }
+    status.textContent = '표를 읽는 중입니다.';
+    if (event.inputType === 'insertFromPaste') inspect();
+    else readTimer = setTimeout(() => inspect(), 180);
   });
   function rememberMappedSelection() {
     if (preview && !preview.errors.length && explicitSelection) {
@@ -144,8 +162,11 @@
       result.headers.forEach((name, index) => select.add(new Option((index + 1) + '열 · ' + (name || '(빈 제목)'), String(index))));
       select.value = result.mapping[key] == null ? '' : String(result.mapping[key]);
       select.addEventListener('change', () => {
-        rememberMappedSelection();
-        clearReview(); status.textContent = '열 연결 적용을 눌러 변경한 열로 검토하세요.';
+        const mapping = {};
+        for (const field of holder.querySelectorAll('select')) {
+          mapping[field.dataset.inventoryField] = field.value === '' ? null : Number(field.value);
+        }
+        inspect(mapping);
       });
       label.append(select); holder.append(label);
     }
@@ -153,38 +174,42 @@
     $('pingInventoryMap').open = !!result.errors.length;
   }
   async function inspect(mapping) {
+    if (!ui.token) {
+      waitingForToken = true;
+      status.textContent = '로컬 서버 연결을 기다리는 중입니다.';
+      return;
+    }
     const version = ++revision;
     if (!mapping) { mappedSelection = null; explicitSelection = false; }
     else rememberMappedSelection();
     clearReview();
-    $('pingInventoryMap').hidden = true;
     status.textContent = '표를 읽는 중입니다.';
     try {
       const data = await api('/api/ping/inventory/preview', {text:textInput.value, mapping}, undefined, 20000);
       if (revision !== version) return;
       preview = data;
-      mappingControls(data);
+      if (!mapping) mappingControls(data);
       $('pingInventoryReview').hidden = !data.rows.length;
+      if (!mapping) $('pingInventoryReview').open = data.rows.length > 300 || data.rows.some(row => row.errors.length);
       chooseValid(mappedSelection);
       notify();
-    } catch (err) { if (revision === version) status.textContent = err.message; }
+    } catch (err) {
+      if (revision !== version) return;
+      status.textContent = err.message;
+      if (!err.serverRejection || err.status >= 500) {
+        const retry = elem('button', '표 다시 읽기');
+        retry.type = 'button';
+        retry.onclick = () => inspect(mapping);
+        status.append(' ', retry);
+      }
+    }
   }
-  $('pingInventoryRead').onclick = () => {
-    const text = textInput.value;
-    resetInput();
-    if (text.length > 3 * 1024 * 1024 || new Blob([text]).size > 3 * 1024 * 1024) {
-      status.textContent = '3 MiB 이하의 표를 붙여넣으세요.';
+  window.addEventListener('aruba-session-ready', () => {
+    if (waitingForToken) {
+      waitingForToken = false;
+      inspect();
     }
-    else if (text.trim()) inspect();
-    else status.textContent = '열 이름과 장비 행을 함께 붙여넣으세요.';
-  };
-  $('pingInventoryApply').onclick = () => {
-    const map = {};
-    for (const select of $('pingInventoryMapping').querySelectorAll('select')) {
-      map[select.dataset.inventoryField] = select.value === '' ? null : Number(select.value);
-    }
-    inspect(map);
-  };
+  });
   function applyProfile(plan) {
     mode.value = plan?.inventoryRows ? 'inventory' : 'list';
     syncMode();
@@ -195,5 +220,5 @@
     $('pingInventoryReview').hidden = false;
     chooseValid(); notify();
   }
-  window.pingInventory = {active, targets, applyProfile, rolesForRow, roleNames, minimumConcurrency};
+  window.pingInventory = {active, targets, hasTargets, applyProfile, rolesForRow, roleNames, minimumConcurrency};
 })();

@@ -33,6 +33,13 @@ _PRESETS = {
 }
 
 
+class PingAccountRequired(ValueError):
+    """Ping admission needs an operator-supplied switch account."""
+
+    def __init__(self):
+        super().__init__("SSH 접속 계정이 없습니다. Ping 시작을 다시 눌러 장비 계정을 입력하세요.")
+
+
 def unicast_ipv4(value: object) -> str:
     """Accept only literal IPv4 unicast addresses, never a CLI fragment."""
     if not isinstance(value, str) or not re.fullmatch(r"[0-9.]{7,15}", value):

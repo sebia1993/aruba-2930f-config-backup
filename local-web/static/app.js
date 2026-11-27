@@ -867,13 +867,25 @@ function queryPorts(targets) {
   });
 }
 let credentialRequest=null;
-function withSshAccount(onConnected,manual=false) {
-  if (queryCredentials.open || !ui.token || (ui.busy && !(manual && ui.manualForeground && ui.session.active))) return;
-  if (ui.session.active) return onConnected();
-  credentialRequest=onConnected;
+function askSshAccount(onConnected,onCancelled) {
+  credentialRequest={onConnected,onCancelled};
   $('queryLoginForm').reset();
   $('queryLoginError').hidden=true;
   queryCredentials.showModal();
+}
+function withSshAccount(onConnected,manual=false) {
+  if (queryCredentials.open || !ui.token || (ui.busy && !(manual && ui.manualForeground && ui.session.active))) return;
+  if (ui.session.active) return onConnected();
+  askSshAccount(onConnected);
+}
+async function ensurePingSshAccount(stillRequested=()=>true) {
+  if (!ui.token) throw new Error('브라우저 연결을 확인한 뒤 다시 시작하세요.');
+  // Another tab can apply or clear the shared account after this tab's bootstrap.
+  const {session}=await api('/api/monitor',undefined,undefined,10000);
+  if (!stillRequested()) return false;
+  if (session.active) return true;
+  if (ui.busy || queryCredentials.open) throw new Error('현재 작업을 마친 후 SSH 계정을 입력하고 Ping을 시작하세요.');
+  return new Promise(resolve=>askSshAccount(()=>resolve(stillRequested()),()=>resolve(false)));
 }
 function runSsh(action, body, receive) {
   return withSshAccount(()=>run(action,body,receive),action==='control.quick-execute');
@@ -891,25 +903,27 @@ form('queryForm', () => {
 $('cancelQueryCredentials').onclick = () => queryCredentials.close();
 queryCredentials.addEventListener('close', () => {
   if (queryCredentials.open) return;
+  credentialRequest?.onCancelled?.();
   credentialRequest=null; $('queryLoginForm').reset();
 });
 form('queryLoginForm', async () => {
   if (!queryCredentials.open || ui.busy || !ui.token) return;
-  const onConnected=credentialRequest;
+  const request=credentialRequest;
   const submit = $('submitQueryCredentials'), error = $('queryLoginError');
   error.hidden = true;
   submit.textContent = '계정 적용 중…';
   const applied = await applySshAccount($('queryUsername'), $('queryPassword'), $('queryEnableSecret'));
   submit.textContent = '계정 적용 후 계속';
-  if (!queryCredentials.open || credentialRequest!==onConnected) return;
+  if (!queryCredentials.open || credentialRequest!==request) return;
   if (!applied) {
     error.textContent = $('statusText').textContent;
     error.hidden = false;
     $('queryPassword').focus();
     return;
   }
+  credentialRequest=null;
   queryCredentials.close();
-  onConnected?.();
+  request?.onConnected();
 });
 function retryFailedPorts(key=null) {
   const liveId=ui.liveId;
@@ -1209,6 +1223,7 @@ async function start() {
   try {
     const bootstrap = await api('/api/bootstrap');
     ui.token = bootstrap.token;
+    window.dispatchEvent(new Event('aruba-session-ready'));
     import('/static/browser-presence.js').then(module=>module.watchBrowserTab(bootstrap)).catch(()=>{});
     ui.session = bootstrap.session || {active:false};
     ui.bootMonitor=bootstrap.monitor;
