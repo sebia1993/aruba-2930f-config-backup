@@ -55,6 +55,34 @@ class PingFileTests(unittest.TestCase):
         self.assertEqual(import_profile(json.dumps(portable), self.root), selected)
         self.assertEqual(profile_request(self.jobs, "list", {})["names"], [])
 
+    def test_inventory_profile_roundtrip_retains_switch_to_role_mapping(self):
+        plan = {
+            "inventoryRows": [
+                {
+                    "hostname": "SW-A",
+                    "swIp": "192.0.2.1",
+                    "gwIp": "198.51.100.1",
+                    "bbIp": "198.51.100.2",
+                    "nmsIp": "",
+                },
+                {
+                    "hostname": "SW-B",
+                    "swIp": "192.0.2.2",
+                    "gwIp": "198.51.100.3",
+                    "bbIp": "",
+                    "nmsIp": "198.51.100.4",
+                },
+            ],
+            "inventoryRoles": ["gwIp", "nmsIp"],
+        }
+        profile_request(self.jobs, "save", {"name": "야간", "plan": plan})
+        portable = profile_request(self.jobs, "portable", {"plan": plan})
+        restored = import_profile(json.dumps(portable), self.root)
+        self.assertEqual(restored, profile_request(self.jobs, "load", {"name": "야간"}))
+        for key in plan:
+            self.assertEqual(restored["plan"][key], plan[key])
+        self.assertNotIn("destinations", restored["plan"])
+
     def test_imported_port_profile_preserves_only_unique_endpoints(self):
         from aruba2930f_backup.poe_targets import _PROFILE_FORMAT
 
@@ -96,6 +124,64 @@ class PingFileTests(unittest.TestCase):
         self.assertIsNone(sheet["N2"].value)
         with self.assertRaises(ValueError):
             general_excel(self.jobs, "0" * 32, {"indices": [True]})
+
+    def test_inventory_excel_reuses_result_only_within_its_switch_and_export_scope(self):
+        shared = "198.51.100.1"
+        a = {
+            "hostname": "=test",
+            "swIp": "192.0.2.1",
+            "gwIp": shared,
+            "bbIp": shared,
+            "nmsIp": "",
+            "activeDestinations": [shared],
+        }
+        b = dict(a, hostname="SW-B", swIp="192.0.2.2", bbIp="", nmsIp="198.51.100.5")
+        c = dict(a, hostname="SW-C", swIp="192.0.2.3", bbIp="", gwIp="", activeDestinations=[])
+        rows = [
+            {
+                "index": 0,
+                "ip": b["swIp"],
+                "destination_ip": shared,
+                "status": "ssh_failure",
+                "reason_code": "AUTH_FAILED",
+            },
+            {
+                "index": 1,
+                "ip": a["swIp"],
+                "destination_ip": shared,
+                "status": "normal",
+                "sent": 5,
+                "received": 5,
+                "rtt_avg_ms": 2.5,
+            },
+        ]
+        result = dict(
+            total=2,
+            completed=2,
+            inventoryRows=[a, b, c],
+            inventoryRoles=["gwIp", "bbIp"],
+            rows=rows,
+        )
+        self.jobs.ping_status = lambda key: dict(
+            state="done", started="", finished="", result=result
+        )
+
+        def report(indices):
+            wb = load_workbook(BytesIO(general_excel(self.jobs, "a" * 32, {"indices": indices})))
+            self.addCleanup(wb.close)
+            return wb["장비별 결과"]
+
+        full = report([0, 1])
+        self.assertEqual(full.max_row, 4)
+        self.assertEqual((full["A2"].value, full["A2"].data_type), ("=test", "s"))
+        self.assertEqual(full["F2"].value, full["G2"].value)
+        self.assertIn("전송 5 / 응답 5", full["F2"].value)
+        self.assertIn("2.5 ms", full["F2"].value)
+        self.assertIn("AUTH_FAILED", full["F3"].value)
+        self.assertEqual((full["H2"].value, full["H3"].value), ("대상 없음", "역할 미선택"))
+        self.assertEqual(full["F4"].value, "대상 없음")
+        subset = report([0])
+        self.assertEqual((subset.max_row, subset["A2"].value), (2, "SW-B"))
 
     def test_route_forces_limited_command_and_verifies_source_before_write(self):
         session = MagicMock(spec=RouteSession)

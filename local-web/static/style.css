@@ -81,6 +81,10 @@ h2 { font-size: 15px; font-weight: 730; margin: 0; }
 [data-page="ping"] .bar[aria-label="Ping 작업 선택"] { padding: 0; margin-bottom: 12px; }
 [data-ping-pane][aria-pressed="true"] { border-color: var(--teal); color: var(--teal); }
 [data-page="ping"] .tablebox { overflow-x: auto; }
+.ping-input-fields { display: grid; gap: 10px; min-width: 0; }
+.ping-input-fields fieldset { margin: 0; min-width: 0; border: 1px solid var(--line); border-radius: 7px; }
+.ping-role-options label { display: flex; align-items: center; gap: 6px; }
+#pingInventoryMapping { margin: 10px 0; }
 .bar { align-items: end; }
 label { display: grid; gap: 5px; font-size: 12px; font-weight: 650; color: var(--muted); min-width: 0; }
 input:not([type=checkbox]),textarea,select { width: 100%; min-height: 38px; padding: 7px 10px; background: var(--field); color: var(--ink); border: 1px solid var(--line); border-radius: 7px; }

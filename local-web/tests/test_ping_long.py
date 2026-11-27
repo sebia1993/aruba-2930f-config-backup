@@ -111,6 +111,59 @@ class LongPingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.start()
 
+    def test_inventory_reuses_shared_address_per_switch_and_keeps_roles_after_restart(self):
+        gateway, shared = "198.51.100.1", "198.51.100.2"
+        self.settings.update(
+            count=2,
+            plan={
+                "inventoryRows": [
+                    {
+                        "hostname": "North",
+                        "swIp": "192.0.2.1",
+                        "gwIp": gateway,
+                        "bbIp": gateway,
+                        "nmsIp": shared,
+                    },
+                    {"hostname": "South", "swIp": "192.0.2.2", "nmsIp": shared},
+                ],
+                "inventoryRoles": ["gwIp", "bbIp", "nmsIp"],
+            },
+        )
+        preview = self.engine.preview(self.settings)
+        self.assertEqual((preview["pairs"], preview["total"]), (3, 6))
+        self.start()
+        for clock in [0, 1, 2, 3, 6, 7, 8, 9]:
+            self.clock.value = clock
+            self.tick()
+        pairs = [(t, d) for _, t, d in self.calls]
+        self.assertCountEqual(
+            pairs,
+            [("192.0.2.1:22", gateway), ("192.0.2.1:22", shared), ("192.0.2.2:22", shared)] * 2,
+        )
+        archived = LongPing(self.jobs).status(self.key)
+        self.assertEqual((archived["state"], archived["completed"]), ("done", 6))
+        self.assertEqual(archived["settings"], self.status()["settings"])
+        self.assertEqual(archived["settings"]["inventoryRows"][0]["hostname"], "North")
+        self.assertEqual(archived["settings"]["inventoryRoles"], ["gwIp", "bbIp", "nmsIp"])
+
+    def test_live_and_archived_mean_use_only_successful_numeric_rtts(self):
+        self.settings["count"] = 4
+        self.start()
+        self.assertIsNone(self.status()["series"][0]["avgRttMs"])
+        observations = [
+            PingObservation("normal", 1, 1, 0, rtt_evidence="<1/<1/<1"),
+            PingObservation("normal", 1, 1, 0, rtt_avg_ms=0),
+            PingObservation("no_reply", 1, 0, 100),
+            PingObservation("normal", 1, 1, 0, rtt_avg_ms=9),
+        ]
+        for idx, observation in enumerate(observations):
+            self.result = observation
+            self.clock.value = idx * 5
+            self.tick()
+        for status in (self.status(), LongPing(self.jobs).status(self.key)):
+            series = status["series"][0]
+            self.assertEqual((series["success"], series["loss"], series["avgRttMs"]), (3, 1, 4.5))
+
     def test_pause_releases_slot_and_resume_has_gap_no_burst_absolute_timeout(self):
         self.start()
         self.tick()
@@ -149,6 +202,32 @@ class LongPingTests(unittest.TestCase):
         )
         self.assertIsNone(self.samples()[0]["started_at"])
         self.assertIsNone(self.samples()[0]["attempt"])
+        for status in (self.status(), LongPing(self.jobs).status(self.key)):
+            series = status["series"][0]
+            self.assertEqual((series["sshFailures"], series["gaps"], series["unknown"]), (1, 1, 0))
+
+    def test_unconfirmed_measurements_are_separate_from_preflight_and_timing_gaps(self):
+        self.settings["count"] = 3
+        self.start()
+
+        def prep_failed(*args, **kwargs):
+            raise CollectionFailure(ErrorCode.TCP_TIMEOUT, "fixture")
+
+        self.tick(prep_failed)
+        self.result = PingObservation("unreachable")
+        self.clock.value = 5
+        self.tick()
+        self.result = PingObservation("no_reply", 1, 0, 100)
+        self.clock.value = 15
+        self.tick()
+        self.result = PingObservation("normal", 1, 1, 0, rtt_avg_ms=2)
+        self.clock.value = 20
+        self.tick()
+        for status in (self.status(), LongPing(self.jobs).status(self.key)):
+            series = status["series"][0]
+            self.assertEqual(series["completed"], 3)
+            self.assertEqual((series["success"], series["loss"], series["unknown"]), (1, 1, 1))
+            self.assertEqual((series["gaps"], series["sshFailures"]), (2, 1))
 
     def test_inflight_intent_is_visible_pause_and_recovery_never_reissues(self):
         self.start()
@@ -181,6 +260,9 @@ class LongPingTests(unittest.TestCase):
                     snap = recovered.status(self.key)
                     self.assertEqual(
                         (snap["state"], snap["completed"], snap["loss"]), ("interrupted", 1, 0)
+                    )
+                    self.assertEqual(
+                        (snap["series"][0]["unknown"], snap["series"][0]["sshFailures"]), (1, 0)
                     )
                     self.assertIsNone(recovered.current()["id"])
             finally:

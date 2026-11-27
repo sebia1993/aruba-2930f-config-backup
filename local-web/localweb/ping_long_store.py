@@ -5,6 +5,14 @@ from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
 
 
+def sample_category(status, sent, received, gap_count):
+    if status == "normal" and sent == received == 1:
+        return "success"
+    if status in {"no_reply", "unreachable"} and sent == 1 and received == 0:
+        return "loss"
+    return "gap" if gap_count or status == "not_run" else "unknown"
+
+
 @contextmanager
 def history_connection(path):
     with closing(sqlite3.connect(path, timeout=2)) as db, db:

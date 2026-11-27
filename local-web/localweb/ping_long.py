@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 
 from aruba2930f_backup.models import CollectionFailure, ErrorCode
 
-from .ping_long_store import LongHistory
+from .ping_long_store import LongHistory, sample_category
 from .ping_tools import PingPlan
 
 MAX_ATTEMPTS = 200_000
@@ -60,7 +60,7 @@ def parse_settings(body):
         raise ValueError("실행 한도는 1~48시간입니다. 자동 경로 진단 선택을 확인하세요.")
     if plan.total_pairs * count > MAX_ATTEMPTS:
         raise ValueError("한 번에 최대 200,000회까지 실행할 수 있습니다. 조합이나 목표를 줄이세요.")
-    return plan, {
+    settings = {
         "count": count,
         "interval": interval,
         "maxHours": hours,
@@ -68,6 +68,11 @@ def parse_settings(body):
         "timeout": plan.options.timeout,
         "dataSize": plan.options.data_size,
     }
+    if plan.inventory:
+        settings.update(
+            inventoryRows=plan.inventory_rows, inventoryRoles=list(plan.inventory_roles)
+        )
+    return plan, settings
 
 
 @dataclass
@@ -81,6 +86,10 @@ class Series:
     success: int = 0
     loss: int = 0
     gaps: int = 0
+    unknown: int = 0
+    ssh_failures: int = 0
+    rtt_count: int = 0
+    rtt_sum_ms: float = 0.0
     interval: float | None = None
     last_send: float | None = None
     failures: int = 0
@@ -124,10 +133,7 @@ class LongRun:
         self.duration = max(0.5, plan.options.timeout / 2)
         self.samples = 0
         self.series = [
-            Series(i, target, dest, clock)
-            for i, (target, dest) in enumerate(
-                (target, dest) for target in plan.targets for dest in plan.destinations
-            )
+            Series(i, target, dest, clock) for i, (target, dest) in enumerate(plan.pairs)
         ]
         self.initial_eta = self.estimate(clock)[0]
 
@@ -211,6 +217,9 @@ class LongRun:
                 success=s.success,
                 loss=s.loss,
                 gaps=s.gaps,
+                unknown=s.unknown,
+                sshFailures=s.ssh_failures,
+                avgRttMs=round(s.rtt_sum_ms / s.rtt_count, 3) if s.rtt_count else None,
                 actualInterval=s.interval,
                 wait=self._series_state(s, clock),
                 blockReason=s.blocked,
@@ -385,19 +394,33 @@ class LongPing:
                 dict(r)
                 for r in db.execute(
                     """
+                WITH samples AS (
+                    SELECT *, CASE
+                        WHEN status='normal' AND sent=1 AND received=1 THEN 'success'
+                        WHEN status IN ('no_reply','unreachable') AND sent=1 AND received=0 THEN 'loss'
+                        WHEN gap_count>0 OR status='not_run' THEN 'gap'
+                        ELSE 'unknown' END AS category
+                    FROM ping_long_samples WHERE run_id=?
+                )
                 SELECT s.series_id AS 'index',s.switch_ip || ':' || s.ssh_port AS switch,
                     s.destination_ip AS destination, s.target_count AS target, b.reason AS blockReason,
                     COUNT(m.attempt) AS started,COUNT(m.attempt) AS completed,
-                    COUNT(CASE WHEN m.status='normal' AND m.received=1 THEN 1 END) AS success,
-                    COUNT(CASE WHEN m.status IN ('no_reply','unreachable') AND m.sent=1 AND m.received=0 THEN 1 END) AS loss,
-                    COALESCE(SUM(m.gap_count),0) AS gaps
-                FROM ping_long_series s LEFT JOIN ping_long_samples m
+                    COUNT(CASE WHEN m.category='success' THEN 1 END) AS success,
+                    COUNT(CASE WHEN m.category='loss' THEN 1 END) AS loss,
+                    COUNT(CASE WHEN m.category='unknown' THEN m.id END) AS unknown,
+                    COUNT(CASE WHEN m.status='ssh_failure' THEN 1 END) AS sshFailures,
+                    AVG(CASE WHEN m.category='success' THEN m.rtt_ms END) AS avgRttMs,
+                    SUM(CASE WHEN m.category='gap' THEN MAX(1,m.gap_count) ELSE 0 END) AS gaps
+                FROM ping_long_series s LEFT JOIN samples m
                 ON m.run_id=s.run_id AND m.series_id=s.series_id
                 LEFT JOIN ping_long_blocks b ON b.run_id=s.run_id AND b.series_id=s.series_id
                 WHERE s.run_id=? GROUP BY s.series_id ORDER BY s.series_id""",
-                    (key,),
+                    (key, key),
                 )
             ]
+            for row in rows:
+                if row["avgRttMs"] is not None:
+                    row["avgRttMs"] = round(row["avgRttMs"], 3)
             return dict(
                 id=key,
                 state=record["state"],
@@ -778,13 +801,20 @@ class LongPing:
                 )
                 s.completed += 1
                 s.failures = 0
-                loss = status in {"no_reply", "unreachable"} and sent == 1 and received == 0
-                s.success += int(status == "normal" and received == 1)
+                category = sample_category(status, sent, received, 0)
+                if category == "success" and rtt is not None:
+                    s.rtt_count += 1
+                    s.rtt_sum_ms += rtt
+                loss = category == "loss"
+                s.success += int(category == "success")
                 s.loss += int(loss)
+                s.gaps += int(category == "gap")
+                s.unknown += int(category == "unknown")
                 if loss and not s.streak:
                     s.streak_start = s.started
                     s.streak_time = stamp(observed_at)
                 s.streak = s.streak + 1 if loss else 0
+            s.ssh_failures += int(status == "ssh_failure")
             if run.state == "running" and (
                 error in DEVICE_ERRORS or s.failures >= 3 or status in {"cli_error", "source_error"}
             ):

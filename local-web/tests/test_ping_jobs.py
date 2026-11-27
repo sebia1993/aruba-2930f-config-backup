@@ -234,6 +234,74 @@ class PingJobsTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.jobs.ping_status(key)
 
+    def test_inventory_executes_only_row_pairs_and_recovers_failed_subset(self):
+        gateway, shared, nms = "198.51.100.1", "198.51.100.2", "198.51.100.3"
+        self.body["plan"] = {
+            "inventoryRows": [
+                {
+                    "hostname": "North",
+                    "swIp": "192.0.2.1",
+                    "gwIp": gateway,
+                    "bbIp": gateway,
+                    "nmsIp": shared,
+                },
+                {"hostname": "South", "swIp": "192.0.2.2", "gwIp": shared, "nmsIp": nms},
+                {"hostname": "Spare", "swIp": "192.0.2.3"},
+            ],
+            "inventoryRoles": ["gwIp", "bbIp", "nmsIp"],
+        }
+        calls = []
+
+        def effect(plan, target, dest, credentials, cancel):
+            calls.append((target.ip, dest.ip))
+            if target.ip == "192.0.2.2" and dest.ip == shared:
+                return PingPairResult(
+                    DeviceIdentity("fixture", "2930F", "JL255A", "WC.16.11.0010"),
+                    PingObservation("no_reply", 5, 0, 100),
+                    target.ip,
+                    target.ip,
+                    True,
+                )
+            return self.result(plan, target, dest, credentials, cancel)
+
+        with self.transport(effect):
+            key = self.jobs.submit_ping(self.body)
+            for _ in range(3):
+                self.jobs.tick_monitor()
+                self.wait_idle()
+        self.assertCountEqual(
+            calls,
+            [
+                ("192.0.2.1", gateway),
+                ("192.0.2.1", shared),
+                ("192.0.2.2", shared),
+                ("192.0.2.2", nms),
+            ],
+        )
+        self.jobs = Jobs(self.jobs.directory)
+        self.jobs.operations.credentials = Credentials("fixture-reader", "fixture")
+        parent = self.jobs.ping_status(key)["result"]
+        self.assertEqual(parent["inventoryRows"][2]["activeDestinations"], [])
+        merged = next(r for r in parent["rows"] if r["destination_ip"] == gateway)
+        self.assertEqual(
+            (merged["inventory_hostname"], merged["inventory_roles"]), ("North", ["gwIp", "bbIp"])
+        )
+        self.assertEqual(merged["hostname"], "fixture")
+        child = self.jobs.submit_ping(
+            {"requestId": "b" * 32, "rerun": {"parentId": key, "mode": "failed"}}
+        )
+        # Restart before dispatch: retain the one admitted pair and mark it unmeasured.
+        result = Jobs(self.jobs.directory).ping_status(child)["result"]
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(
+            [row["activeDestinations"] for row in result["inventoryRows"]], [[], [shared], []]
+        )
+        row = result["rows"][0]
+        self.assertEqual(
+            (row["ip"], row["destination_ip"], row["inventory_roles"], row["status"]),
+            ("192.0.2.2", shared, ["gwIp"], "not_run"),
+        )
+
     def test_auth_denial_stops_remaining_pairs_without_loss(self):
         self.body["plan"]["options"] = {"concurrency": 1}
         failure = CollectionFailure(ErrorCode.AUTH_FAILED, "fixture rejection")

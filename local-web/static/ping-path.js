@@ -21,7 +21,10 @@
   $('pingTraceStart').addEventListener('click', async () => {
     try {
       const plan = window.readGeneralPingPlan();
-      if (plan.targets.trim().split(/\r?\n/).filter(Boolean).length !== 1 || plan.destinations.length !== 1)
+      const pairs = plan.inventoryRows ? plan.inventoryRows.reduce((sum, row) =>
+        sum + window.pingInventory.uniqueDestinations(row, plan.inventoryRoles).length, 0) :
+        plan.targets.trim().split(/\r?\n/).filter(Boolean).length * plan.destinations.length;
+      if (pairs !== 1)
         throw new Error('경로 진단에 사용할 스위치 한 대와 목적지 한 곳을 입력하세요.');
       status.textContent = '경로 측정 중';
       let received = false;

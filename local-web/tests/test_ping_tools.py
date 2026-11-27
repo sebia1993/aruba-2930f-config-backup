@@ -7,6 +7,7 @@ from localweb.ping_tools import (
     PingPlan,
     parse_ping_output,
     preview_command,
+    preview_plan,
     unicast_ipv4,
     verify_source,
 )
@@ -98,6 +99,69 @@ class PingPlanTests(unittest.TestCase):
         self.assertEqual((p.total_pairs, p.total_requests), (3000, 15000))
         with self.assertRaises(ValueError):
             plan(targets=targets + "\n203.0.113.51", destinations=destinations)
+
+    def test_inventory_validates_coordinates_roles_and_exact_command_membership(self):
+        rows = [
+            {
+                "hostname": "장비 가",
+                "swIp": "192.0.2.1",
+                "gwIp": "198.51.100.1",
+                "bbIp": "198.51.100.1",
+            },
+            {
+                "hostname": "장비 나",
+                "swIp": "192.0.2.2",
+                "gwIp": "198.51.100.2",
+                "nmsIp": "203.0.113.1",
+            },
+            {"swIp": "192.0.2.3", "nmsIp": "203.0.113.2"},
+        ]
+        raw = {
+            "inventoryRows": rows,
+            "inventoryRoles": ["bbIp", "gwIp"],
+            "options": {"source_mode": "ip"},
+            "source_ips": {"192.0.2.1:22": "203.0.113.4", "192.0.2.2:22": "203.0.113.5"},
+        }
+        p = PingPlan.parse(raw)
+        self.assertEqual(len(p.inventory_rows), 3)
+        self.assertEqual(p.inventory_roles, ("gwIp", "bbIp"))
+        self.assertEqual(p.pairs[0][1].label, "GW / BB")
+        reviewed = preview_plan(raw)
+        self.assertEqual(
+            (reviewed["switches"], reviewed["totalPairs"], reviewed["totalRequests"]), (2, 2, 10)
+        )
+        self.assertEqual(
+            [r["destination"] for r in reviewed["commands"]], ["198.51.100.1", "198.51.100.2"]
+        )
+        self.assertTrue(reviewed["commands"][0]["command"].endswith("source 203.0.113.4"))
+        with self.assertRaises(ValueError):
+            preview_command(p, p.pairs[0][0], p.pairs[1][1])
+        for extra in (
+            {"inventoryRoles": []},
+            {"inventoryRoles": ["nmsIp", "nmsIp"]},
+            {"inventoryRoles": ["all"]},
+            {"targets": "192.0.2.1"},
+            {"inventoryRows": [rows[0], rows[0]]},
+            {"inventoryRows": [{"swIp": "192.0.2.4"}]},
+            {"inventoryRows": [{**rows[0], "hostname": "name\x00"}]},
+            {"source_ips": {**raw["source_ips"], "192.0.2.3:22": "192.0.2.3"}},
+        ):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                PingPlan.parse({**raw, **extra})
+        with self.assertRaisesRegex(ValueError, "2행 · NMS"):
+            PingPlan.parse({**raw, "inventoryRows": [rows[0], {**rows[1], "nmsIp": "invalid"}]})
+
+    def test_inventory_limits_count_actual_pairs_and_allow_distinct_gateways(self):
+        rows = [
+            {"swIp": f"192.0.{i // 250}.{i % 250 + 1}", "gwIp": f"198.51.{i // 250}.{i % 250 + 1}"}
+            for i in range(300)
+        ]
+        raw = {"inventoryRows": rows, "inventoryRoles": ["gwIp"]}
+        preview = preview_plan(raw)
+        self.assertEqual((preview["totalPairs"], preview["destinations"]), (300, 300))
+        self.assertTrue(preview["truncated"])
+        with self.assertRaises(ValueError):
+            PingPlan.parse({**raw, "inventoryRows": [*rows, rows[0]]})
 
 
 class PingOutputTests(unittest.TestCase):

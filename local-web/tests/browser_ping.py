@@ -138,7 +138,7 @@ def exercise(page, url):
     assert not errors, errors
 
 
-def main():
+def run_browser_test(flow, device_session=fake_device, pair=observe):
     with (
         tempfile.TemporaryDirectory() as tmp,
         LocalServer(("127.0.0.1", 0), Handler) as app,
@@ -158,14 +158,14 @@ def main():
             target=app.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
         )
         with (
-            patch.object(app.jobs.operations, "_ping_device_session", side_effect=fake_device),
-            patch.object(app.jobs.operations, "_ping_pair", side_effect=observe),
+            patch.object(app.jobs.operations, "_ping_device_session", side_effect=device_session),
+            patch.object(app.jobs.operations, "_ping_pair", side_effect=pair),
         ):
             worker.start()
             try:
                 browser = launch_test_browser(pw.chromium)
                 try:
-                    exercise(
+                    flow(
                         browser.new_page(viewport={"width": 1440, "height": 960}),
                         f"http://127.0.0.1:{app.server_port}/start/launch",
                     )
@@ -178,7 +178,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run_browser_test(exercise)
     print(
         "PASS Ping profiles, XLSX, bounded run, pause/reload/resume, history and responsive views."
     )

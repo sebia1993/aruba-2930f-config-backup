@@ -123,6 +123,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Manual reservation browser test failed.' }
           python tests/browser_ping.py
           if ($LASTEXITCODE -ne 0) { throw 'Ping browser workflow failed.' }
+          python tests/browser_ping_inventory.py
+          if ($LASTEXITCODE -ne 0) { throw 'Ping inventory browser workflow failed.' }
           python tests/browser_ping_analysis.py
           if ($LASTEXITCODE -ne 0) { throw 'Ping history browser workflow failed.' }
 

@@ -19,41 +19,45 @@ MAX_COLS = 80
 KST = timezone(timedelta(hours=9))
 _ZONES = {"UTC": UTC, "KST": KST}
 _KEYS = ("device", "message", "opened", "closed")
-_FORMULA = object()
+FORMULA_CELL = object()
+
+
+class TableFileError(ValueError):
+    """An operator-facing file validation error, safe to display without device data."""
 
 
 def _sheet_rows(raw, sheet):
     with ZipFile(io.BytesIO(raw)) as archive:
         files = archive.infolist()
         if len(files) > 300 or sum(part.file_size for part in files) > 20 * 1024**2:
-            raise ValueError("Excel 파일의 압축 해제 크기 또는 항목 수가 한도를 초과했습니다.")
+            raise TableFileError("Excel 파일의 압축 해제 크기 또는 항목 수가 한도를 초과했습니다.")
         for part in files:
             name = part.filename.lower()
             if part.flag_bits & 1 or "vbaproject" in name or "externallinks/" in name:
-                raise ValueError("매크로·외부 연결·암호화 파일은 지원하지 않습니다.")
+                raise TableFileError("매크로·외부 연결·암호화 파일은 지원하지 않습니다.")
             if name.endswith((".xml", ".rels")):
                 xml = archive.read(part).lower().replace(b"\x00", b"")
                 if b"<!doctype" in xml or b"<!entity" in xml:
-                    raise ValueError("지원하지 않는 Excel XML 형식입니다.")
+                    raise TableFileError("지원하지 않는 Excel XML 형식입니다.")
     book = load_workbook(io.BytesIO(raw), read_only=True, data_only=False, keep_links=False)
     try:
         names = [ws.title for ws in book.worksheets]
         if not names or (sheet is not None and sheet not in names):
-            raise ValueError("가져올 워크시트를 확인하세요.")
+            raise TableFileError("가져올 워크시트를 확인하세요.")
         ws = book[sheet or names[0]]
         # Excel dimensions can be missing or misleading, stream and police actual cells.
         ws.reset_dimensions()
         rows = []
         for row in ws.iter_rows():
             if len(rows) > MAX_ROWS or len(row) > MAX_COLS:
-                raise ValueError("시트는 헤더 외 5,000행, 80열까지 지원합니다.")
-            rows.append([_FORMULA if cell.data_type == "f" else cell.value for cell in row])
+                raise TableFileError("시트는 헤더 외 5,000행, 80열까지 지원합니다.")
+            rows.append([FORMULA_CELL if cell.data_type == "f" else cell.value for cell in row])
         return names, rows
     finally:
         book.close()
 
 
-def unpack_file(body):
+def unpack_file(body, *, require_data=True):
     name = body.get("name")
     data = body.get("file")
     if (
@@ -63,50 +67,51 @@ def unpack_file(body):
         or any(c in '<>:"/\\|?*' or ord(c) < 32 for c in name)
         or not _xml_text(name)
     ):
-        raise ValueError("파일 이름을 확인하세요.")
+        raise TableFileError("파일 이름을 확인하세요.")
     sheet = body.get("sheet")
     if sheet is not None and (
         not isinstance(sheet, str) or len(sheet) > 31 or not _xml_text(sheet)
     ):
-        raise ValueError("시트 이름을 확인하세요.")
+        raise TableFileError("시트 이름을 확인하세요.")
     if not isinstance(data, str) or len(data) > 4 * ((MAX_BYTES + 2) // 3):
-        raise ValueError("파일은 3 MiB 이하로 선택하세요.")
+        raise TableFileError("파일은 3 MiB 이하로 선택하세요.")
     try:
         raw = base64.b64decode(data, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise ValueError("파일 데이터를 해석할 수 없습니다.") from exc
+        raise TableFileError("파일 데이터를 해석할 수 없습니다.") from exc
     if len(raw) > MAX_BYTES:
-        raise ValueError("파일은 3 MiB 이하로 선택하세요.")
+        raise TableFileError("파일은 3 MiB 이하로 선택하세요.")
     suffix = PureWindowsPath(name).suffix.lower()
     if suffix == ".xlsx":
         try:
             sheets, rows = _sheet_rows(raw, body.get("sheet"))
-        except ValueError:
+        except TableFileError:
             raise
         except Exception as exc:
             # XML parsers, ZIP decoders and Excel validators have different exceptions.
-            raise ValueError("Excel 파일을 읽지 못했습니다.") from exc
+            raise TableFileError("Excel 파일을 읽지 못했습니다.") from exc
     elif suffix == ".csv":
         if sheet:
-            raise ValueError("CSV에는 워크시트가 없습니다.")
+            raise TableFileError("CSV에는 워크시트가 없습니다.")
         try:
             encoding = body.get("encoding", "utf-8-sig")
             if encoding not in ("utf-8-sig", "cp949"):
-                raise ValueError("CSV 문자 인코딩을 확인하세요.")
+                raise TableFileError("CSV 문자 인코딩을 확인하세요.")
             source = raw.decode(encoding)
             rows = []
             for row in csv.reader(io.StringIO(source, newline=""), strict=True):
                 if len(rows) > MAX_ROWS or len(row) > MAX_COLS:
-                    raise ValueError("CSV는 헤더 외 5,000행, 80열까지 지원합니다.")
+                    raise TableFileError("CSV는 헤더 외 5,000행, 80열까지 지원합니다.")
                 rows.append(row)
             sheets = []
         except (UnicodeError, csv.Error) as exc:
-            raise ValueError("CSV 구분자와 문자 인코딩을 확인하세요.") from exc
+            raise TableFileError("CSV 구분자와 문자 인코딩을 확인하세요.") from exc
     else:
-        raise ValueError("CSV 또는 XLSX 파일을 선택하세요.")
-    if not rows or not rows[0] or len(rows) < 2:
-        raise ValueError("첫 행에 열 이름이 있고 하나 이상의 데이터 행이 필요합니다.")
-    headers = [str(value or "")[:100] if value is not _FORMULA else "" for value in rows[0]]
+        raise TableFileError("CSV 또는 XLSX 파일을 선택하세요.")
+    if require_data and (len(rows) < 2 or not rows[0]):
+        raise TableFileError("첫 행에 열 이름이 있고 하나 이상의 데이터 행이 필요합니다.")
+    header_row = rows[0] if rows else []
+    headers = [str(value or "")[:100] if value is not FORMULA_CELL else "" for value in header_row]
     return name, hashlib.sha256(raw).hexdigest(), sheets, headers, rows[1:]
 
 

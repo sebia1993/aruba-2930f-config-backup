@@ -3,6 +3,7 @@
 import base64
 import csv
 import io
+import json
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -75,6 +76,28 @@ class AnalysisTests(unittest.TestCase):
 
     def api(self, action, **payload):
         return analysis_request(self.history.path, action, {"run": RUN, **payload})
+
+    def test_excel_inventory_history_maps_shared_ips_to_the_correct_series(self):
+        first = dict(hostname="SW-A", swIp="192.0.2.11", gwIp=DEST, bbIp=DEST, nmsIp="")
+        second = dict(hostname="SW-B", swIp="192.0.2.12", gwIp=DEST, bbIp="", nmsIp="")
+        settings = dict(inventoryRows=[first, second], inventoryRoles=["gwIp", "bbIp", "nmsIp"])
+        with self.history.connect() as db:
+            db.execute(
+                "UPDATE ping_long_runs SET settings=? WHERE id=?", (json.dumps(settings), RUN)
+            )
+        self.sample(1, 1, 0, 1, "normal", rtt=2)
+        self.sample(2, None, 0, 1, "ssh_failure", gaps=1)
+        with export_history(self.history.path, RUN, "xlsx") as file:
+            book = load_workbook(file)
+            try:
+                sheet = book["장비별 결과"]
+                self.assertEqual(book.sheetnames[0], sheet.title)
+                self.assertEqual(sheet["F2"].value, sheet["G2"].value)
+                self.assertIn("평균 2.0 ms", sheet["F2"].value)
+                self.assertIn("SSH 실패 1", sheet["F3"].value)
+                self.assertEqual(sheet["H3"].value, "대상 없음")
+            finally:
+                book.close()
 
     def test_gap_interrupts_event_preserves_open_ends_and_loss_denominator(self):
         self.sample(1, 1, 0, 1, "no_reply")

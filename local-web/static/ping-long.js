@@ -3,7 +3,7 @@
   const mount = document.getElementById('pingLong');
   if (!mount) return;
   mount.innerHTML = `<header><h2>장시간 Ping 테스트</h2></header>
-    <div class="panelbody"><p>위 측정 대상과 Source, Timeout, Data Size를 사용해 각 스위치에서 목적지마다 1회씩 반복합니다. 스위치 목록과 서버 목록을 먼저 입력하세요.</p>
+    <div class="panelbody"><p>위에서 선택한 장비와 목적지, Source, Timeout, Data Size를 사용합니다. 각 조합에서 Ping 1회씩 목표 횟수까지 반복합니다.</p>
     <div class="formgrid">
       <label>조합당 목표 횟수<input id="pingLongCount" type="number" value="10000" min="1" max="10000"></label>
       <label>목표 주기<select id="pingLongInterval"><option value="1">1초</option><option value="3">3초</option><option value="5" selected>5초</option><option value="10">10초</option></select></label>
@@ -51,8 +51,9 @@
     checked = null;
     el('Estimate').textContent = '설정이 바뀌었습니다. 예상시간을 다시 계산하세요.';
     clearTimeout(previewTimer);
-    if (!mount.hidden && !document.hidden && location.hash === '#ping' && ui.token &&
-        document.getElementById('pingTargets').value.trim() && document.getElementById('pingDestinations').value.trim()) {
+    const hasInput = window.pingInventory.active() ? !$('pingInventoryReview').hidden :
+      $('pingTargets').value.trim() && $('pingDestinations').value.trim();
+    if (!mount.hidden && !document.hidden && location.hash === '#ping' && ui.token && hasInput) {
       previewTimer = setTimeout(() => el('Preview').click(),400);
     }
     buttons();
@@ -110,9 +111,46 @@
     const list = document.createDocumentFragment();
     const grouped = new Map();
     const term = el('Search').value.trim().toLowerCase(), filter = el('Filter').value;
-    const narrowed = last.series.filter(row =>
-      (!term || (row.switch+' '+row.destination).toLowerCase().includes(term)) &&
-      (!filter || filter === (row.completed === row.target ? 'done' : row.started > 0 ? 'active' : 'waiting')));
+    const inventory = last.settings?.inventoryRows;
+    const inventoryBySwitch = new Map((inventory || []).map(row => [row.swIp + ':22', row]));
+    const roleNames = window.pingInventory.roleNames;
+    const narrowed = last.series.filter(row => {
+      const device = inventoryBySwitch.get(row.switch);
+      const names = device ? last.settings.inventoryRoles.filter(key => device[key] === row.destination)
+        .map(key => roleNames[key]).join(' ') : '';
+      return (!term || [row.switch,row.destination,device?.hostname,names].join(' ').toLowerCase().includes(term)) &&
+        (!filter || filter === (row.completed === row.target ? 'done' : row.started > 0 ? 'active' : 'waiting'));
+    });
+    if (inventory) {
+      const bySwitch = new Map();
+      for (const row of narrowed) {
+        if (!bySwitch.has(row.switch)) bySwitch.set(row.switch, new Map());
+        bySwitch.get(row.switch).set(row.destination, row);
+      }
+      const devices = inventory.filter(row => !term && !filter || bySwitch.has(row.swIp + ':22'));
+      const pages = Math.max(1, Math.ceil(devices.length/100));
+      page = Math.max(0,Math.min(pages-1,page));
+      el('Prev').disabled = !page; el('Next').disabled = page + 1 >= pages;
+      el('Page').textContent = (page+1)+' / '+pages+' · '+narrowed.length+'조합';
+      const columns = [['장비 Hostname', 'hostname'], ['SW IP', 'swIp']];
+      for (const [key, name] of Object.entries(roleNames)) {
+        columns.push([name + ' 결과', device => {
+          if (!device[key]) return '대상 없음';
+          if (!last.settings.inventoryRoles.includes(key)) return '미선택';
+          const series = bySwitch.get(device.swIp + ':22')?.get(device[key]);
+          if (!series) return '필터 제외';
+          return device[key]+' · '+series.completed+'/'+series.target+'회 · 성공 '+series.success+
+            ' · 손실 '+series.loss+' · 미측정 '+series.gaps+
+            ' · 판정 불가 '+series.unknown+' · SSH 실패 '+series.sshFailures+
+            (Number.isFinite(series.avgRttMs) ? ' · 평균 RTT '+series.avgRttMs+' ms' : '')+
+            (Number.isFinite(series.actualInterval) ? ' · 실제 주기 '+series.actualInterval.toFixed(1)+'초' : '')+
+            (Number.isFinite(series.etaSeconds) ? ' · 남은 시간 '+time(series.etaSeconds) : '')+
+            (series.blockReason ? ' · '+series.blockReason : series.wait ? ' · '+(phase[series.wait] || series.wait) : '');
+        }]);
+      }
+      el('Devices').replaceChildren(simpleTable(columns, devices.slice(page*100, page*100+100)));
+      return;
+    }
     const pages = Math.max(1, Math.ceil(narrowed.length/100));
     page = Math.max(0,Math.min(pages-1,page));
     el('Prev').disabled = page === 0;

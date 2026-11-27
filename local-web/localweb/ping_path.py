@@ -59,8 +59,8 @@ class RouteSession(PingSSHSession):
     def observe(self, plan, cancel):
         self._require_prepared()
         identity = self._identify(cancel)
-        target = plan.targets[0]
-        dest = plan.destinations[0].ip
+        target, destination = plan.pairs[0]
+        dest = destination.ip
         source = plan.requested_source(target)
         verified = None
         command = f"traceroute {dest} maxttl {MAX_HOPS} probes 1"
@@ -133,8 +133,8 @@ def run_route(operations, data, cancel):
     elif event is not None or failed is not None:
         raise ValueError("수동 경로 진단 요청을 확인하세요.")
     options = CollectionOptions(max_attempts=1, command_timeout_seconds=32, max_output_bytes=65536)
-    target = plan.targets[0]
-    dest = plan.destinations[0].ip
+    target, destination = plan.pairs[0]
+    dest = destination.ip
     started = datetime.now(UTC).isoformat(timespec="milliseconds")
     try:
         with operations._prepared_diagnostic_session(

@@ -8,9 +8,12 @@ before interpreting a response. Never use partial/deadline output as evidence.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import cached_property
 from ipaddress import IPv4Address
+from itertools import product
 from math import isfinite
+from typing import NamedTuple
 
 from aruba2930f_backup.models import DeviceTarget
 
@@ -19,6 +22,7 @@ MAX_DESTINATIONS = 10
 MAX_PAIRS = 3000
 MAX_INPUT = 100_000
 MAX_OUTPUT = 1_000_000
+INVENTORY_ROLES = {"gwIp": "GW", "bbIp": "BB", "nmsIp": "NMS"}
 
 _SOURCE_MODES = frozenset({"ssh_ip", "auto", "ip", "vlan"})
 _PRESETS = {
@@ -127,17 +131,99 @@ def parse_destinations(raw):
     return tuple(result)
 
 
+def inventory_hostname(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("장비 Hostname은 문자열로 입력하세요.")
+    name = value.strip(" ")
+    if len(name) > 80 or (name and not name.isprintable()):
+        raise ValueError("장비 Hostname은 제어문자 없는 80자 이하여야 합니다.")
+    return name
+
+
+class InventoryRow(NamedTuple):
+    hostname: str
+    swIp: str
+    gwIp: str
+    bbIp: str
+    nmsIp: str
+
+
+@dataclass(frozen=True)
+class PingInventory:
+    rows: tuple[InventoryRow, ...]
+    roles: tuple[str, ...]
+
+    @classmethod
+    def parse(cls, raw, roles):
+        if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_SWITCHES:
+            raise ValueError("테스트할 장비 행을 1~300개 선택하세요.")
+        if (
+            not isinstance(roles, list)
+            or not 1 <= len(roles) <= len(INVENTORY_ROLES)
+            or any(not isinstance(role, str) or role not in INVENTORY_ROLES for role in roles)
+            or len(set(roles)) != len(roles)
+        ):
+            raise ValueError("GW, BB, NMS 중 테스트할 열을 선택하세요.")
+        rows = []
+        seen = {}
+        for number, item in enumerate(raw, 1):
+            entry = _object(item, set(InventoryRow._fields))
+            try:
+                hostname = inventory_hostname(entry.get("hostname", ""))
+            except ValueError as exc:
+                raise ValueError(f"{number}행 · {exc}") from exc
+            addresses = []
+            for key, label in (("swIp", "SW IP"), *INVENTORY_ROLES.items()):
+                value = entry.get(key, "")
+                if isinstance(value, str):
+                    value = value.strip(" ")
+                try:
+                    address = "" if key != "swIp" and value == "" else unicast_ipv4(value)
+                except ValueError as exc:
+                    raise ValueError(f"{number}행 · {label}: {exc}") from exc
+                addresses.append(address)
+            row = InventoryRow(hostname, *addresses)
+            if row.swIp in seen:
+                raise ValueError(f"{number}행 · SW IP가 {seen[row.swIp]}행과 중복됩니다.")
+            seen[row.swIp] = number
+            rows.append(row)
+        result = cls(tuple(rows), tuple(role for role in INVENTORY_ROLES if role in roles))
+        if not result.pair_roles:
+            raise ValueError("선택한 장비와 열에 테스트할 목적지 IP가 없습니다.")
+        return result
+
+    @cached_property
+    def pair_roles(self):
+        pairs = {}
+        for row in self.rows:
+            target = DeviceTarget(row.swIp)
+            by_ip = {}
+            for role in self.roles:
+                address = getattr(row, role)
+                if address:
+                    by_ip.setdefault(address, []).append(role)
+            for ip, roles in by_ip.items():
+                label = " / ".join(INVENTORY_ROLES[role] for role in roles)
+                pairs[target, Destination(ip, label)] = tuple(roles)
+        return pairs
+
+    @cached_property
+    def by_ip(self):
+        return {row.swIp: row for row in self.rows}
+
+
 @dataclass(frozen=True)
 class PingPlan:
     targets: tuple[DeviceTarget, ...]
     destinations: tuple[Destination, ...]
     options: PingOptions
     source_ips: tuple[tuple[DeviceTarget, str], ...] = ()
+    inventory: PingInventory | None = field(default=None, repr=False)
 
     def __post_init__(self):
         if not 1 <= len(self.targets) <= MAX_SWITCHES:
             raise ValueError("스위치는 1~300대를 지정하세요.")
-        if not 1 <= len(self.destinations) <= MAX_DESTINATIONS:
+        if self.inventory is None and not 1 <= len(self.destinations) <= MAX_DESTINATIONS:
             raise ValueError("서버는 1~10대를 지정하세요.")
         if self.total_pairs > MAX_PAIRS:
             raise ValueError("테스트 조합은 최대 3,000개입니다.")
@@ -159,7 +245,21 @@ class PingPlan:
 
     @property
     def total_pairs(self) -> int:
-        return len(self.targets) * len(self.destinations)
+        return len(self.pairs)
+
+    @cached_property
+    def pairs(self) -> tuple[tuple[DeviceTarget, Destination], ...]:
+        if self.inventory is not None:
+            return tuple(self.inventory.pair_roles)
+        return tuple(product(self.targets, self.destinations))
+
+    @property
+    def inventory_rows(self):
+        return [row._asdict() for row in self.inventory.rows] if self.inventory else []
+
+    @property
+    def inventory_roles(self):
+        return self.inventory.roles if self.inventory else ()
 
     @property
     def total_requests(self) -> int:
@@ -179,8 +279,33 @@ class PingPlan:
 
     @classmethod
     def parse(cls, value: object) -> PingPlan:
-        body = _object(value, {"targets", "destinations", "options", "source_ips"})
-        raw = body.get("targets")
+        inventory = None
+        if isinstance(value, dict) and ("inventoryRows" in value or "inventoryRoles" in value):
+            body = _object(value, {"inventoryRows", "inventoryRoles", "options", "source_ips"})
+            inventory = PingInventory.parse(body.get("inventoryRows"), body.get("inventoryRoles"))
+            targets = tuple(dict.fromkeys(target for target, _ in inventory.pair_roles))
+            destinations = tuple({d.ip: d for _, d in inventory.pair_roles}.values())
+        else:
+            body = _object(value, {"targets", "destinations", "options", "source_ips"})
+            targets = cls._parse_targets(body.get("targets"))
+            destinations = parse_destinations(body.get("destinations"))
+        options = PingOptions.parse(body.get("options", {}))
+        sources = body.get("source_ips", {})
+        if not isinstance(sources, dict):
+            raise ValueError("Source IP 매핑을 확인하세요.")
+        target_by_endpoint = {target.endpoint: target for target in targets}
+        if set(sources) - set(target_by_endpoint):
+            raise ValueError("등록되지 않은 스위치 Source 매핑입니다.")
+        return cls(
+            targets,
+            destinations,
+            options,
+            tuple((target_by_endpoint[key], unicast_ipv4(ip)) for key, ip in sources.items()),
+            inventory,
+        )
+
+    @staticmethod
+    def _parse_targets(raw):
         if not isinstance(raw, str) or not 1 <= len(raw) <= MAX_INPUT:
             raise ValueError("스위치 목록을 입력하세요.")
         # Only CR/LF are line delimiters; never silently normalize other controls.
@@ -202,20 +327,7 @@ class PingPlan:
             )
             if len(targets) > MAX_SWITCHES:
                 raise ValueError("스위치는 최대 300대입니다.")
-        destinations = parse_destinations(body.get("destinations"))
-        options = PingOptions.parse(body.get("options", {}))
-        sources = body.get("source_ips", {})
-        if not isinstance(sources, dict):
-            raise ValueError("Source IP 매핑을 확인하세요.")
-        target_by_endpoint = {target.endpoint: target for target in targets}
-        if set(sources) - set(target_by_endpoint):
-            raise ValueError("등록되지 않은 스위치 Source 매핑입니다.")
-        return cls(
-            tuple(targets),
-            tuple(destinations),
-            options,
-            tuple((target_by_endpoint[key], unicast_ipv4(ip)) for key, ip in sources.items()),
-        )
+        return tuple(targets)
 
 
 def verify_source(
@@ -241,7 +353,9 @@ def verify_source(
 
 def preview_command(plan: PingPlan, target: DeviceTarget, destination: Destination) -> str:
     """Preview only: ownership and SSH model verification are required before use."""
-    if destination not in plan.destinations:
+    if plan.inventory is not None and (target, destination) not in plan.inventory.pair_roles:
+        raise ValueError("이 스위치의 장비 행에 등록된 목적지가 아닙니다.")
+    if plan.inventory is None and destination not in plan.destinations:
         raise ValueError("등록된 목적지가 아닙니다.")
     options = plan.options
     command = f"ping {destination.ip} repetitions {options.repetitions} timeout {options.timeout}"
@@ -257,19 +371,14 @@ def preview_plan(value: object) -> dict:
     """Validate the same plan as admission without accessing any device."""
     plan = PingPlan.parse(value)
     commands = []
-    for target in plan.targets:
-        for destination in plan.destinations:
-            if len(commands) == 20:
-                break
-            commands.append(
-                {
-                    "endpoint": target.endpoint,
-                    "destination": destination.ip,
-                    "command": preview_command(plan, target, destination),
-                }
-            )
-        if len(commands) == 20:
-            break
+    for target, destination in plan.pairs[:20]:
+        commands.append(
+            {
+                "endpoint": target.endpoint,
+                "destination": destination.ip,
+                "command": preview_command(plan, target, destination),
+            }
+        )
     return {
         "switches": len(plan.targets),
         "destinations": len(plan.destinations),

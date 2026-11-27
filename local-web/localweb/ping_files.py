@@ -45,9 +45,18 @@ COLUMNS = {
 
 def validated_profile(value):
     plan = PingPlan.parse(value)
+    if plan.inventory_rows:
+        inputs = {
+            "inventoryRows": plan.inventory_rows,
+            "inventoryRoles": list(plan.inventory_roles),
+        }
+    else:
+        inputs = {
+            "targets": "\n".join(t.endpoint for t in plan.targets),
+            "destinations": [asdict(d) for d in plan.destinations],
+        }
     return {
-        "targets": "\n".join(t.endpoint for t in plan.targets),
-        "destinations": [asdict(d) for d in plan.destinations],
+        **inputs,
         "options": asdict(plan.options),
         "source_ips": {t.endpoint: ip for t, ip in plan.source_ips},
     }
@@ -146,6 +155,61 @@ def _append(sheet, values):
     sheet.append(cells)
 
 
+def append_inventory_sheet(book, rows, roles, results):
+    sheet = book.create_sheet("장비별 결과", 0)
+    columns = ("gwIp", "bbIp", "nmsIp")
+    headers = [
+        "장비 Hostname",
+        "SW IP",
+        "GW IP",
+        "BB",
+        "NMS server",
+        "GW 결과",
+        "BB 결과",
+        "NMS 결과",
+    ]
+    sheet.freeze_panes = "C2"
+    for column, width in zip("ABCDEFGH", [25, 17, 17, 17, 17, 55, 55, 55], strict=True):
+        sheet.column_dimensions[column].width = width
+    _append(sheet, headers)
+    for row in rows:
+        values = [row[key] for key in ("hostname", "swIp", *columns)]
+        for role in columns:
+            address = row[role]
+            if not address:
+                summary = "대상 없음"
+            elif role not in roles:
+                summary = "역할 미선택"
+            elif "activeDestinations" in row and address not in row["activeDestinations"]:
+                summary = "실행 범위 제외"
+            else:
+                summary = results.get((row["swIp"], address), "내보내기 제외")
+            values.append(summary)
+        _append(sheet, values)
+
+
+def _general_summary(row):
+    states = {
+        "normal": "정상",
+        "partial_loss": "부분 손실",
+        "no_reply": "응답 없음",
+        "unreachable": "도달 불가",
+        "source_error": "Source 오류",
+        "cli_error": "CLI 오류",
+        "ssh_failure": "SSH 실패",
+        "unknown": "결과 미확인",
+        "not_run": "미실행",
+    }
+    parts = [states.get(row["status"], row["status"])]
+    if row.get("sent") is not None and row.get("received") is not None:
+        parts.append(f"전송 {row['sent']} / 응답 {row['received']}")
+    if row.get("rtt_avg_ms") is not None:
+        parts.append(f"평균 {row['rtt_avg_ms']} ms")
+    if row.get("reason_code") and row["status"] != "normal":
+        parts.append(row["reason_code"])
+    return " · ".join(parts)
+
+
 def general_excel(jobs, key, data):
     if set(data) != {"indices"} or not isinstance(data["indices"], list):
         raise ValueError("내보낼 조합을 선택하세요.")
@@ -169,6 +233,12 @@ def general_excel(jobs, key, data):
     if len(chosen) != len(want):
         raise ValueError("요청한 조합이 없습니다.")
     book = Workbook(write_only=True)
+    if inventory := result.get("inventoryRows"):
+        summaries = {(r["ip"], r["destination_ip"]): _general_summary(r) for r in chosen}
+        if len(chosen) < result["total"] or result.get("parentRunId"):
+            included_devices = {r["ip"] for r in chosen}
+            inventory = [row for row in inventory if row["swIp"] in included_devices]
+        append_inventory_sheet(book, inventory, result["inventoryRoles"], summaries)
     summary = book.create_sheet("요약")
     for pair in [
         ("작업 ID", key),

@@ -88,14 +88,14 @@
     };
     if ($('pingSize').value !== '') options.data_size = $('pingSize').valueAsNumber;
     if (mode === 'vlan') options.vlan = $('pingVlan').valueAsNumber;
-    const body = {
+    const inputs = window.pingInventory.active() ? window.pingInventory.targets() : {
       targets: $('pingTargets').value,
       destinations: lines($('pingDestinations').value).map(line => {
         const [ip, ...label] = line.split('\t');
         return {ip:ip.trim(), label:label.join('\t').trim()};
-      }),
-      options
+      })
     };
+    const body = {...inputs, options};
     if (mode === 'ip') {
       const sources = Object.create(null);
       for (const line of lines($('pingSources').value)) {
@@ -106,7 +106,12 @@
         }
         sources[parts[0].trim()] = parts[1].trim();
       }
-      body.source_ips = sources;
+      if (body.inventoryRows) {
+        const endpoints = new Set(body.inventoryRows.filter(row =>
+          window.pingInventory.uniqueDestinations(row, body.inventoryRoles).length
+        ).map(row => row.swIp + ':22'));
+        body.source_ips = Object.fromEntries(Object.entries(sources).filter(([key]) => endpoints.has(key)));
+      } else body.source_ips = sources;
     }
     return body;
   }
@@ -114,7 +119,8 @@
   function inputChanged(event) {
     if (event.target.closest('#pingProfiles')) return;
     const current = preset[activePreset];
-    const option = !['pingTargets','pingDestinations','pingForm'].includes(event.target.id);
+    const option = !event.target.closest('#pingInventory') &&
+      !['pingTargets','pingDestinations','pingForm','pingInputMode'].includes(event.target.id);
     if (option || (current && ($('pingRepetitions').valueAsNumber !== current[0] ||
         $('pingTimeout').valueAsNumber !== current[1] || $('pingSourceMode').value !== 'ssh_ip' ||
         $('pingSize').value !== ''))) setPresetName('custom');
@@ -157,19 +163,33 @@
       status.textContent = '입력 검증 완료 · 실제 Source 및 장비 호환성 미확인 · 미실행';
       previewedPlan = requestPlan;
       $('pingPreviewTarget').replaceChildren(...result.endpoints.map(ip => new Option(ip, ip)));
-      $('pingPreviewDest').replaceChildren(...requestPlan.destinations.map(dest =>
-        new Option(dest.ip + (dest.label ? ' · ' + dest.label : ''), dest.ip)));
+      syncPreviewDestinations();
       $('pingPairPicker').hidden = result.totalPairs < 2;
       syncRun();
     } catch (error) {
       if (requestGeneration === generation) status.textContent = error.message;
     }
   });
+  function previewDestinations(plan, target) {
+    if (!plan.inventoryRows) return plan.destinations;
+    const device = plan.inventoryRows.find(row => row.swIp + ':22' === target);
+    if (!device) return [];
+    return window.pingInventory.uniqueDestinations(device, plan.inventoryRoles).map(ip => ({
+      ip, label:plan.inventoryRoles.filter(key => device[key] === ip).map(key => window.pingInventory.roleNames[key]).join(' / ')
+    }));
+  }
+  function syncPreviewDestinations() {
+    if (!previewedPlan) return;
+    const dests = previewDestinations(previewedPlan, $('pingPreviewTarget').value);
+    $('pingPreviewDest').replaceChildren(...dests.map(dest =>
+      new Option(dest.ip + (dest.label ? ' · ' + dest.label : ''), dest.ip)));
+  }
   $('pingShowPair').addEventListener('click', async () => {
     const reviewed = previewedPlan;
     if (!reviewed) return;
     const target = $('pingPreviewTarget').value;
-    const dest = reviewed.destinations.find(entry => entry.ip === $('pingPreviewDest').value);
+    const dest = previewDestinations(reviewed, target).find(entry => entry.ip === $('pingPreviewDest').value);
+    if (!dest) return;
     const sequence = ++pairPreviewSequence;
     const subset = {targets: target, destinations: [dest], options: reviewed.options};
     if (reviewed.source_ips) subset.source_ips = {[target]: reviewed.source_ips[target]};
@@ -185,6 +205,7 @@
   });
   for (const id of ['pingPreviewTarget', 'pingPreviewDest']) {
     $(id).addEventListener('change', () => {
+      if (id === 'pingPreviewTarget' && previewedPlan?.inventoryRows) syncPreviewDestinations();
       pairPreviewSequence++;
       currentCommands = commands.value = '';
       copy.disabled = true;
@@ -237,6 +258,7 @@
   let cursor = 0;
   let pageIndex = 0;
   let rows = [];
+  let inventoryRows = null, inventoryRoles = [];
   let selectedRowIndex = null;
   const selectedIndices = new Set();
   const failedStatuses = new Set(['partial_loss', 'no_reply', 'unreachable', 'source_error', 'cli_error', 'ssh_failure']);
@@ -271,11 +293,25 @@
     $('pingRerunSelected').disabled = !rerunReady || !selectedIndices.size;
     $('pingRerunSelected').textContent = '선택 재실행 (' + selectedIndices.size + ')';
     $('pingRerunFailed').disabled = !rerunReady || !rows.some(row => failedStatuses.has(row.status));
+    $('pingRerunSelectedFailed').hidden = !inventoryRows;
+    $('pingRerunSelectedFailed').disabled = !rerunReady ||
+      !rows.some(row => selectedIndices.has(row.index) && failedStatuses.has(row.status));
+  }
+  function setResultInventory(devices, roles) {
+    inventoryRows = devices || null;
+    inventoryRoles = roles || [];
+    const select = $('pingResultView');
+    for (const [name, available] of [['inventory', !!inventoryRows], ['matrix', !inventoryRows]]) {
+      const opt = select.querySelector('option[value="' + name + '"]');
+      opt.disabled = opt.hidden = !available;
+    }
+    select.value = inventoryRows ? 'inventory' : 'list';
   }
   function clearResults() {
     cursor = 0;
     pageIndex = 0;
     rows = [];
+    setResultInventory(null);
     selectedRowIndex = null;
     selectedIndices.clear();
     $('pingSearch').value = '';
@@ -296,7 +332,7 @@
     const counts = row.sent == null || row.received == null ? '—' : row.received + '/' + row.sent;
     const loss = row.loss_pct == null ? '—' : row.loss_pct + '%';
     const rtt = row.rtt_avg_ms == null ? '—' : row.rtt_avg_ms + ' ms';
-    return stateLabel(row) + ' · ' + counts + ' · ' + loss + ' · ' + rtt;
+    return stateLabel(row) + ' · 응답/송신 ' + counts + ' · 손실 ' + loss + ' · 평균 RTT ' + rtt;
   }
   function detailButton(row, label = '상세') {
     const control = elem('button', label);
@@ -311,10 +347,14 @@
     const box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = selectedIndices.has(row.index);
+    box.dataset.pingResultIndex = row.index;
     box.setAttribute('aria-label', switchKey(row) + ' → ' + row.destination_ip + ' 선택');
     box.addEventListener('change', () => {
       if (box.checked) selectedIndices.add(row.index);
       else selectedIndices.delete(row.index);
+      for (const other of $('pingRows').querySelectorAll('[data-ping-result-index="' + row.index + '"]')) {
+        other.checked = box.checked;
+      }
       syncRun();
     });
     return box;
@@ -354,7 +394,8 @@
     return rows.filter(row =>
       (!wanted || row.status === wanted) &&
       (!destination.value || row.destination_ip === destination.value) &&
-      (!query || [switchKey(row), row.hostname, row.destination_ip, row.destination_label]
+      (!query || [switchKey(row), row.hostname, row.inventory_hostname, row.destination_ip, row.destination_label,
+        ...(row.inventory_roles || []).map(key => window.pingInventory.roleNames[key])]
         .some(value => String(value ?? '').toLowerCase().includes(query))));
   }
   window.pingExportSelection = () => ({
@@ -371,6 +412,7 @@
     if (destinations.includes(chosen)) destination.value = chosen;
     const filtered = filteredRows();
     const matrix = $('pingResultView').value === 'matrix';
+    const inventory = $('pingResultView').value === 'inventory' && inventoryRows;
     let items = filtered;
     let columns = [
       ['선택', selectionBox],
@@ -385,7 +427,29 @@
       )],
       ['사유', 'reason_code'], ['상세', r => detailButton(r)]
     ];
-    if (matrix) {
+    if (inventory) {
+      const bySwitch = new Map();
+      for (const row of filtered) {
+        if (!bySwitch.has(row.ip)) bySwitch.set(row.ip, new Map());
+        bySwitch.get(row.ip).set(row.destination_ip, row);
+      }
+      const filtering = !!($('pingSearch').value.trim() || $('pingStatusFilter').value || chosen);
+      items = inventoryRows.filter(row => !filtering || bySwitch.has(row.swIp));
+      columns = [['장비 Hostname', 'hostname'], ['SW IP', 'swIp'], ['GW IP', row => row.gwIp || '—'],
+        ['BB', row => row.bbIp || '—'], ['NMS server', row => row.nmsIp || '—']];
+      for (const [key, name] of Object.entries(window.pingInventory.roleNames)) {
+        columns.push([name + ' 결과', device => {
+          const ip = device[key];
+          if (!ip) return '대상 없음';
+          if (!inventoryRoles.includes(key) || !device.activeDestinations.includes(ip)) return '미선택';
+          const row = bySwitch.get(device.swIp)?.get(ip);
+          if (!row) return filtering ? '필터 제외' : '결과 대기';
+          const cell = elem('span');
+          cell.append(selectionBox(row), detailButton(row, responseSummary(row)));
+          return cell;
+        }]);
+      }
+    } else if (matrix) {
       const grouped = new Map();
       for (const row of filtered) {
         const key = switchKey(row);
@@ -408,7 +472,7 @@
     $('pingRows').replaceChildren(simpleTable(columns,
       items.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize)));
     $('pingFilterCount').textContent = '필터 결과 ' + filtered.length + ' / 수신 ' + rows.length + '조합';
-    $('pingPage').textContent = (pageIndex + 1) + ' / ' + pages + (matrix ? ' · 스위치 단위' : ' · 조합 단위');
+    $('pingPage').textContent = (pageIndex + 1) + ' / ' + pages + (matrix || inventory ? ' · 스위치 단위' : ' · 조합 단위');
     $('pingPrev').disabled = pageIndex === 0;
     $('pingNext').disabled = pageIndex + 1 >= pages;
     paintDetail();
@@ -439,7 +503,9 @@
         snapshot.rows.length <= 512 && snapshot.cursor === cursor + snapshot.rows.length &&
         snapshot.cursor <= snapshot.completed &&
         snapshot.rows.every((row, index) => row.index === cursor + index)) {
-      if (snapshot.rows.length) {
+      const firstInventory = !inventoryRows && Array.isArray(snapshot.inventoryRows) && snapshot.inventoryRows.length > 0;
+      if (firstInventory) setResultInventory(snapshot.inventoryRows, snapshot.inventoryRoles);
+      if (snapshot.rows.length || firstInventory) {
         rows.push(...snapshot.rows);
         cursor = snapshot.cursor;
         paintRows();
@@ -558,6 +624,11 @@
     });
   }
   retryButton.addEventListener('click', () => postRun(true));
+  $('pingRerunSelectedFailed').addEventListener('click', () => {
+    const indices = rows.filter(row => selectedIndices.has(row.index) && failedStatuses.has(row.status))
+      .map(row => row.index);
+    if (indices.length) postRun(false, {parentId:trackedId, mode:'selected', indices});
+  });
   refreshButton.addEventListener('click', refresh);
   cancelButton.addEventListener('click', async () => {
     if (busy || !trackedId || !running || !ui.token) return;

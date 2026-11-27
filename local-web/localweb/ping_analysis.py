@@ -16,6 +16,8 @@ from tempfile import TemporaryDirectory
 from openpyxl import Workbook
 
 from .ping_analysis_nms import KST, ensure_nms, import_alarms
+from .ping_files import append_inventory_sheet
+from .ping_long_store import sample_category
 
 _BUCKETS = (5, 10, 30, 60, 300)
 _HEAT_COLUMNS = 12
@@ -43,11 +45,7 @@ def _utc(dt):
 
 
 def _category(row):
-    if row["status"] == "normal" and row["sent"] == row["received"] == 1:
-        return "success"
-    if row["status"] in {"no_reply", "unreachable"} and row["sent"] == 1 and row["received"] == 0:
-        return "loss"
-    return "gap" if row["gap_count"] or row["status"] == "not_run" else "unknown"
+    return sample_category(row["status"], row["sent"], row["received"], row["gap_count"])
 
 
 def _weight(row):
@@ -120,11 +118,12 @@ def _events(rows):
 
 def _metrics(rows, target_count):
     counts, rtts = Counter(), []
-    attempts = longest = streak = 0
+    attempts = longest = streak = ssh_failures = 0
     for row in rows:
         cat = _category(row)
         counts[cat] += _weight(row)
         attempts += row["attempt"] is not None
+        ssh_failures += row["status"] == "ssh_failure"
         streak = streak + 1 if cat == "loss" else 0
         longest = max(longest, streak)
         if cat == "success" and row["rtt_ms"] is not None:
@@ -138,6 +137,7 @@ def _metrics(rows, target_count):
         unknown=counts["unknown"],
         gap=counts["gap"],
         attempts=attempts,
+        sshFailures=ssh_failures,
         target=target_count,
         coverage=_percent(valid, sum(counts.values())),
         goalCoverage=_percent(valid, target_count),
@@ -706,7 +706,7 @@ def _sheet(book, name, rows):
         ws.append([_safe(v) for v in row])
 
 
-def _summary_export(db, run, series):
+def _summary_export(series_metrics):
     yield [
         "장비",
         "SSH 포트",
@@ -725,8 +725,7 @@ def _summary_export(db, run, series):
         "P95 ms",
         "P99 ms",
     ]
-    for m in series:
-        metrics = _metrics(_samples(db, run, m["series_id"]), m["target_count"])
+    for m, metrics in series_metrics:
         yield [
             m["switch_ip"],
             m["ssh_port"],
@@ -750,6 +749,21 @@ def _summary_export(db, run, series):
                 )
             ),
         ]
+
+
+def _long_inventory_summary(metrics):
+    parts = [
+        f"시도 {metrics['attempts']}/{metrics['target']}",
+        f"응답 {metrics['success']}",
+        f"확인 손실 {metrics['loss']}",
+        f"미확인 {metrics['unknown']}",
+        f"미측정 구간 {metrics['gap']}",
+    ]
+    if metrics["sshFailures"]:
+        parts.append(f"SSH 실패 {metrics['sshFailures']}")
+    if metrics["mean"] is not None:
+        parts.append(f"평균 {metrics['mean']} ms")
+    return " · ".join(parts)
 
 
 def _event_export(db, run, series):
@@ -891,7 +905,24 @@ def export_history(path, run, extension):
             else:
                 with _export_book() as book:
                     series = _series(db, run)
-                    _sheet(book, "요약", _summary_export(db, run, series))
+                    series_metrics = [
+                        (m, _metrics(_samples(db, run, m["series_id"]), m["target_count"]))
+                        for m in series
+                    ]
+                    settings = json.loads(
+                        db.execute(
+                            "SELECT settings FROM ping_long_runs WHERE id=?", (run,)
+                        ).fetchone()[0]
+                    )
+                    if inventory := settings.get("inventoryRows"):
+                        summaries = {
+                            (m["switch_ip"], m["destination_ip"]): _long_inventory_summary(metrics)
+                            for m, metrics in series_metrics
+                        }
+                        append_inventory_sheet(
+                            book, inventory, settings["inventoryRoles"], summaries
+                        )
+                    _sheet(book, "요약", _summary_export(series_metrics))
                     _sheet(book, "개별 Ping", _sample_export(db, run))
                     _sheet(book, "장애·복구 이벤트", _event_export(db, run, series))
                     _sheet(book, "동시 장애 관측", _correlation_export(db, run))

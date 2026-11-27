@@ -76,9 +76,16 @@ class PingBatch:
         self.in_flight: dict[DeviceTarget, PingSlot] = {}
         self.workers: set[DeviceTarget] = set()
         self.remaining: dict[DeviceTarget, deque[int]] = {}
+        active_destinations = {}
         for index in range(len(indices)):
-            target, _ = self._pair(index)
+            target, destination = self._pair(index)
             self.remaining.setdefault(target, deque()).append(index)
+            if plan.inventory:
+                active_destinations.setdefault(target.ip, []).append(destination.ip)
+        self.inventory_rows = [
+            {**row, "activeDestinations": active_destinations.get(row["swIp"], [])}
+            for row in plan.inventory_rows
+        ]
         self.capacity = min(plan.options.concurrency, len({target.ip for target in self.remaining}))
         self.rows: list[dict] = []
         self.unpersisted_after: int | None = None
@@ -101,8 +108,7 @@ class PingBatch:
             self.stop_state = state
 
     def _pair(self, index):
-        device, destination = divmod(self.indices[index], len(self.plan.destinations))
-        return self.plan.targets[device], self.plan.destinations[destination]
+        return self.plan.pairs[self.indices[index]]
 
     def next_devices(self):
         devices = []
@@ -129,7 +135,7 @@ class PingBatch:
 
     def _row(self, index, observation, reason, *, may_have_started=False):
         target, destination = self._pair(index)
-        return {
+        row = {
             "index": len(self.rows),
             "pairIndex": index,
             "ip": target.ip,
@@ -147,6 +153,10 @@ class PingBatch:
             "slot_finished_at": None,
             "duration_ms": None,
         }
+        if inventory := self.plan.inventory:
+            row["inventory_hostname"] = inventory.by_ip[target.ip].hostname
+            row["inventory_roles"] = list(inventory.pair_roles[target, destination])
+        return row
 
     def record(
         self,
@@ -218,7 +228,7 @@ class PingBatch:
         total = len(self.indices)
         after = min(max(after, 0), len(rows))
         page = rows if complete else rows[after : after + 512]
-        return {
+        snapshot = {
             "parentRunId": self.parent_id,
             "options": asdict(self.plan.options),
             "total": total,
@@ -231,6 +241,11 @@ class PingBatch:
             "rows": [dict(row) for row in page],
             "cursor": len(rows) if complete else after + len(page),
         }
+        if self.plan.inventory:
+            snapshot.update(
+                inventoryRows=self.inventory_rows, inventoryRoles=list(self.plan.inventory_roles)
+            )
+        return snapshot
 
     def record_interrupted(self, pair_index, started):
         row = self._row(

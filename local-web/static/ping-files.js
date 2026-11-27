@@ -26,15 +26,16 @@
     if (view !== 'general') { event.preventDefault(); event.stopImmediatePropagation(); }
   }, true);
   function applyProfile(data) {
-    if (data.plan || data.targets) $('pingTargets').value = data.plan?.targets ?? data.targets;
+    window.pingInventory.applyProfile(data.plan);
+    if (data.plan?.targets || data.targets) $('pingTargets').value = data.plan?.targets ?? data.targets;
     if (data.destinations) {
       $('pingDestinations').value = data.destinations.map(d => d.ip + (d.label ? '\t'+d.label : '')).join('\n');
     }
     if (data.plan) {
       const plan = data.plan, opt = plan.options;
-      $('pingDestinations').value = plan.destinations.map(d => d.ip + (d.label ? '\t'+d.label : '')).join('\n');
+      if (plan.destinations) $('pingDestinations').value = plan.destinations.map(d => d.ip + (d.label ? '\t'+d.label : '')).join('\n');
       $('pingSourceMode').value = opt.source_mode;
-      $('pingSources').value = Object.entries(plan.source_ips).map(pair=>pair.join(',')).join('\n');
+      $('pingSources').value = Object.entries(plan.source_ips || {}).map(pair=>pair.join(',')).join('\n');
       for (const [id, key] of [['pingRepetitions','repetitions'], ['pingTimeout','timeout'],
            ['pingConcurrency','concurrency'], ['pingVlan','vlan'], ['pingSize','data_size']]) {
         $(id).value = opt[key] ?? '';

@@ -49,6 +49,7 @@ STATIC = {
             "control-tools.js",
             "cable-tools.js",
             "ping-tools.js",
+            "ping-inventory.js",
             "ping-files.js",
             "ping-long.js",
             "ping-analysis.js",
@@ -445,6 +446,14 @@ class Handler(BaseHTTPRequestHandler):
                 from localweb.ping_tools import preview_plan
 
                 self._json(preview_plan(data))
+            elif path == "/api/ping/inventory/preview":
+                from localweb.ping_inventory_import import InventoryInputError, preview_inventory
+
+                try:
+                    preview = preview_inventory(data)
+                except InventoryInputError as exc:
+                    return self._fail(400, str(exc))
+                self._json(preview)
             elif path == "/api/ping/long/preview":
                 self._json(app.jobs.long_ping.preview(data))
             elif path == "/api/ping/long/runs":
