@@ -174,7 +174,7 @@
     if(d.runs.some(r=>r.id===saved))el('Run').value=saved;
     el('NextRun').disabled=!d.more;el('PrevRun').disabled=!runOffset;
     await selectRun(ticket);
-    if(!d.runs.length)message('저장된 장시간 Ping 실행이 없습니다.');
+    if(!d.runs.length)message('저장된 주기 측정 이력이 없습니다.');
   }
   bind('Load',load);bind('NextRun',t=>{runOffset+=100;return load(t);});bind('PrevRun',t=>{runOffset=Math.max(0,runOffset-100);return load(t);});
   el('Run').onchange=()=>selectRun(++token).catch(e=>{if(e.name!=='AbortError')message(e.message);});

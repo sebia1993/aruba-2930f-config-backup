@@ -185,6 +185,45 @@ class PingPlanTests(unittest.TestCase):
         self.assertFalse(legacy.inventory_role_sessions)
         self.assertEqual(legacy.total_pairs, 2)
 
+    def test_device_window_is_measured_in_switches_and_profiles_preserve_units(self):
+        rows = [
+            {
+                "swIp": f"192.0.{i // 250}.{i % 250 + 1}",
+                "gwIp": "198.51.100.1",
+                "bbIp": "198.51.100.2",
+                "nmsIp": "198.51.100.3",
+            }
+            for i in range(300)
+        ]
+        raw = {
+            "inventoryRows": rows,
+            "inventoryRoles": ["gwIp", "bbIp", "nmsIp"],
+            "inventoryRoleSessions": True,
+        }
+        for limit in (1, 10, 300):
+            options = {"concurrent_devices": limit}
+            new = preview_plan(dict(raw, options=options))
+            self.assertEqual(
+                (new["requestedDevices"], new["effectiveDevices"], new["effectiveConcurrency"]),
+                (limit, limit, limit * 3),
+            )
+            saved = PingPlan.parse(dict(raw, options=options)).options.to_dict()
+            self.assertEqual(saved["concurrent_devices"], limit)
+            self.assertNotIn("concurrency", saved)
+            self.assertEqual(PingPlan.parse(dict(raw, options=saved)).options.to_dict(), saved)
+        legacy = PingPlan.parse(dict(raw, options={"concurrency": 5}))
+        self.assertEqual(legacy.effective_concurrency, 3)
+        self.assertNotIn("concurrent_devices", legacy.options.to_dict())
+        for options in (
+            {"concurrent_devices": 301},
+            {"concurrent_devices": 0},
+            {"concurrent_devices": True},
+            {"concurrent_devices": None},
+            {"concurrent_devices": 10, "concurrency": 5},
+        ):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                PingPlan.parse(dict(raw, options=options))
+
     def test_inventory_limits_count_actual_pairs_and_allow_distinct_gateways(self):
         rows = [
             {"swIp": f"192.0.{i // 250}.{i % 250 + 1}", "gwIp": f"198.51.{i // 250}.{i % 250 + 1}"}

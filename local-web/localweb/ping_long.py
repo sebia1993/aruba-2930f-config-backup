@@ -69,6 +69,8 @@ def parse_settings(body):
         "timeout": plan.options.timeout,
         "dataSize": plan.options.data_size,
     }
+    if plan.options.concurrent_devices is not None:
+        settings["concurrentDevices"] = plan.options.concurrent_devices
     if plan.inventory:
         settings.update(
             inventoryRows=plan.inventory_rows, inventoryRoles=list(plan.inventory_roles)
@@ -127,7 +129,10 @@ class LongRun:
         self.slots = {}
         self.stop_event = threading.Event()
         self.stop_state = "cancelled"
-        if plan.inventory_role_sessions:
+        self.device_limit = plan.options.concurrent_devices
+        if self.device_limit is not None:
+            self.device_limit, self.capacity = plan.capacities(plan.role_counts)
+        elif plan.inventory_role_sessions:
             limit = min(5, plan.options.concurrency)
             self.capacity = max(map(len, role_session_waves(plan.role_counts.items(), limit)))
         else:
@@ -163,7 +168,7 @@ class LongRun:
         total = sum(remaining.values())
         contention = max(total / STARTS_PER_SECOND, total * duration / self.capacity)
         if self.role_groups:
-            # Rows needing three workers cannot share a five-worker round.
+            # A row's role sessions always start together.
             row_counts = [
                 sorted((remaining[s.index] for s in group), reverse=True)
                 for group in self.role_groups.values()
@@ -171,6 +176,12 @@ class LongRun:
             for width in range(2, max(map(len, row_counts)) + 1):
                 rounds = sum(counts[width - 1] for counts in row_counts if len(counts) >= width)
                 contention = max(contention, rounds * duration / (self.capacity // width))
+                if self.device_limit is not None:
+                    # Assume sibling writes cluster. Only whole groups fit in a one-second window.
+                    contention = max(contention, rounds / (STARTS_PER_SECOND // width))
+            if self.device_limit is not None:
+                device_rounds = sum(counts[0] for counts in row_counts)
+                contention = max(contention, device_rounds * duration / self.device_limit)
             destination_rounds = Counter()
             for group in self.role_groups.values():
                 visits = Counter()
@@ -284,6 +295,7 @@ class LongRun:
             estimatedFinish=None if unknown or incomplete else (self.finished or stamp(wall + eta)),
             initialEta=self.initial_eta,
             settings=self.settings,
+            effectiveDevices=self.device_limit,
             effectiveConcurrency=self.capacity,
             elapsed=max(0, clock - self.origin),
             pausedSeconds=paused,
@@ -342,6 +354,7 @@ class LongPing:
             timeoutEta=timeout_estimate,
             estimatedFinish=stamp(wall + run.initial_eta),
             overDeadline=run.initial_eta > settings["maxHours"] * 3600,
+            effectiveDevices=run.device_limit,
             effectiveConcurrency=run.capacity,
             maxHours=settings["maxHours"],
             historyBytes=self._check_disk(total * 512),
@@ -365,6 +378,14 @@ class LongPing:
                 if existing["fingerprint"] != fingerprint:
                     raise ValueError("같은 ID에 다른 설정을 사용할 수 없습니다.")
                 return {"id": key, "state": existing["state"]}
+            quick = self.jobs.ping_batch
+            if quick is not None and (
+                plan.options.concurrent_devices is not None
+                or quick.plan.options.concurrent_devices is not None
+            ):
+                from .jobs import Busy
+
+                raise Busy("진행 중인 Ping 측정이 끝난 뒤 시작하세요.")
             if self.jobs.closing or (
                 self.run and (self.run.slots or self.run.state not in TERMINAL)
             ):
@@ -652,6 +673,10 @@ class LongPing:
                 [min(candidates, key=lambda s: (s.due, s.completed, s.index))] if candidates else []
             )
 
+        if run.device_limit is not None:
+            active_devices = {slot.series.target.ip for slot in run.slots.values()}
+            if len(active_devices) >= run.device_limit:
+                return []
         # Reserve each pending destination for its row while SSH is preparing.
         # Siblings may send together; another row waits from the last actual write.
         preparing_destinations = {

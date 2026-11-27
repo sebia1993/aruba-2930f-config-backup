@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from localweb.jobs import Jobs
+from localweb.jobs import Busy, Jobs
 from localweb.ping_long import LongPing
 from localweb.ping_tools import PingObservation
 
@@ -170,6 +170,81 @@ class LongPingTests(unittest.TestCase):
                     return
             time.sleep(0.005)
         self.fail("role sessions did not release the lease")
+
+    def test_periodic_device_limit_releases_one_row_at_a_time(self):
+        switches = ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"]
+        self.use_role_inventory(switches)
+        plan = self.settings["plan"]
+        plan["options"] = {"concurrent_devices": 2}
+        for i, row in enumerate(plan["inventoryRows"]):
+            row["gwIp"] = f"198.51.100.{i + 1}"
+            row["bbIp"] = row["nmsIp"] = row["gwIp"] if i in (0, 3) else ""
+        preview = self.engine.preview(self.settings)
+        self.assertEqual((preview["effectiveDevices"], preview["effectiveConcurrency"]), (2, 6))
+        started = {ip: threading.Semaphore(0) for ip in switches}
+        release = {ip: threading.Event() for ip in switches}
+
+        def hold(plan, target, dest, creds, cancel, *, before_send):
+            result = self.fake_send(plan, target, dest, creds, cancel, before_send=before_send)
+            started[target.ip].release()
+            release[target.ip].wait(15)
+            return result
+
+        self.start()
+        with patch.object(self.jobs.operations, "_ping_pair", side_effect=hold):
+            try:
+                self.engine.tick()
+                self.assertTrue(all(started[switches[0]].acquire(timeout=5) for _ in range(3)))
+                self.engine.tick()
+                self.assertTrue(started[switches[1]].acquire(timeout=5))
+                self.clock.value = 2
+                self.engine.tick()
+                self.assertEqual(
+                    {s.series.target.ip for s in self.engine.run.slots.values()}, set(switches[:2])
+                )
+                release[switches[0]].set()
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    self.engine.tick()
+                    if started[switches[2]].acquire(timeout=0.01):
+                        break
+                else:
+                    self.fail("the next row waited for the other device")
+                self.assertEqual(
+                    {s.series.target.ip for s in self.engine.run.slots.values()}, set(switches[1:3])
+                )
+            finally:
+                for event in release.values():
+                    event.set()
+                self.wait_for_release()
+
+    def test_full_inventory_preview_counts_whole_role_groups_per_write_window(self):
+        switches = [f"198.18.{i // 250}.{i % 250 + 1}" for i in range(300)]
+        self.use_role_inventory(switches, count=20)
+        self.settings["maxHours"] = 1
+        plan = self.settings["plan"]
+        plan["options"] = {"concurrent_devices": 300}
+        for i, row in enumerate(plan["inventoryRows"]):
+            for subnet, role in enumerate(("gwIp", "bbIp", "nmsIp")):
+                row[role] = f"198.19.{2 * subnet + i // 250}.{i % 250 + 1}"
+
+        preview = self.engine.preview(self.settings)
+        self.assertEqual((preview["effectiveDevices"], preview["effectiveConcurrency"]), (300, 900))
+        self.assertEqual(preview["initialEta"], 6000)
+        self.assertTrue(preview["overDeadline"])
+
+    def test_periodic_admission_respects_active_unified_quick_measurement(self):
+        self.jobs.ping_batch = SimpleNamespace(
+            plan=SimpleNamespace(options=SimpleNamespace(concurrent_devices=10))
+        )
+        with self.assertRaises(Busy):
+            self.start()
+        self.jobs.ping_batch = None
+        receipt = self.start()
+        self.jobs.ping_batch = SimpleNamespace(
+            plan=SimpleNamespace(options=SimpleNamespace(concurrent_devices=10))
+        )
+        self.assertEqual(self.start(), receipt)
 
     def test_three_independent_role_sessions_overlap_and_next_row_waits_for_full_capacity(self):
         switches = ["192.0.2.1", "192.0.2.2"]

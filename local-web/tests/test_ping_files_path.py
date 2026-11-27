@@ -39,7 +39,9 @@ class PingFileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             action("save", name="지점", plan=PLAN)
         self.assertEqual(action("list")["names"], ["지점"])
-        raw = json.dumps(action("portable", plan=PLAN))
+        portable = action("portable", plan=PLAN)
+        self.assertNotIn("schedule", portable["plan"])
+        raw = json.dumps(portable)
         self.assertEqual(action("import", text=raw), action("load", name="지점"))
         with self.assertRaises(ValueError):
             action("save", name="invalid", plan=dict(PLAN, password=None))
@@ -54,6 +56,30 @@ class PingFileTests(unittest.TestCase):
         portable = profile_request(self.jobs, "portable", destinations)
         self.assertEqual(import_profile(json.dumps(portable), self.root), selected)
         self.assertEqual(profile_request(self.jobs, "list", {})["names"], [])
+
+    def test_periodic_profile_preserves_schedule_without_changing_packet_count(self):
+        schedule = {"count": 700, "interval": 3, "maxHours": 12, "autoTrace": True}
+        plan = {
+            **PLAN,
+            "options": {"concurrent_devices": 14, "repetitions": 1},
+            "schedule": schedule,
+        }
+        profile_request(self.jobs, "save", {"name": "periodic", "plan": plan})
+        stored = profile_request(self.jobs, "load", {"name": "periodic"})
+        portable = profile_request(self.jobs, "portable", {"plan": plan})
+        self.assertEqual(import_profile(json.dumps(portable), self.root), stored)
+        self.assertEqual(stored["plan"]["schedule"], schedule)
+        self.assertEqual(stored["plan"]["options"]["repetitions"], 1)
+        self.assertEqual(stored["plan"]["options"]["concurrent_devices"], 14)
+        for invalid in (
+            None,
+            True,
+            {},
+            {"interval": 0, "count": 10},
+            {"count": 10001, "interval": 1},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                profile_request(self.jobs, "portable", {"plan": {**plan, "schedule": invalid}})
 
     def test_inventory_profile_roundtrip_retains_switch_to_role_mapping(self):
         plan = {

@@ -147,7 +147,7 @@
     </section>
     <section data-page="ping" aria-labelledby="pingHeading" hidden>
       <div class="heading"><div><h1 id="pingHeading">Ping 테스트</h1><p>스위치에서 목적지까지의 통신 상태를 측정합니다.</p></div></div>
-      <nav class="bar" aria-label="Ping 작업 선택"><button type="button" data-ping-pane="general" aria-pressed="true">일반 통신 테스트</button><button type="button" data-ping-pane="long" aria-pressed="false">장시간 Ping 테스트</button><button type="button" data-ping-pane="analysis" aria-pressed="false">Ping 이력 분석</button><button type="button" data-ping-pane="heat" aria-pressed="false">동시 장애 분석</button><button type="button" data-ping-pane="nms" aria-pressed="false">NMS 장애 이력 비교</button><button type="button" data-ping-pane="path" aria-pressed="false">경로 진단</button></nav>
+      <nav class="bar" aria-label="Ping 작업 선택"><button type="button" data-ping-pane="measure" aria-pressed="true">Ping 측정</button><button type="button" data-ping-pane="analysis" aria-pressed="false">Ping 이력 분석</button><button type="button" data-ping-pane="heat" aria-pressed="false">동시 장애 분석</button><button type="button" data-ping-pane="nms" aria-pressed="false">NMS 장애 이력 비교</button><button type="button" data-ping-pane="path" aria-pressed="false">경로 진단</button></nav>
       <article class="panel" aria-labelledby="pingInputHeading">
         <header><h2 id="pingInputHeading">측정 대상 및 옵션</h2><button type="button" id="pingAllHelp" aria-expanded="false">전체 옵션 설명 펼치기</button></header>
         <form id="pingForm" class="panelbody" autocomplete="off">
@@ -178,6 +178,13 @@
             </div></details>
           </div>
           <div id="pingGeneralActions">
+            <div class="bar">
+              <label>목적지당 Ping 횟수<input id="pingRepetitions" type="number" min="1" max="100" value="5" required></label>
+              <label>측정 간격<select id="pingInterval"><option value="0">연속</option><option value="1">1초</option><option value="3">3초</option><option value="5">5초</option><option value="10">10초</option></select></label>
+              <button type="button" class="detailsbtn" data-ping-help aria-controls="pingHelpCount" aria-expanded="false">반복 횟수 도움말</button>
+            </div>
+            <p class="hint" id="pingHelpCount" hidden>연속 측정은 한 명령으로 목적지마다 1~100회 전송합니다. 간격을 지정하면 목적지마다 한 번씩 전송하고 시각별 결과를 기록합니다. 최대 10,000회, 전체 200,000회까지 설정할 수 있습니다.</p>
+            <p class="hint" id="pingLongEstimate" role="status" hidden></p>
             <div class="bar"><button type="button" class="primary" id="pingStart" disabled>Ping 시작</button><button id="pingPreview">명령 미리보기</button></div>
             <p id="pingPreviewStatus" role="status" class="hint">Ping 시작을 누르면 스위치 SSH 계정을 확인하고 측정을 시작합니다.</p>
             <a href="#connect" id="pingAccountSettings" hidden>SSH 접속 계정 변경</a>
@@ -198,9 +205,6 @@
             <span class="hint" id="pingPresetName" role="status">일반 확인</span>
           </div>
           <div class="formgrid">
-            <div><label>반복 횟수 (1~100)<input id="pingRepetitions" type="number" min="1" max="100" value="5" required></label>
-              <button type="button" class="detailsbtn" data-ping-help aria-controls="pingHelpCount" aria-expanded="false">반복 횟수 도움말</button>
-              <p class="hint" id="pingHelpCount" hidden>일반 Ping 한 조합에서 보내는 요청 수입니다. 장비 범위는 1~10,000회, 장비 기본은 1회입니다. 이 화면은 1~100회이며 기본 명령은 <code>repetitions 5</code>입니다. 간헐 손실을 확인할 때는 10~20회로 늘릴 수 있고 측정 시간이 길어집니다.</p></div>
             <div><label>Timeout (초, 1~10)<input id="pingTimeout" type="number" min="1" max="10" value="2" required></label>
               <button type="button" class="detailsbtn" data-ping-help aria-controls="pingHelpTimeout" aria-expanded="false">응답 대기 시간 도움말</button>
               <p class="hint" id="pingHelpTimeout" hidden>각 요청의 응답을 기다리는 제한입니다. 장비 범위는 1~60초, 장비 기본은 5초입니다. 일반 사내망 점검의 화면 기본은 <code>timeout 2</code>입니다. 전송 간격과 실제 응답 지연은 별도로 측정합니다.</p></div>
@@ -210,13 +214,19 @@
             <label id="pingVlanField" hidden>Source VLAN (1~4094)<input id="pingVlan" type="number" min="1" max="4094" disabled></label>
           </div>
           <label id="pingSourcesField" hidden>직접 Source 매핑<textarea id="pingSources" rows="4" maxlength="100000" spellcheck="false" disabled placeholder="스위치IPv4:SSH포트,SourceIPv4 · 한 줄에 한 대"></textarea><span class="hint">기본 SSH 포트도 :22를 포함합니다. 각 스위치에 하나씩 지정하세요.</span></label>
+          <div class="ping-input-fields" id="pingPeriodicOptions" hidden>
+            <label>최대 측정 시간 (시간)<input id="pingLongHours" type="number" min="1" max="48" value="48" disabled></label>
+            <p class="hint" id="pingLongTiming"></p>
+            <label><input type="checkbox" id="pingLongTrace"> 3회 연속 손실 시 경로 진단</label>
+            <p class="hint">측정 간격은 같은 목적지에 다음 Ping을 보내기까지의 목표 시간입니다. SSH 준비나 다른 작업 대기로 간격이 늘어날 수 있습니다. 일시정지 중에도 최대 측정 시간은 흐릅니다.</p>
+          </div>
           <details id="pingAdvanced"><summary>고급 Ping 옵션 <span id="pingAdvancedSummary" class="hint"></span></summary><div class="formgrid">
             <div><label>Data Size (Byte, 0~1472)<input id="pingSize" type="number" min="0" max="1472" placeholder="장비 기본값"></label>
               <button type="button" class="detailsbtn" data-ping-help aria-controls="pingHelpSize" aria-expanded="false">Data Size 도움말</button>
               <p class="hint" id="pingHelpSize" hidden>ICMP 데이터 영역의 크기입니다. 장비 범위는 0~65,471바이트, 기본값은 0입니다. 화면은 기본적으로 옵션을 생략합니다. <code>data-size 1472</code>에 IPv4·ICMP 헤더 28바이트를 더하면 1500바이트입니다. 단편화될 수 있어 큰 패킷의 성공만으로 경로 MTU를 확정할 수 없습니다.</p></div>
-            <div><label>요청 동시 SSH (1~10)<input id="pingConcurrency" type="number" min="1" max="10" value="5" required></label>
-              <button type="button" class="detailsbtn" data-ping-help aria-controls="pingHelpConcurrency" aria-expanded="false">동시 SSH 도움말</button>
-              <p class="hint" id="pingHelpConcurrency" hidden>전체 스위치에서 동시에 사용할 SSH 세션 수입니다. 기본값은 5개입니다. 한 장비에서 동시에 측정할 역할이 입력한 한도보다 많으면 그 역할 수를 적용합니다.</p></div>
+            <div><label>동시 측정 장비 수 (1~300)<input id="pingConcurrency" type="number" min="1" max="300" value="10" required></label>
+              <button type="button" class="detailsbtn" data-ping-help aria-controls="pingHelpConcurrency" aria-expanded="false">동시 측정 장비 수 도움말</button>
+              <p class="hint" id="pingHelpConcurrency" hidden>연속 측정은 기본 10대를 함께 검사하고, 한 장비가 끝나면 다음 장비를 시작합니다. 장비마다 GW·BB·NMS용 SSH 세션을 따로 엽니다. 간격을 지정하면 전송 속도 제한도 함께 적용됩니다.</p></div>
           </div></details>
           </div></details>
         </form>
@@ -232,9 +242,9 @@
             <button type="button" id="pingShowFirst">처음 명령 목록 보기</button></div>
         </div></details>
       </article>
-      <article class="panel" aria-labelledby="pingRunHeading">
-        <header><h2 id="pingRunHeading">일반 Ping 작업 및 결과</h2></header>
-        <div class="panelbody">
+      <article class="panel" id="pingMeasurementResults" aria-labelledby="pingRunHeading">
+        <header><h2 id="pingRunHeading">측정 진행 및 결과</h2></header>
+        <div class="panelbody" id="pingQuickResults">
           <p class="hint">시작하면 스위치에서 실제 읽기 전용 Ping을 실행합니다. 요청 ID를 보관하며 연결이 끊겨도 새 요청으로 자동 재실행하지 않습니다.</p>
           <div class="bar"><button type="button" id="pingRefresh">상태 확인</button><button type="button" id="pingCancel" disabled>작업 취소</button><button type="button" id="pingRetry" hidden disabled>동일 ID 재접수</button><button type="button" id="pingNew" disabled>새 작업 준비</button></div>
           <p id="pingRunStatus" role="status">현재 작업 확인 중</p>
@@ -259,8 +269,8 @@
           <div class="bar"><button type="button" id="pingPrev" disabled>이전</button><span id="pingPage">1 / 1</span><button type="button" id="pingNext" disabled>다음</button></div>
           <div class="bar"><button type="button" id="pingExportFiltered">필터 결과 Excel 저장</button><button type="button" id="pingExportSelected">선택 조합 Excel 저장</button></div><p id="pingExportStatus" role="status"></p>
         </div>
+        <div id="pingLong" class="panelbody" hidden></div>
       </article>
-      <article class="panel" id="pingLong" hidden></article>
       <div id="pingAnalysis" hidden></div>
       <article class="panel" id="pingPath" hidden><header><h2>경로 진단</h2></header>
         <div class="panelbody">

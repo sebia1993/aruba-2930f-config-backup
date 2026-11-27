@@ -55,10 +55,9 @@
   function lines(value) {
     return value.split(/\r?\n/).filter(line => line.trim() !== '');
   }
-  function sessionLimit() {
-    const requested = $('pingConcurrency').valueAsNumber;
-    return Number.isInteger(requested) && requested >= 1
-      ? Math.max(requested, window.pingInventory.minimumConcurrency()) : requested;
+  function schedule() {
+    return {interval:Number($('pingInterval').value), count:$('pingRepetitions').valueAsNumber,
+      maxHours:$('pingLongHours').valueAsNumber, autoTrace:$('pingLongTrace').checked};
   }
   function syncSource() {
     const mode = $('pingSourceMode').value;
@@ -71,11 +70,14 @@
       $(input).disabled = !active;
       $(input).required = active;
     }
-    const limit = sessionLimit();
+    const periodic = Number($('pingInterval').value) > 0;
+    $('pingRepetitions').max = periodic ? '10000' : '100';
+    $('pingPeriodicOptions').hidden = !periodic;
+    $('pingLongHours').disabled = !periodic;
+    $('pingLongEstimate').hidden = !periodic;
     $('pingAdvancedSummary').textContent = ' · 데이터 ' +
       ($('pingSize').value === '' ? '장비 기본값' : $('pingSize').value + ' B') +
-      ' · 동시 SSH 한도 ' + (Number.isFinite(limit) ? limit + '개' : '—') +
-      (limit > $('pingConcurrency').valueAsNumber ? ' (장비별 역할 수 적용)' : '');
+      ' · 동시 측정 ' + ($('pingConcurrency').value || '—') + '대';
   }
   function invalidate() {
     generation++;
@@ -87,17 +89,17 @@
     commands.value = '';
     copy.disabled = true;
     summary.textContent = '명령 미리보기를 누르면 측정할 명령이 표시됩니다.';
-    status.textContent = 'Ping 시작을 누르면 스위치 SSH 계정을 확인하고 측정을 시작합니다.';
+    if (!running && !window.pingPeriodic?.live()) status.textContent = 'Ping 시작을 누르면 스위치 SSH 계정을 확인하고 측정을 시작합니다.';
     syncSource();
     syncRun();
   }
   function plan() {
     const mode = $('pingSourceMode').value;
     const options = {
-      repetitions: $('pingRepetitions').valueAsNumber,
+      repetitions: Number($('pingInterval').value) ? 1 : $('pingRepetitions').valueAsNumber,
       timeout: $('pingTimeout').valueAsNumber,
       source_mode: mode,
-      concurrency: sessionLimit()
+      concurrent_devices: $('pingConcurrency').valueAsNumber
     };
     if ($('pingSize').value !== '') options.data_size = $('pingSize').valueAsNumber;
     if (mode === 'vlan') options.vlan = $('pingVlan').valueAsNumber;
@@ -146,6 +148,7 @@
     button.addEventListener('click', () => {
       const [count, timeout] = preset[button.dataset.pingPreset];
       $('pingRepetitions').value = count;
+      $('pingInterval').value = '0';
       $('pingTimeout').value = timeout;
       $('pingSourceMode').value = 'ssh_ip';
       $('pingSize').value = '';
@@ -175,10 +178,15 @@
       currentCommands = firstCommands = text;
       commands.value = text;
       copy.disabled = !text;
+      const interval = Number($('pingInterval').value);
+      const duration = interval ? await window.pingPeriodic.preview() : null;
+      if (requestGeneration !== generation || (interval && !duration)) return;
+      const total = duration ? duration.total : result.totalRequests;
+      const capacity = duration || result;
       summary.textContent = '스위치 ' + result.switches + '대 · 서버 ' + result.destinations +
-        '대 · ' + result.totalPairs + '조합 · 총 ' + result.totalRequests +
-        '회 · 요청 동시성 ' + result.requestedConcurrency + ' / 실제 ' +
-        result.effectiveConcurrency + (result.truncated ? ' · 처음 20개 명령만 표시' : '');
+        '대 · ' + result.totalPairs + '조합 · 총 ' + total +
+        '회 · 동시 장비 최대 ' + capacity.effectiveDevices + '대 / SSH 최대 ' + capacity.effectiveConcurrency + '세션' +
+        (interval ? ' · 목표 간격 ' + interval + '초' : '') + (result.truncated ? ' · 처음 20개 명령만 표시' : '');
       status.textContent = '입력 검증 완료 · 실제 Source 및 장비 호환성 미확인 · 미실행';
       previewedPlan = requestPlan;
       $('pingPreviewTarget').replaceChildren(...result.endpoints.map(ip => new Option(ip, ip)));
@@ -255,6 +263,7 @@
   });
   // Persist only an opaque receipt ID, never credentials or the measurement plan.
   const storageKey = 'ping.run.id.v1';
+  const latestResultKey = 'ping.latest.result.id.v1';
   const runStatus = $('pingRunStatus');
   const runButton = $('pingStart');
   const retryButton = $('pingRetry');
@@ -279,6 +288,8 @@
   let running = false;
   let terminal = false;
   let missingReceipt = false;
+  let quickStarted = 0;
+  let latestResultId = null;
   let cursor = 0;
   let pageIndex = 0;
   let rows = [];
@@ -290,6 +301,7 @@
     const saved = sessionStorage.getItem(storageKey);
     if (saved && idPattern.test(saved)) trackedId = saved;
     else if (saved) storageOK = false;
+    latestResultId = sessionStorage.getItem(latestResultKey);
   } catch { storageOK = false; }
 
   function remember(id) {
@@ -304,24 +316,47 @@
       return false;
     }
   }
+  function markLatestResult(id) {
+    if (latestResultId === id) return;
+    latestResultId = id;
+    try { sessionStorage.setItem(latestResultKey, id); } catch { /* Display preference only. */ }
+  }
+  function showResults() {
+    const periodic = window.pingPeriodic?.result();
+    const periodicStarted = Date.parse(periodic?.startedAt) || 0;
+    const newerPeriodic = quickStarted ? periodicStarted > quickStarted ||
+      (periodicStarted === quickStarted && latestResultId === periodic?.id) : latestResultId !== trackedId;
+    const showPeriodic = !!periodic && (window.pingPeriodic.live() ||
+      (!running && !missingReceipt && (!trackedId || newerPeriodic)));
+    $('pingLong').hidden = !showPeriodic;
+    $('pingQuickResults').hidden = showPeriodic;
+  }
   function announceRun(message) {
     runStatus.textContent = message;
-    status.textContent = message;
+    if (!$('pingQuickResults').hidden || busy || confirmingAccount) status.textContent = message;
+  }
+  function quickBlocked() {
+    return !storageOK || !discovered || busy || confirmingAccount || (!!trackedId && !terminal);
   }
   function readyForNewRun() {
     return !trackedId || (terminal && editRevision !== submittedEdit);
   }
+  function canForgetReceipt() {
+    return trackedId && (terminal || (missingReceipt && !pendingPlan));
+  }
   function syncRun() {
     const hasTargets = window.pingInventory.active() ? window.pingInventory.hasTargets() :
       $('pingTargets').value.trim() && $('pingDestinations').value.trim();
-    runButton.disabled = busy || confirmingAccount || !storageOK || !discovered || !readyForNewRun() || !hasTargets;
+    const periodic = window.pingPeriodic;
+    runButton.disabled = quickBlocked() || !periodic?.available() || !hasTargets ||
+      (!Number($('pingInterval').value) && !readyForNewRun());
     retryButton.hidden = !(trackedId && missingReceipt && pendingPlan);
     retryButton.disabled = busy || confirmingAccount || !storageOK;
     cancelButton.disabled = busy || !!refreshRequest || !running || !trackedId;
-    newButton.disabled = busy || !!refreshRequest || !terminal || !trackedId || !storageOK;
+    newButton.disabled = busy || confirmingAccount || !!refreshRequest || !canForgetReceipt() || !storageOK;
     refreshButton.disabled = busy || !!refreshRequest;
     $('pingRequestId').textContent = trackedId || '—';
-    const rerunReady = terminal && !!trackedId && rows.length > 0 && !busy && !confirmingAccount && storageOK;
+    const rerunReady = terminal && !!trackedId && rows.length > 0 && !busy && !confirmingAccount && storageOK && periodic?.available();
     $('pingRerunAll').disabled = !rerunReady;
     $('pingRerunSelected').disabled = !rerunReady || !selectedIndices.size;
     $('pingRerunSelected').textContent = '선택 재실행 (' + selectedIndices.size + ')';
@@ -536,7 +571,10 @@
     if (job.id !== id) throw new Error('작업 식별자가 일치하지 않습니다.');
     const snapshot = job.result || job.progress;
     running = job.state === 'running' && !job.historyOnly;
+    quickStarted = Date.parse(job.started) || 0;
+    if (running) markLatestResult(id);
     missingReceipt = false;
+    showResults();
     pendingPlan = null; // A receipt proves admission; never submit this plan again.
     terminal = false;
     if (snapshot && Number.isInteger(snapshot.total) && snapshot.total > 0 &&
@@ -598,7 +636,7 @@
     const current = await api('/api/ping/runs', undefined, undefined, 10000);
     if (current.id !== null && !idPattern.test(current.id)) throw new Error('작업 ID 형식 오류');
     discovered = true;
-    if (current.id && !trackedId) {
+    if (current.id && current.id !== trackedId && (!trackedId || terminal)) {
       clearResults();
       admissionError = '';
       // Even if storage becomes unavailable, allow read-only monitoring of this ID.
@@ -617,19 +655,22 @@
   }
   async function refreshStatus() {
     try {
-      if (!trackedId) await discover();
+      if (!trackedId || terminal) await discover();
       if (trackedId && !terminal) await readRun();
       else if (!trackedId && storageOK) runStatus.textContent = admissionError || '실행 중인 Ping 작업 없음';
     } catch (error) {
       running = false;
       missingReceipt = !!trackedId && error.status === 404 && error.serverRejection;
       if (!trackedId) discovered = false;
-      if (trackedId) announceRun('작업 상태 미확인 · 새 요청을 보내지 않습니다. · ' + error.message);
+      if (missingReceipt && !pendingPlan) {
+        showResults();
+        announceRun('서버에 기존 요청의 접수 기록이 없습니다. 새 작업 준비를 누르면 현재 작업을 다시 확인합니다.');
+      } else if (trackedId) announceRun('작업 상태 미확인 · 새 요청을 보내지 않습니다. · ' + error.message);
       else runStatus.textContent = admissionError || error.message;
     }
   }
   async function postRun(retry = false, rerun = null) {
-    if (busy || confirmingAccount || !storageOK || !ui.token) return;
+    if (busy || confirmingAccount || !storageOK || !ui.token || !window.pingPeriodic?.available()) return;
     if (retry && !(trackedId && missingReceipt && pendingPlan)) return;
     if (rerun && (!terminal || !trackedId || rerun.parentId !== trackedId || !rows.length)) return;
     if (!retry && !rerun && (!readyForNewRun() || !discovered || !form.reportValidity())) return;
@@ -640,7 +681,7 @@
     const previousId = trackedId;
     const stillRequested = () => requestNavigation === navigationRevision &&
       location.hash === '#ping' && !$('pingRunHeading').closest('article').hidden &&
-      trackedId === previousId && (retry ? pendingPlan === request && missingReceipt :
+      window.pingPeriodic?.available() && trackedId === previousId && (retry ? pendingPlan === request && missingReceipt :
         rerun ? terminal : requestGeneration === generation && request?.plan === previewedPlan);
     confirmingAccount = true;
     syncRun();
@@ -710,6 +751,9 @@
         announceRun('접수 미확인 · 기존 요청 ID를 조회합니다.');
       }
       if (!retry) {
+        quickStarted = 0;
+        markLatestResult(trackedId);
+        showResults();
         // Keep the prior receipt and rows intact until the new request could have been admitted.
         clearResults();
         if (!rerun) submittedEdit = requestEdit;
@@ -725,7 +769,21 @@
       syncRun();
     }
   }
-  runButton.addEventListener('click', () => postRun());
+  runButton.addEventListener('click', () => {
+    if (!Number($('pingInterval').value)) postRun();
+    else if (!quickBlocked() && form.reportValidity()) window.pingPeriodic.start();
+  });
+  window.pingMeasurement = {
+    sync:syncRun, showResults, markLatestResult, schedule, quickBlocked,
+    restoreSchedule(settings) {
+      if (editRevision || !settings) return;
+      $('pingInterval').value = String(settings.interval);
+      $('pingRepetitions').value = settings.count;
+      $('pingLongHours').value = settings.maxHours;
+      $('pingLongTrace').checked = settings.autoTrace;
+      syncSource();
+    }
+  };
   for (const [id, mode] of [['pingRerunAll','all'], ['pingRerunSelected','selected'], ['pingRerunFailed','failed']]) {
     $(id).addEventListener('click', () => {
       const rerun = {parentId: trackedId, mode};
@@ -756,28 +814,31 @@
     }
   });
   newButton.addEventListener('click', () => {
-    if (busy || !terminal || !remember(null)) return;
+    if (busy || confirmingAccount || refreshRequest || !canForgetReceipt() || !remember(null)) return;
     pendingPlan = null;
+    quickStarted = 0;
     discovered = false;
     clearResults();
+    showResults();
     invalidate();
     refresh();
   });
   // GET-only polling, never auto-submit on reload, navigation or lost response.
   function visibleRefresh() {
-    if (location.hash === '#ping' && (!terminal || !trackedId)) refresh();
+    if (location.hash === '#ping') refresh();
   }
   window.addEventListener('hashchange', () => {
     navigationRevision++;
     visibleRefresh();
   });
   document.addEventListener('pingpane', event => {
-    if (event.detail !== 'general') navigationRevision++;
+    if (event.detail !== 'measure') navigationRevision++;
   });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) visibleRefresh();
   });
   setInterval(() => { if (!document.hidden) visibleRefresh(); }, 2000);
+  window.addEventListener('aruba-session-ready', visibleRefresh);
   syncSource();
   setPresetName('normal');
   syncRun();
