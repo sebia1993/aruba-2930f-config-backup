@@ -1,27 +1,8 @@
-"""Offline device inventory paste and workbook previews."""
+"""Exercise clipboard-only device inventory previews."""
 
-import base64
-import io
 import unittest
-from unittest.mock import patch
-from zipfile import ZIP_DEFLATED, ZipFile
 
 from localweb.ping_inventory_import import InventoryInputError, preview_inventory
-from openpyxl import Workbook
-
-
-def workbook_payload(data, second=None):
-    book = Workbook()
-    for row in data:
-        book.active.append(row)
-    if second:
-        sheet = book.create_sheet("점검")
-        for row in second:
-            sheet.append(row)
-    buffer = io.BytesIO()
-    book.save(buffer)
-    book.close()
-    return {"filename": "장비표.xlsx", "content": base64.b64encode(buffer.getvalue()).decode()}
 
 
 class InventoryImportTests(unittest.TestCase):
@@ -98,66 +79,41 @@ class InventoryImportTests(unittest.TestCase):
         self.assertTrue(any("GW IP" in e for e in rows[2]["errors"]))
         self.assertEqual(rows[3]["errors"], [])
 
-    def test_workbook_can_choose_sheet_and_rejects_formula_without_evaluation(self):
-        payload = workbook_payload(
-            [["SW IP", "GW IP"], ["192.0.2.1", "198.51.100.1"]],
-            [["장비 hostname", "SW IP", "BB"], ["=1+1", "192.0.2.2", "=1+2"]],
-        )
-        first = preview_inventory(payload)
-        self.assertEqual(first["sheets"], ["Sheet", "점검"])
-        self.assertEqual(first["rows"][0]["errors"], [])
-        second = preview_inventory({**payload, "sheet": "점검"})
-        self.assertEqual(second["sheet"], "점검")
-        self.assertEqual(second["rows"][0]["swIp"], "192.0.2.2")
-        self.assertEqual(len(second["rows"][0]["errors"]), 2)
-        self.assertNotIn("=1+1", repr(second))
-        with self.assertRaises(ValueError):
-            preview_inventory({**payload, "sheet": "없는 시트"})
-
-    def test_library_errors_never_echo_imported_values(self):
-        payload = workbook_payload([["SW IP", "BB"], ["192.0.2.2", "198.51.100.2"]])
-        with (
-            patch(
-                "localweb.ping_analysis_nms.load_workbook",
-                side_effect=ValueError("private cell content"),
-            ),
-            self.assertRaises(InventoryInputError) as caught,
+    def test_file_and_mixed_requests_are_rejected(self):
+        table = "SW IP\tGW IP\n192.0.2.1\t198.51.100.1"
+        upload = {"filename": "private-site.xlsx", "content": "private-content"}
+        for payload in (
+            upload,
+            {**upload, "text": table},
+            {"text": table, "sheet": "private-site"},
+            {"text": table, "filename": "private-site.xlsx"},
         ):
-            preview_inventory(payload)
-        self.assertEqual(str(caught.exception), "Excel 파일을 읽지 못했습니다.")
+            with self.subTest(keys=list(payload)):
+                with self.assertRaisesRegex(InventoryInputError, "붙여넣") as error:
+                    preview_inventory(payload)
+                self.assertNotIn("private", str(error.exception))
+        self.assertEqual(
+            set(preview_inventory({"text": table})), {"headers", "rows", "errors", "mapping"}
+        )
 
-    def test_input_bounds_and_unsafe_workbooks(self):
-        # Some workbooks open on a cover sheet with no inventory data.
-        cover = workbook_payload([], [["SW IP", "BB"], ["192.0.2.2", "198.51.100.2"]])
-        preview = preview_inventory(cover)
-        self.assertEqual(preview["sheets"], ["Sheet", "점검"])
-        self.assertTrue(preview["errors"])
-        self.assertFalse(preview_inventory({**cover, "sheet": "점검"})["errors"])
+    def test_clipboard_formulas_flag_their_rows_and_columns(self):
+        preview = preview_inventory({"text": "장비 Hostname\tSW IP\tBB\n=1+1\t192.0.2.1\t=1+2"})
+        errors = preview["rows"][0]["errors"]
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(any("2행 장비 Hostname" in error for error in errors))
+        self.assertTrue(any("2행 BB" in error for error in errors))
+        self.assertNotIn("=1+1", repr(preview))
+
+    def test_clipboard_input_bounds(self):
         table = "SW IP\tBB\n192.0.2.1\t198.51.100.1"
         for payload in (
             {},
-            {"text": table, "content": "abc"},
             {"text": {"raw": table}},
             {"text": "a\t" * 81 + "b\n1"},
             {"text": "a\n" * 5002},
+            {"text": "한" * (1024**2 + 1)},
             {"text": '\t"bad quote'},
             {"text": table, "mapping": {"extra": 0}},
-            {"filename": "장비.xlsm", "content": "aGVsbG8="},
-            {"filename": "not-a-book.xlsx", "content": "not-base64!"},
         ):
-            with self.subTest(keys=list(payload)), self.assertRaises(ValueError):
+            with self.subTest(keys=list(payload)), self.assertRaises(InventoryInputError):
                 preview_inventory(payload)
-        for entry, data in [
-            ("xl/vbaProject.bin", b"fake"),
-            ("a.xml", b"<!DOCTYPE fake>"),
-            ("a", b"x" * (20 * 1024**2 + 1)),
-        ]:
-            stream = io.BytesIO()
-            with ZipFile(stream, "w", ZIP_DEFLATED) as archive:
-                archive.writestr(entry, data)
-            with self.subTest(entry=entry), self.assertRaises(ValueError):
-                preview_inventory(
-                    dict(
-                        filename="unsafe.xlsx", content=base64.b64encode(stream.getvalue()).decode()
-                    )
-                )

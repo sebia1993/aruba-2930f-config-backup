@@ -4,14 +4,7 @@ import csv
 import io
 import unicodedata
 
-from .ping_analysis_nms import (
-    FORMULA_CELL,
-    MAX_BYTES,
-    MAX_COLS,
-    MAX_ROWS,
-    TableFileError,
-    unpack_file,
-)
+from .ping_analysis_nms import MAX_BYTES, MAX_COLS, MAX_ROWS
 from .ping_tools import inventory_hostname, unicast_ipv4
 
 _LABELS = dict(hostname="장비 Hostname", swIp="SW IP", gwIp="GW IP", bbIp="BB", nmsIp="NMS server")
@@ -85,18 +78,15 @@ def _headers_mapping(headers, overrides):
 def _preview_rows(data, mapping):
     rows, rows_by_ip = [], {}
     for number, cells in enumerate(data, 2):
-        if not any(value is not None and value != "" for value in cells):
+        if not any(cells):
             continue
         row = dict.fromkeys(_LABELS, "")
         row.update(rowNumber=number, errors=[])
         for key, column in mapping.items():
             if column is None:
                 continue
-            value = cells[column] if column < len(cells) else None
+            value = cells[column].strip(" ") if column < len(cells) else ""
             try:
-                if value is FORMULA_CELL:
-                    raise InventoryInputError("수식 대신 값을 입력하세요.")
-                value = "" if value is None else str(value).strip(" ")
                 if value.startswith("="):
                     raise InventoryInputError("수식 대신 값을 입력하세요.")
                 row[key] = value[:100]
@@ -120,28 +110,16 @@ def _preview_rows(data, mapping):
 
 def preview_inventory(payload):
     """Map a header row and validate individual records for explicit operator selection."""
-    if not isinstance(payload, dict) or ("text" in payload) == ("content" in payload):
-        raise InventoryInputError("엑셀 표를 붙여넣거나 XLSX 파일 하나를 선택하세요.")
-    sheet_names, sheet = [], ""
-    if "text" in payload:
-        headers, data = _paste_table(payload["text"])
-    else:
-        filename = payload.get("filename")
-        if not isinstance(filename, str) or not filename.lower().endswith(".xlsx"):
-            raise InventoryInputError("장비 목록은 XLSX 파일을 선택하세요.")
-        try:
-            _, _, sheet_names, headers, data = unpack_file(
-                {"name": filename, "file": payload["content"], "sheet": payload.get("sheet")},
-                require_data=False,
-            )
-        except TableFileError as exc:
-            raise InventoryInputError(str(exc)) from exc
-        sheet = payload.get("sheet") or sheet_names[0]
+    if (
+        not isinstance(payload, dict)
+        or "text" not in payload
+        or payload.keys() - {"text", "mapping"}
+    ):
+        raise InventoryInputError("열 이름과 장비 행을 함께 복사해 붙여넣으세요.")
+    headers, data = _paste_table(payload["text"])
     headers = [name.strip()[:100] for name in headers]
     mapping, errors = _headers_mapping(headers, payload.get("mapping", {}))
     rows = _preview_rows(data, mapping)
     if not rows:
         errors.append("데이터 행이 비어 있습니다.")
-    return dict(
-        headers=headers, mapping=mapping, rows=rows, errors=errors, sheets=sheet_names, sheet=sheet
-    )
+    return dict(headers=headers, mapping=mapping, rows=rows, errors=errors)

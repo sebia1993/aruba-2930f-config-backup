@@ -151,7 +151,7 @@
       <article class="panel" aria-labelledby="pingInputHeading">
         <header><h2 id="pingInputHeading">측정 대상 및 옵션</h2><button type="button" id="pingAllHelp" aria-expanded="false">전체 옵션 설명 펼치기</button></header>
         <form id="pingForm" class="panelbody" autocomplete="off">
-          <label>입력 방식<select id="pingInputMode"><option value="list">스위치 · 목적지 목록</option><option value="inventory">엑셀 표로 입력</option></select></label>
+          <label>입력 방식<select id="pingInputMode"><option value="list">스위치 · 목적지 목록</option><option value="inventory">장비표 붙여넣기</option></select></label>
           <div id="pingListFields" class="ping-input-fields">
           <label>스위치 목록 (최대 300대)<textarea id="pingTargets" rows="5" maxlength="100000" spellcheck="false" required placeholder="IPv4 또는 IPv4:SSH포트 · 한 줄에 한 대"></textarea></label>
           <button type="button" class="detailsbtn" data-ping-help aria-controls="pingHelpTarget" aria-expanded="false">스위치 목록 도움말</button>
@@ -163,8 +163,7 @@
           <div id="pingInventory" class="ping-input-fields" hidden>
             <p class="hint">첫 행의 열 이름과 장비 행을 함께 복사하세요. 장비마다 같은 행의 GW, BB(백본), NMS 주소를 측정합니다. 빈 목적지는 건너뜁니다.</p>
             <label>엑셀 표 붙여넣기<textarea id="pingInventoryText" rows="4" spellcheck="false" placeholder="장비 Hostname&#9;SW IP&#9;GW IP&#9;BB&#9;NMS server"></textarea></label>
-            <div class="bar"><button type="button" id="pingInventoryRead">붙여넣은 표 읽기</button><label>엑셀 파일 열기 (.xlsx)<input type="file" id="pingInventoryFile" accept=".xlsx"></label></div>
-            <label id="pingInventorySheetField" hidden>워크시트<select id="pingInventorySheet"></select></label>
+            <button type="button" id="pingInventoryRead">붙여넣은 표 읽기</button>
             <details id="pingInventoryMap" hidden><summary>열 연결 확인 · 변경</summary>
               <div id="pingInventoryMapping" class="formgrid"></div>
               <button type="button" id="pingInventoryApply">열 연결 적용</button>

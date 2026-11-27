@@ -3,6 +3,10 @@
 이 프로젝트는 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 형식을
 따르고 [Semantic Versioning](https://semver.org/lang/ko/)을 사용합니다.
 
+## [web-v1.31.1] - 2026-11-27
+
+- Ping 장비표와 NMS 장애 이력에서 Excel 파일 업로드를 삭제했습니다. 장비표는 셀을 복사해 붙여넣고, NMS 장애 이력은 CSV로 가져옵니다. 측정 결과는 Excel로 저장할 수 있습니다.
+
 ## [web-v1.31.0] - 2026-11-27
 
 - 엑셀 표 붙여넣기와 XLSX 가져오기로 장비별 GW·BB·NMS를 측정하고, 같은 행의 중복 목적지는 한 번만 실행해 역할별 결과로 저장합니다.
