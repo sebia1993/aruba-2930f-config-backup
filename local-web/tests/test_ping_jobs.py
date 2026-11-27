@@ -521,23 +521,24 @@ class PingJobsTests(unittest.TestCase):
             self.assertEqual(execute.call_args.args[2].ip, first["destination_ip"])
 
     def test_parallel_devices_drain_before_manual_and_release_all_sessions(self):
-        both, release = Event(), Event()
+        both_sending, release = Event(), Event()
         lock = Lock()
         live = set()
         sent = []
-        manual_started = Event()
+        live_at_manual_start = []
 
         @contextmanager
         def device(plan, target, creds, cancel):
             with lock:
                 live.add(target.ip)
-                if len(live) == 2:
-                    both.set()
 
             def run(_plan, dest, *, cancel, before_send):
                 before_send()
-                self.assertTrue(release.wait(5))
-                sent.append((target.ip, dest.ip))
+                with lock:
+                    sent.append((target.ip, dest.ip))
+                    if len(sent) == 2:
+                        both_sending.set()
+                release.wait()
                 return self.result(plan, target, dest, creds, cancel)
 
             try:
@@ -547,8 +548,8 @@ class PingJobsTests(unittest.TestCase):
                     live.remove(target.ip)
 
         def manual(*args):
-            self.assertFalse(live)
-            manual_started.set()
+            with lock:
+                live_at_manual_start.append(set(live))
             return {"rows": []}
 
         with (
@@ -556,18 +557,22 @@ class PingJobsTests(unittest.TestCase):
             patch.object(self.jobs.operations, "dispatch", side_effect=manual),
         ):
             key = self.jobs.submit_ping(self.body)
-            self.jobs.tick_monitor()
             try:
-                self.assertTrue(both.wait(5))
-                self.jobs.submit(
+                self.jobs.tick_monitor()
+                self.assertTrue(both_sending.wait(30), "both Ping commands must reach dispatch")
+                manual_key = self.jobs.submit(
                     "cable.test",
                     {"requestId": "b" * 32, "confirmed": True, "targets": "192.0.2.11 1"},
                 )
+                self.assertEqual(self.jobs.get(manual_key)["state"], "queued")
             finally:
                 release.set()
-            self.assertTrue(manual_started.wait(5))
-            self.wait_idle()
-            self.assertEqual(len(sent), 2)
+                self.wait_idle(30)
+            self.assertEqual(live_at_manual_start, [set()])
+            self.assertCountEqual(
+                sent,
+                [("192.0.2.11", "198.51.100.10"), ("192.0.2.12", "198.51.100.10")],
+            )
             self.assertEqual(self.jobs.ping_status(key)["progress"]["completed"], 2)
             self.jobs.cancel_ping(key)
 
