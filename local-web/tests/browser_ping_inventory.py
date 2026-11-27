@@ -1,5 +1,6 @@
 """Exercise inventory mapping, concurrent role sessions, retry, and exports via Chrome."""
 
+import csv
 import json
 from collections import Counter
 from contextlib import contextmanager
@@ -29,8 +30,10 @@ EXPECTED = Counter(
     ]
 )
 calls = []
+packet_counts = []
 cohort = None
 release_first_run = Event()
+five_active_sessions = Event()
 
 
 @contextmanager
@@ -44,6 +47,9 @@ def simulated_device(_plan, target, credentials, _cancel):
         assert not used, "Expected a fresh SSH connection per role"
         used = True
         calls.append((target.ip, dest.label, dest.ip))
+        packet_counts.append(plan.options.repetitions)
+        if len(calls) == 5:
+            five_active_sessions.set()
         if target.ip == SW_A and cohort is not None:
             cohort.wait()
         if not release_first_run.wait(20):
@@ -76,6 +82,7 @@ def exercise(page, url):
     page.goto(url)
     page.evaluate("location.hash = '#ping'")
     expect(page.locator("#pingInputMode")).to_have_value("inventory")
+    expect(page.locator("#pingConcurrency")).to_have_value("10")
     page.locator("#pingInventoryText").fill(
         "GW IP\t장비 hostanme\t장비 주소\r\n198.51.100.20\tSW-1\t192.0.2.1"
     )
@@ -149,6 +156,7 @@ def exercise(page, url):
     page.locator("#pingProfiles summary").click()
     old_plan = page.evaluate("window.readGeneralPingPlan()")
     del old_plan["inventoryRoleSessions"]
+    old_plan["options"].pop("concurrent_devices", None)
     old_plan["options"]["concurrency"] = 1
     profile = {"format": "aruba-local-web-ping", "version": 1, "plan": old_plan}
     page.locator("#pingInputMode").select_option("list")
@@ -157,7 +165,7 @@ def exercise(page, url):
     )
     expect(page.locator("#pingInputMode")).to_have_value("inventory")
     expect(page.locator("#pingInventoryStatus")).to_contain_text("측정 5조합")
-    assert page.evaluate("window.readGeneralPingPlan().options.concurrency") == 3
+    expect(page.locator("#pingConcurrency")).to_have_value("1")
     page.locator("#pingProfileName").fill("엑셀 입력")
     page.locator("#pingProfileSave").click()
     expect(page.locator("#pingProfileStatus")).to_contain_text("저장했습니다")
@@ -168,7 +176,10 @@ def exercise(page, url):
     page.locator("#pingProfiles summary").click()
     page.locator("#pingAdvanced summary").click()
     page.locator("#pingConcurrency").fill("1")
-    expect(page.locator("#pingAdvancedSummary")).to_contain_text("동시 SSH 한도 3개")
+    assert page.evaluate("window.readGeneralPingPlan().options.concurrent_devices") == 1
+    page.locator("#pingConcurrency").fill("300")
+    assert page.evaluate("window.readGeneralPingPlan().options.concurrent_devices") == 300
+    page.locator("#pingConcurrency").fill("10")
     page.locator("#pingAdvanced summary").click()
     page.locator("#pingOptions > summary").click()
     page.locator("#pingPreview").click()
@@ -220,6 +231,8 @@ def exercise(page, url):
     try:
         page.locator("#submitQueryCredentials").click()
         expect(dialog).to_be_hidden()
+        # Three roles on SW A and two on SW B must arrive before any reply.
+        assert five_active_sessions.wait(15), "Two switch rows should be active together"
         expect(page.locator("#pingRunStatus")).to_contain_text("진행", timeout=10000)
         near_start = page.locator("#pingPreviewStatus")
         expect(near_start).to_contain_text("SSH 접속 및 Ping 측정 중", timeout=10000)
@@ -232,6 +245,7 @@ def exercise(page, url):
     expect(near_start).to_contain_text("작업 종료")
     expect(near_start).to_contain_text("5/5")
     assert Counter(calls) == EXPECTED
+    assert packet_counts == [5] * 5
     cohort = None
     page.reload()
     expect(page.locator("#pingResultView")).to_have_value("inventory", timeout=10000)
@@ -277,35 +291,55 @@ def exercise(page, url):
     page.locator("#logout").click()
     expect(page.locator("#connectionState")).to_have_text("계정 미설정")
     page.evaluate("location.hash = '#ping'")
-    page.locator('[data-ping-pane="long"]').click()
-    page.locator("#pingLongCount").fill("1")
-    expect(page.locator("#pingLongEstimate")).to_contain_text("총 5회")
-    expect(page.locator("#pingLongCount")).to_be_focused()
+    page.locator("#pingInterval").select_option("1")
+    page.locator("#pingRepetitions").fill("3")
+    page.locator("#pingProfiles summary").click()
+    page.locator("#pingProfileName").fill("주기 점검")
+    page.locator("#pingProfileSave").click()
+    expect(page.locator("#pingProfileStatus")).to_contain_text("저장했습니다")
+    page.locator("#pingInterval").select_option("0")
+    page.locator("#pingRepetitions").fill("5")
+    page.locator("#pingProfileList").select_option("주기 점검")
+    page.locator("#pingProfileLoad").click()
+    expect(page.locator("#pingInterval")).to_have_value("1")
+    expect(page.locator("#pingRepetitions")).to_have_value("3")
+    page.locator("#pingProfiles summary").click()
     cohort = Barrier(3, timeout=10)
-    page.locator("#pingLongStart").click()
+    page.locator("#pingStart").click()
     expect(dialog).to_be_visible()
     assert "/api/ping/long/runs" not in submissions
     page.locator("#queryUsername").fill("fixture")
     page.locator("#queryPassword").fill("fixture")
     page.locator("#submitQueryCredentials").click()
     expect(dialog).to_be_hidden()
-    expect(page.locator("#pingLongStatus")).to_contain_text("목표 완료", timeout=25000)
+    expect(page.locator("#pingLongStatus")).to_contain_text("목표 완료", timeout=35000)
     cohort = None
     assert submissions.count("/api/ping/long/runs") == 1
-    page.locator("#pingLongDetail summary").click()
     long_rows = page.locator("#pingLongDevices tbody tr")
     expect(long_rows).to_have_count(3)
+    expect(long_rows.first).to_be_visible()
     expect(long_rows.filter(has_text="B동")).to_contain_text("SSH 실패 0")
     expect(long_rows.filter(has_text="A동").locator('[data-label="GW 결과"]')).to_contain_text(
         "평균 RTT 1 ms"
     )
     expect(long_rows.filter(has_text="A동").locator('[data-label="BB 결과"]')).to_contain_text(
-        "손실 1"
+        "손실 3"
     )
     expect(long_rows.filter(has_text="B동").locator('[data-label="GW 결과"]')).to_contain_text(
-        "손실 1"
+        "손실 3"
     )
-    assert Counter(calls) == EXPECTED + EXPECTED + retry
+    assert Counter(calls) == EXPECTED + retry + EXPECTED + EXPECTED + EXPECTED
+    assert packet_counts[-15:] == [1] * 15
+    with page.expect_download() as download:
+        page.locator("#pingLongCsv").click()
+    with download.value.path().open(encoding="utf-8-sig", newline="") as stream:
+        records = list(csv.DictReader(stream))
+    exported_commands = Counter(
+        (r["switch_ip"], r["destination_label"], r["destination_ip"])
+        for r in records
+        if r["sent"] == "1"
+    )
+    assert exported_commands == EXPECTED + EXPECTED + EXPECTED
     page.set_viewport_size({"width": 390, "height": 840})
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 2")
     # Render a run admitted by a pre-role-session client, whose two role cells share one sample.
@@ -320,6 +354,7 @@ def exercise(page, url):
         old_plan,
     )
     page.reload()
+    page.locator("#pingInterval").select_option("0")
     expect(page.locator("#pingRunCounts")).to_contain_text("1/1", timeout=10000)
     legacy = page.locator("#pingRows tbody tr")
     legacy.locator('[data-label="GW 결과"] input').check()
@@ -349,5 +384,5 @@ def exercise(page, url):
 if __name__ == "__main__":
     run_browser_test(exercise, simulated_device, account_set=False)
     print(
-        "PASS automatic inventory input, SSH account prompt, visible run progress, results, export and rerun."
+        "PASS unified inventory Ping, concurrent devices, role results, periodic samples and exports."
     )

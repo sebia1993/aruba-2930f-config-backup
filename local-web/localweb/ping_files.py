@@ -15,6 +15,7 @@ from openpyxl.cell import WriteOnlyCell
 
 from aruba2930f_backup.poe_targets import MAX_PROFILE_BYTES, load_target_profile
 
+from .ping_long import parse_settings
 from .ping_tools import PingPlan, parse_destinations, unicast_ipv4
 
 PROFILE_TYPE = "aruba-local-web-ping"
@@ -44,7 +45,20 @@ COLUMNS = {
 
 
 def validated_profile(value):
-    plan = PingPlan.parse(value)
+    schedule = {}
+    if isinstance(value, dict) and "schedule" in value:
+        raw_plan = value.copy()
+        raw_schedule = raw_plan.pop("schedule")
+        keys = ("count", "interval", "maxHours", "autoTrace")
+        if not isinstance(raw_schedule, dict) or not {
+            "count",
+            "interval",
+        } <= raw_schedule.keys() <= set(keys):
+            raise ValueError("프로필의 측정 횟수와 간격을 확인하세요.")
+        plan, settings = parse_settings({"plan": raw_plan, **raw_schedule})
+        schedule = {"schedule": {key: settings[key] for key in keys}}
+    else:
+        plan = PingPlan.parse(value)
     if plan.inventory_rows:
         inputs = {
             "inventoryRows": plan.inventory_rows,
@@ -59,7 +73,8 @@ def validated_profile(value):
         }
     return {
         **inputs,
-        "options": asdict(plan.options),
+        **schedule,
+        "options": plan.options.to_dict(),
         "source_ips": {t.endpoint: ip for t, ip in plan.source_ips},
     }
 

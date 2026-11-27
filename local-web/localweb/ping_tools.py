@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from functools import cached_property
 from ipaddress import IPv4Address
 from itertools import product
@@ -73,11 +73,15 @@ class PingOptions:
     data_size: int | None = None
     vlan: int | None = None
     concurrency: int = 5
+    # Preserve the representation of historical plans used in periodic receipt fingerprints.
+    concurrent_devices: int | None = field(default=None, repr=False)
 
     def __post_init__(self):
         _integer(self.repetitions, 1, 100, "반복 횟수")
         _integer(self.timeout, 1, 10, "응답 대기 시간")
         _integer(self.concurrency, 1, 10, "동시 SSH")
+        if self.concurrent_devices is not None:
+            _integer(self.concurrent_devices, 1, MAX_SWITCHES, "동시 측정 장비 수")
         if not isinstance(self.source_mode, str) or self.source_mode not in _SOURCE_MODES:
             raise ValueError("지원하지 않는 Source 모드입니다.")
         if self.data_size is not None:
@@ -91,9 +95,26 @@ class PingOptions:
     def parse(cls, value: object) -> PingOptions:
         obj = _object(
             value,
-            {"repetitions", "timeout", "source_mode", "data_size", "vlan", "concurrency"},
+            {
+                "repetitions",
+                "timeout",
+                "source_mode",
+                "data_size",
+                "vlan",
+                "concurrency",
+                "concurrent_devices",
+            },
         )
+        if "concurrent_devices" in obj and (
+            obj["concurrent_devices"] is None or "concurrency" in obj
+        ):
+            raise ValueError("동시 측정 장비 수를 확인하세요.")
         return cls(**obj)
+
+    def to_dict(self):
+        options = asdict(self)
+        del options["concurrent_devices" if self.concurrent_devices is None else "concurrency"]
+        return options
 
     @classmethod
     def preset(cls, name: str) -> PingOptions:
@@ -256,7 +277,7 @@ class PingPlan:
             raise ValueError("서버는 1~10대를 지정하세요.")
         if self.total_pairs > MAX_PAIRS:
             raise ValueError("테스트 조합은 최대 3,000개입니다.")
-        if self.inventory_role_sessions:
+        if self.inventory_role_sessions and self.options.concurrent_devices is None:
             widest = max(self.role_counts.values())
             if self.options.concurrency < widest:
                 raise ValueError(
@@ -304,12 +325,23 @@ class PingPlan:
     def role_counts(self):
         return Counter(target for target, _ in self.pairs)
 
+    def capacities(self, counts):
+        """Maximum simultaneously admitted devices and SSH sessions for the selected pairs."""
+        distinct_devices = len({target.ip for target in counts})
+        if self.options.concurrent_devices is not None:
+            devices = min(self.options.concurrent_devices, distinct_devices)
+            if self.inventory_role_sessions:
+                return devices, sum(sorted(counts.values(), reverse=True)[:devices])
+            return devices, devices
+        if self.inventory_role_sessions:
+            waves = list(role_session_waves(counts.items(), self.options.concurrency))
+            return max(len(set(w)) for w in waves), max(map(len, waves))
+        devices = min(self.options.concurrency, distinct_devices)
+        return devices, devices
+
     @property
     def effective_concurrency(self):
-        if self.inventory_role_sessions:
-            waves = role_session_waves(self.role_counts.items(), self.options.concurrency)
-            return max(map(len, waves))
-        return min(self.options.concurrency, len({target.ip for target in self.targets}))
+        return self.capacities(self.role_counts)[1]
 
     @property
     def total_requests(self) -> int:
@@ -433,6 +465,7 @@ def preview_command(plan: PingPlan, target: DeviceTarget, destination: Destinati
 def preview_plan(value: object) -> dict:
     """Validate the same plan as admission without accessing any device."""
     plan = PingPlan.parse(value)
+    devices, sessions = plan.capacities(plan.role_counts)
     commands = []
     for target, destination in plan.pairs[:20]:
         commands.append(
@@ -448,8 +481,12 @@ def preview_plan(value: object) -> dict:
         "endpoints": [target.endpoint for target in plan.targets],
         "totalPairs": plan.total_pairs,
         "totalRequests": plan.total_requests,
-        "requestedConcurrency": plan.options.concurrency,
-        "effectiveConcurrency": plan.effective_concurrency,
+        "requestedDevices": plan.options.concurrent_devices,
+        "effectiveDevices": devices,
+        "requestedConcurrency": plan.options.concurrency
+        if plan.options.concurrent_devices is None
+        else None,
+        "effectiveConcurrency": sessions,
         "commands": commands,
         "truncated": len(commands) < plan.total_pairs,
         "sourceVerified": False,

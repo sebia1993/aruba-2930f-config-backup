@@ -2,7 +2,7 @@
 (() => {
   const profileApi = (action, body) => api('/api/ping/profiles/' + action, body);
   const status = $('pingProfileStatus');
-  let view = 'general';
+  let view = 'measure';
   function showPane(name) {
     view = name;
     const analysisTab = {analysis:'report',heat:'heat',nms:'nms'}[name];
@@ -10,10 +10,9 @@
       btn.setAttribute('aria-pressed', String(btn.dataset.pingPane === name));
     }
     $('pingForm').closest('article').hidden = !!analysisTab;
-    $('pingGeneralActions').hidden = name !== 'general';
-    $('pingPreviewHeading').closest('article').hidden = name !== 'general';
-    $('pingRunHeading').closest('article').hidden = name !== 'general';
-    $('pingLong').hidden = name !== 'long';
+    $('pingGeneralActions').hidden = name !== 'measure';
+    $('pingPreviewHeading').closest('article').hidden = name !== 'measure';
+    $('pingRunHeading').closest('article').hidden = name !== 'measure';
     $('pingAnalysis').hidden = !analysisTab;
     if (analysisTab) $('pingAnalysis').querySelector('[data-pa-tab="'+analysisTab+'"]')?.click();
     $('pingPath').hidden = name !== 'path';
@@ -23,7 +22,7 @@
     btn.addEventListener('click', () => showPane(btn.dataset.pingPane));
   }
   $('pingForm').addEventListener('submit', event => {
-    if (view !== 'general') { event.preventDefault(); event.stopImmediatePropagation(); }
+    if (view !== 'measure') { event.preventDefault(); event.stopImmediatePropagation(); }
   }, true);
   function applyProfile(data) {
     window.pingInventory.applyProfile(data.plan);
@@ -36,8 +35,16 @@
       if (plan.destinations) $('pingDestinations').value = plan.destinations.map(d => d.ip + (d.label ? '\t'+d.label : '')).join('\n');
       $('pingSourceMode').value = opt.source_mode;
       $('pingSources').value = Object.entries(plan.source_ips || {}).map(pair=>pair.join(',')).join('\n');
-      for (const [id, key] of [['pingRepetitions','repetitions'], ['pingTimeout','timeout'],
-           ['pingConcurrency','concurrency'], ['pingVlan','vlan'], ['pingSize','data_size']]) {
+      const schedule = plan.schedule;
+      $('pingInterval').value = String(schedule?.interval || 0);
+      $('pingRepetitions').value = schedule?.count ?? opt.repetitions;
+      $('pingLongHours').value = schedule?.maxHours ?? 48;
+      $('pingLongTrace').checked = schedule?.autoTrace ?? false;
+      // Older profiles stored a session budget. Keep the number of open SSH
+      // sessions at or below that value when all three inventory roles are used.
+      const roles = window.pingInventory.active() ? window.pingInventory.minimumConcurrency() : 1;
+      $('pingConcurrency').value = opt.concurrent_devices ?? Math.max(1, Math.floor((opt.concurrency ?? 5) / roles));
+      for (const [id, key] of [['pingTimeout','timeout'], ['pingVlan','vlan'], ['pingSize','data_size']]) {
         $(id).value = opt[key] ?? '';
       }
     }
@@ -46,7 +53,12 @@
   }
   const scope = () => $('pingProfileScope').value;
   function payload() {
-    if (scope() === 'plan') return {plan:window.readGeneralPingPlan()};
+    if (scope() === 'plan') {
+      const plan = window.readGeneralPingPlan();
+      const schedule = window.pingMeasurement.schedule();
+      if (schedule.interval) plan.schedule = schedule;
+      return {plan};
+    }
     return {destinations:$('pingDestinations').value.split(/\r?\n/).filter(v=>v.trim()).map(line=>{
       const [ip,...label] = line.split('\t');
       return {ip:ip.trim(),label:label.join('\t').trim()};

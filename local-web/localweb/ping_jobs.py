@@ -81,7 +81,7 @@ class PingBatch:
         self.indices = indices
         self.parent_id = parent_id
         self.in_flight: dict[int, PingSlot] = {}
-        self.workers: set[int] = set()
+        self.workers: dict[int, DeviceTarget] = {}
         self.remaining: dict[DeviceTarget, deque[int]] = {}
         active_destinations = {}
         active_roles = {}
@@ -98,16 +98,15 @@ class PingBatch:
             {**row, "activeDestinations": list(active_destinations.get(row["swIp"], ()))}
             for row in plan.inventory_rows
         ]
+        counts = {target: len(pending) for target, pending in self.remaining.items()}
+        self.device_capacity, self.capacity = plan.capacities(counts)
         if plan.inventory_role_sessions:
             for row in self.inventory_rows:
                 row["activeRoles"] = active_roles.get(row["swIp"], [])
-            counts = ((target, len(indices)) for target, indices in self.remaining.items())
-            self.role_waves = deque(role_session_waves(counts, plan.options.concurrency))
-            self.capacity = max(map(len, self.role_waves))
-        else:
-            self.capacity = min(
-                plan.options.concurrency, len({target.ip for target in self.remaining})
-            )
+            if plan.options.concurrent_devices is None:
+                self.role_waves = deque(
+                    role_session_waves(counts.items(), plan.options.concurrency)
+                )
         self.rows: list[dict] = []
         self.unpersisted_after: int | None = None
         self.stop_reason = ""
@@ -132,16 +131,18 @@ class PingBatch:
         return self.plan.pairs[self.indices[index]]
 
     def next_devices(self):
-        if self.plan.inventory_role_sessions:
+        if self.plan.inventory_role_sessions and self.plan.options.concurrent_devices is None:
             return self.role_waves.popleft()
         devices = []
-        addresses = set()
-        for target in self.remaining:
+        addresses = {target.ip for target in self.workers.values()}
+        for target, pending in self.remaining.items():
+            if len(addresses) >= self.device_capacity:
+                break
             if target.ip not in addresses:
-                devices.append(target)
+                devices.extend(
+                    [target] * (len(pending) if self.plan.inventory_role_sessions else 1)
+                )
                 addresses.add(target.ip)
-                if len(devices) == self.capacity:
-                    break
         return devices
 
     def claim(self, target):
@@ -253,12 +254,15 @@ class PingBatch:
         page = rows if complete else rows[after : after + 512]
         snapshot = {
             "parentRunId": self.parent_id,
-            "options": asdict(self.plan.options),
+            "options": self.plan.options.to_dict(),
             "total": total,
             "completed": len(rows),
             "processedPairs": processed,
             "possiblyStartedPairs": possibly_started,
             "effectiveConcurrency": self.capacity,
+            "effectiveDevices": self.device_capacity,
+            "activeDevices": len({target.ip for target in self.workers.values()}),
+            "activeSessions": len(self.workers),
             "stopReason": self.stop_reason,
             "slotActive": bool(self.in_flight),
             "rows": [dict(row) for row in page],

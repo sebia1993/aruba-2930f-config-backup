@@ -19,6 +19,7 @@ from .manual_queue import ManualRequest, manual_outcome
 from .monitoring import PortMonitoring
 from .operations import Operations, TargetInputError, _groups
 from .ping_jobs import PingBatch, rerun_indices
+from .ping_long import TERMINAL as LONG_TERMINAL
 from .ping_long import LongPing
 from .ping_path import TraceQueue
 from .ping_tools import PingAccountRequired, PingPlan
@@ -76,8 +77,8 @@ POWER_HISTORY_WARNING = (
 )
 
 
-def now():
-    return datetime.now(UTC).isoformat(timespec="seconds")
+def now(*, timespec="seconds"):
+    return datetime.now(UTC).isoformat(timespec=timespec)
 
 
 def _observation_for_comparison(row):
@@ -155,7 +156,7 @@ class Jobs:
             )
             db.execute(
                 "UPDATE jobs SET state='interrupted',finished=?,summary=? WHERE state='running'",
-                (now(), "이전 실행 중 서버가 종료되었습니다."),
+                (now(timespec="milliseconds"), "이전 실행 중 서버가 종료되었습니다."),
             )
             ping_general_store.recover_interrupted(db)
         self.lock = RLock()
@@ -496,10 +497,20 @@ class Jobs:
                 raise Busy("Ping 요청 ID를 이미 사용했습니다.")
             if self.ping_batch:
                 raise Busy("다른 Ping 작업이 실행 중입니다.")
+            periodic = self.long_ping.run
+            if (
+                periodic
+                and (periodic.slots or periodic.state not in LONG_TERMINAL)
+                and (
+                    plan.options.concurrent_devices is not None
+                    or periodic.plan.options.concurrent_devices is not None
+                )
+            ):
+                raise Busy("진행 중인 Ping 측정이 끝난 뒤 시작하세요.")
             creds = self.operations.credentials
             if creds is None:
                 raise PingAccountRequired()
-            started = now()
+            started = now(timespec="milliseconds")
             # Store acceptance before any SSH slot can be claimed. On restart
             # the existing running-job recovery marks this as interrupted.
             with closing(sqlite3.connect(self.db)) as db, db:
@@ -611,32 +622,33 @@ class Jobs:
         self.active = batch.key
         self.cancel_event = Event()
         self.operations.reset_job_progress()
+        self._start_ping_workers(batch, self.cancel_event)
+        if not batch.workers:
+            self.active = self.cancel_event = self.busy_workspace = None
+            self._finish_ping(batch)
+
+    def _start_ping_workers(self, batch, cancel):
         for target in batch.next_devices():
             slot = batch.claim(target)
-            batch.workers.add(slot.index)
+            batch.workers[slot.index] = target
             try:
                 Thread(
                     target=self._run_ping_slot,
-                    args=(batch, slot, self.cancel_event),
+                    args=(batch, slot, cancel),
                     daemon=True,
                 ).start()
             except RuntimeError:
                 batch.stop("WORKER_START_FAILED", state="failed")
-                self._record_ping_slot(
-                    batch, slot, self.cancel_event, error=ErrorCode.UNEXPECTED_ERROR
-                )
-                batch.workers.remove(slot.index)
-                self.cancel_event.set()
+                self._record_ping_slot(batch, slot, cancel, error=ErrorCode.UNEXPECTED_ERROR)
+                del batch.workers[slot.index]
+                cancel.set()
                 break
-        if not batch.workers:
-            self.active = self.cancel_event = self.busy_workspace = None
-            self._finish_ping(batch)
 
     def _finish_ping(self, batch):
         if self.ping_batch is not batch or not batch.terminal:
             return
         snapshot = batch.snapshot(complete=True)
-        finished = now()
+        finished = now(timespec="milliseconds")
         state = batch.state
         error = batch.stop_reason
         summary = f"Ping · {snapshot['processedPairs']}/{snapshot['total']}"
@@ -758,9 +770,15 @@ class Jobs:
                     )
         finally:
             with self.lock:
-                batch.workers.remove(worker_index)
+                del batch.workers[worker_index]
                 if batch.stop_state == "failed":
                     cancel.set()
+                if (
+                    batch.plan.options.concurrent_devices is not None
+                    and batch.remaining
+                    and not self._yield_ping_device(batch)
+                ):
+                    self._start_ping_workers(batch, cancel)
                 if not batch.workers:
                     self.active = self.cancel_event = self.busy_workspace = None
                     if batch.terminal:

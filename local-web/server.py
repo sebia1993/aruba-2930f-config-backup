@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / "core"))
 from localweb.jobs import MANUAL_ACTIONS, Busy, Jobs  # noqa: E402
 from localweb.ping_tools import PingAccountRequired  # noqa: E402
 
-VERSION = "1.33.0"
+VERSION = "1.34.0"
 STATIC = {
     "/": "index.html",
     "/matrix": "matrix.html",

@@ -6,7 +6,7 @@ import time
 import unittest
 from contextlib import closing, contextmanager
 from pathlib import Path
-from threading import Barrier, Event, Lock
+from threading import Barrier, Event, Lock, Thread
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -367,6 +367,191 @@ class PingJobsTests(unittest.TestCase):
         self.assertEqual(interrupted["rows"][0]["inventory_roles"], ["bbIp"])
         self.assertEqual([r["activeRoles"] for r in interrupted["inventoryRows"]], [["bbIp"], []])
 
+    def test_device_window_refills_a_whole_row_before_slow_switch_finishes(self):
+        ips = ["192.0.2.1", "192.0.2.2", "192.0.2.3"]
+        self.body["plan"] = {
+            "inventoryRows": [
+                dict(swIp=ip, gwIp="198.51.100.1", bbIp="198.51.100.2", nmsIp="198.51.100.3")
+                for ip in ips
+            ],
+            "inventoryRoles": ["gwIp", "bbIp", "nmsIp"],
+            "inventoryRoleSessions": True,
+            "options": {"concurrent_devices": 2},
+        }
+        gates = {ip: Event() for ip in ips}
+        lock, first_six, first_closed, third = Lock(), Event(), Event(), Event()
+        commands, closed = [], []
+
+        @contextmanager
+        def device(plan, target, creds, _cancel):
+            def run(plan, destination, *, cancel, before_send):
+                before_send()
+                with lock:
+                    commands.append((target.ip, destination.label))
+                    if len(commands) == 6:
+                        first_six.set()
+                    if sum(ip == ips[2] for ip, _ in commands) == 3:
+                        third.set()
+                if target.ip == ips[1] and destination.label == "GW":
+                    self.assertTrue(first_six.wait(20))
+                else:
+                    self.assertTrue(gates[target.ip].wait(20))
+                return self.result(plan, target, destination, creds, cancel)
+
+            try:
+                yield SimpleNamespace(run_pair=run)
+            finally:
+                with lock:
+                    closed.append(target.ip)
+                    if target.ip == ips[1]:
+                        first_closed.set()
+
+        with patch.object(self.jobs.operations, "_ping_device_session", side_effect=device):
+            key = self.jobs.submit_ping(self.body)
+            try:
+                self.jobs.tick_monitor()
+                self.assertTrue(first_six.wait(20))
+                self.assertTrue(first_closed.wait(20))
+                self.assertEqual(closed, [ips[1]])
+                self.assertEqual(set(ip for ip, _ in commands), set(ips[:2]))
+                gates[ips[1]].set()
+                self.assertTrue(third.wait(20))
+                self.assertEqual(closed, [ips[1]] * 3)
+            finally:
+                for gate in gates.values():
+                    gate.set()
+                self.wait_idle(30)
+        self.assertEqual(self.jobs.ping_status(key)["result"]["completed"], 9)
+
+    def test_device_window_counts_physical_ips_and_reuses_list_sessions(self):
+        plan = self.body["plan"]
+        plan["targets"] = "192.0.2.11\n192.0.2.11:2222\n192.0.2.12\n192.0.2.13"
+        plan["options"] = {"concurrent_devices": 2}
+        slow, third = Event(), Event()
+        calls, sessions = [], []
+
+        @contextmanager
+        def device(plan, target, creds, _cancel):
+            sessions.append(target.endpoint)
+
+            def run(plan, dest, *, cancel, before_send):
+                before_send()
+                calls.append((target.endpoint, dest.ip))
+                if target.endpoint == "192.0.2.11:22":
+                    self.assertTrue(slow.wait(20))
+                if target.ip == "192.0.2.13":
+                    third.set()
+                return self.result(plan, target, dest, creds, cancel)
+
+            yield SimpleNamespace(run_pair=run)
+
+        with patch.object(self.jobs.operations, "_ping_device_session", side_effect=device):
+            key = self.jobs.submit_ping(self.body)
+            try:
+                self.jobs.tick_monitor()
+                self.assertTrue(third.wait(20))
+                self.assertNotIn("192.0.2.11:2222", sessions)
+            finally:
+                slow.set()
+                self.wait_idle(30)
+        self.assertCountEqual(
+            sessions, ["192.0.2.11:22", "192.0.2.11:2222", "192.0.2.12:22", "192.0.2.13:22"]
+        )
+        self.assertEqual(len(set(calls)), 8)
+        self.assertEqual(self.jobs.ping_status(key)["state"], "done")
+
+    def test_twelve_switches_can_hold_thirty_six_pending_ping_commands(self):
+        self.body["plan"] = {
+            "inventoryRows": [
+                dict(
+                    swIp=f"192.0.2.{i}",
+                    gwIp="198.51.100.1",
+                    bbIp="198.51.100.2",
+                    nmsIp="198.51.100.3",
+                )
+                for i in range(1, 13)
+            ],
+            "inventoryRoles": ["gwIp", "bbIp", "nmsIp"],
+            "inventoryRoleSessions": True,
+            "options": {"concurrent_devices": 12},
+        }
+        all_sending, release, lock = Event(), Event(), Lock()
+        reached = set()
+
+        def execute(plan, target, dest, creds, cancel):
+            with lock:
+                reached.add((target.ip, dest.label))
+                if len(reached) == 36:
+                    all_sending.set()
+            self.assertTrue(release.wait(60))
+            return self.result(plan, target, dest, creds, cancel)
+
+        with self.transport(execute):
+            key = self.jobs.submit_ping(self.body)
+            try:
+                self.jobs.tick_monitor()
+                self.assertTrue(all_sending.wait(60))
+                progress = self.jobs.ping_status(key)["progress"]
+                self.assertEqual((progress["activeDevices"], progress["activeSessions"]), (12, 36))
+                self.assertEqual(progress["completed"], 0)
+            finally:
+                release.set()
+                self.wait_idle(60)
+        result = self.jobs.ping_status(key)["result"]
+        self.assertEqual((result["possiblyStartedPairs"], result["completed"]), (36, 36))
+
+    def test_partial_cohort_thread_start_failure_drains_without_dispatching_next_row(self):
+        self.body["plan"] = {
+            "inventoryRows": [
+                dict(swIp=ip, gwIp="198.51.100.1", bbIp="198.51.100.2", nmsIp="198.51.100.3")
+                for ip in ("192.0.2.1", "192.0.2.2")
+            ],
+            "inventoryRoles": ["gwIp", "bbIp", "nmsIp"],
+            "inventoryRoleSessions": True,
+            "options": {"concurrent_devices": 1},
+        }
+
+        def create_worker(*, target, args, daemon):
+            if args[1].destination.label == "BB":
+                return SimpleNamespace(start=Mock(side_effect=RuntimeError("worker unavailable")))
+            return Thread(target=target, args=args, daemon=daemon)
+
+        with self.transport() as execute, patch("localweb.jobs.Thread", side_effect=create_worker):
+            key = self.jobs.submit_ping(self.body)
+            self.jobs.tick_monitor()
+            self.wait_idle(30)
+            result = self.jobs.ping_status(key)
+            self.assertEqual((result["state"], result["error"]), ("failed", "WORKER_START_FAILED"))
+            self.assertEqual(result["result"]["activeDevices"], 0)
+            self.assertEqual(result["result"]["activeSessions"], 0)
+            self.assertEqual(result["result"]["possiblyStartedPairs"], 0)
+            execute.assert_not_called()
+
+    def test_rolling_admission_excludes_paused_periodic_run_and_keeps_existing_receipt(self):
+        legacy = self.jobs.submit_ping(dict(self.body, requestId="f" * 32))
+        self.jobs.cancel_ping(legacy)
+        self.body["plan"]["options"] = {"concurrent_devices": 10}
+        periodic = self.jobs.long_ping.submit(
+            {
+                "requestId": "b" * 32,
+                "settings": {"plan": self.body["plan"], "count": 2, "interval": 5},
+            }
+        )
+        self.jobs.long_ping.control(periodic["id"], "pause", self.jobs.long_ping.run.revision)
+        with self.assertRaises(Busy):
+            self.jobs.submit_ping(self.body)
+        with self.assertRaises(Busy):
+            self.jobs.submit_ping(
+                {"requestId": "e" * 32, "rerun": {"parentId": legacy, "mode": "all"}}
+            )
+        self.jobs.long_ping.control(periodic["id"], "cancel", self.jobs.long_ping.run.revision)
+        key = self.jobs.submit_ping(self.body)
+        self.assertEqual(self.jobs.submit_ping(self.body), key)
+        self.jobs.cancel_ping(key)
+        saved = Jobs(self.jobs.directory).ping_status(key)
+        self.assertRegex(saved["started"], r"\.\d{3}\+00:00$")
+        self.assertGreaterEqual(saved["finished"], saved["started"])
+
     def test_cancelling_open_role_sessions_prevents_send_and_next_switch(self):
         row = {
             "swIp": "192.0.2.1",
@@ -521,6 +706,8 @@ class PingJobsTests(unittest.TestCase):
             self.assertEqual(execute.call_args.args[2].ip, first["destination_ip"])
 
     def test_parallel_devices_drain_before_manual_and_release_all_sessions(self):
+        self.body["plan"]["targets"] += "\n192.0.2.13"
+        self.body["plan"]["options"] = {"concurrent_devices": 2}
         both_sending, release = Event(), Event()
         lock = Lock()
         live = set()

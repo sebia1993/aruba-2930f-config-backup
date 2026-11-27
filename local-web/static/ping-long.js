@@ -2,21 +2,10 @@
 (() => {
   const mount = document.getElementById('pingLong');
   if (!mount) return;
-  mount.innerHTML = `<header><h2>장시간 Ping 테스트</h2></header>
-    <div class="panelbody"><p>위에서 선택한 장비와 목적지, Source, Timeout, Data Size를 사용합니다. 각 조합에서 Ping 1회씩 목표 횟수까지 반복합니다.</p>
-    <div class="formgrid">
-      <label>조합당 목표 횟수<input id="pingLongCount" type="number" value="10000" min="1" max="10000"></label>
-      <label>목표 주기<select id="pingLongInterval"><option value="1">1초</option><option value="3">3초</option><option value="5" selected>5초</option><option value="10">10초</option></select></label>
-      <label>전체 실행 시간 한도 (시간)<input id="pingLongHours" type="number" min="1" max="48" value="48"></label>
-    </div>
-    <label><input type="checkbox" id="pingLongTrace"> 3회 연속 확인된 손실에서 제한된 경로 진단 실행</label>
-    <details><summary>측정 주기와 종료 정책</summary><p>Timeout은 스위치가 응답을 기다리는 시간입니다. 목표 주기는 같은 조합의 명령을 시작하려는 간격입니다. SSH 준비, 다른 작업과의 경합, 목적지별 전송 제한으로 간격과 ETA가 늘어날 수 있습니다. 관측 시각은 수집 PC의 명령 처리 시각입니다. 일시정지·미측정은 손실에서 제외하며 실제 경과 시간 한도는 유지합니다. 마지막 브라우저 탭을 닫으면 측정이 중단될 수 있습니다.</p></details>
-    <div class="bar"><button id="pingLongPreview" type="button">예상시간 계산</button><button id="pingLongStart" class="primary" type="button" disabled>검토한 설정으로 장시간 측정 시작</button></div>
-    <p id="pingLongStartFeedback" role="status" class="hint" hidden></p>
-    <p id="pingLongEstimate" class="hint" role="status">대상과 목표 횟수를 선택한 후 예상시간을 확인하세요.</p>
-    <div class="bar"><button id="pingLongPause" type="button" disabled>일시정지</button><button id="pingLongResume" type="button" disabled>재개</button><button id="pingLongCancel" type="button" disabled>측정 중지</button><button id="pingLongRefresh" type="button">상태 확인</button></div>
-    <p id="pingLongStatus" role="status"></p><progress id="pingLongProgress" aria-label="장시간 Ping 진행률" max="1" value="0"></progress>
-    <p id="pingLongTime"></p><details id="pingLongDetail"><summary>장비별·목적지별 진행</summary><div class="bar"><label>진행 검색<input type="search" id="pingLongSearch" maxlength="100" placeholder="스위치 또는 목적지"></label><label>진행 상태<select id="pingLongFilter"><option value="">전체</option><option value="waiting">시작 전</option><option value="active">시작됨</option><option value="done">완료</option></select></label></div><div id="pingLongDevices"></div><div class="bar"><button type="button" id="pingLongPrev">이전</button><span id="pingLongPage"></span><button type="button" id="pingLongNext">다음</button></div></details></div>`;
+  mount.innerHTML = `    <div class="bar"><button id="pingLongPause" type="button" disabled>일시정지</button><button id="pingLongResume" type="button" disabled>재개</button><button id="pingLongCancel" type="button" disabled>측정 중지</button><button id="pingLongRefresh" type="button">상태 확인</button></div>
+    <p id="pingLongStatus" role="status"></p><progress id="pingLongProgress" aria-label="주기 측정 진행률" max="1" value="0"></progress>
+    <p id="pingLongTime"></p><details id="pingLongDetail" open><summary>장비별·목적지별 진행</summary><div class="bar"><label>진행 검색<input type="search" id="pingLongSearch" maxlength="100" placeholder="스위치 또는 목적지"></label><label>진행 상태<select id="pingLongFilter"><option value="">전체</option><option value="waiting">시작 전</option><option value="active">시작됨</option><option value="done">완료</option></select></label></div><div id="pingLongDevices"></div><div class="bar"><button type="button" id="pingLongPrev">이전</button><span id="pingLongPage"></span><button type="button" id="pingLongNext">다음</button></div></details>
+    <div class="bar" id="pingLongExports" hidden><a id="pingLongExcel" download>결과 Excel 저장</a><a id="pingLongCsv" download>개별 측정 CSV 저장</a></div>`;
   const el = id => document.getElementById('pingLong' + id);
   const base = '/api/ping/long';
   const storageKey = 'ping.long.run.id.v1';
@@ -30,63 +19,73 @@
     return [Math.floor(sec/3600),Math.floor(sec/60)%60,sec%60].map(n=>String(n).padStart(2,'0')).join(':');
   };
   const kst = value => value ? new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',hour12:false})+' KST' : '—';
-  const settings = () => ({plan:window.readGeneralPingPlan(),count:el('Count').valueAsNumber,
-    interval:Number(el('Interval').value), maxHours:el('Hours').valueAsNumber, autoTrace:el('Trace').checked});
+  const settings = () => ({plan:window.readGeneralPingPlan(), ...window.pingMeasurement.schedule()});
   let known = null, checked = null, revision = 0, navigationRevision = 0, operation = null, discoveringAccount = false, discovered = false, last = null, fresh = false, at = 0;
   const phase = {DONE:'완료',IN_FLIGHT:'응답 대기',SSH_PREPARATION:'SSH 준비',PAUSING:'정리 중',PAUSED:'일시정지',
     STOPPING:'중지 중',CANCELLED:'부분 종료',FAILED:'오류',INTERRUPTED:'중단',OTHER_OPERATION:'다른 작업에 양보',
     RECONNECT:'재연결 대기',DEVICE_BUSY:'장비 사용 중',INTERVAL:'다음 예정 시각 대기',QUEUED:'실행 대기',BLOCKED:'조합 중단'};
+  let lastRestored = null, startNotice = '';
   let storageAvailable = true, freezeAt = null, lastStatusText = '', uncertainStartId = null;
   try { known = sessionStorage.getItem(storageKey); }
   catch { storageAvailable = false; }
   function buttons() {
     const live = last && !terminal.has(last.state);
-    el('Start').disabled = !!operation || discoveringAccount || !storageAvailable || !discovered || !checked || !!live || (!!known && !last);
+    window.pingMeasurement.sync();
     el('Pause').disabled = !!operation || last?.state !== 'running';
     el('Resume').disabled = !!operation || last?.state !== 'paused';
     el('Cancel').disabled = !!operation || !live || last?.state === 'stopping';
   }
   function startFeedback(message='') {
-    el('StartFeedback').textContent=message;
-    el('StartFeedback').hidden=!message;
+    startNotice = message;
+    if (message) $('pingPreviewStatus').textContent = message;
   }
-  let previewTimer = null;
+  let previewTimer = null, pendingPreview = null, estimate = null;
   function clear() {
     revision++;
-    checked = null;
-    startFeedback();
-    el('Estimate').textContent = '설정이 바뀌었습니다. 예상시간을 다시 계산하세요.';
+    checked = estimate = pendingPreview = null;
+    startNotice = '';
+    el('Estimate').textContent = '';
+    el('Timing').textContent = '';
     clearTimeout(previewTimer);
-    const hasInput = window.pingInventory.active() ? !$('pingInventoryReview').hidden :
+    const hasInput = window.pingInventory.active() ? window.pingInventory.hasTargets() :
       $('pingTargets').value.trim() && $('pingDestinations').value.trim();
-    if (!mount.hidden && !document.hidden && location.hash === '#ping' && ui.token && hasInput) {
-      previewTimer = setTimeout(() => el('Preview').click(),400);
+    if (Number($('pingInterval').value) && $('pingGeneralActions').offsetParent &&
+        !document.hidden && location.hash === '#ping' && ui.token && hasInput) {
+      previewTimer = setTimeout(preview,350);
     }
     buttons();
   }
-  // Text and number controls also fire change on blur, after the edited value was previewed.
-  // Disabling Start again during mouse-down would discard the operator's first click.
-  mount.addEventListener('input', e => {
-    if (['pingLongCount','pingLongInterval','pingLongHours','pingLongTrace'].includes(e.target.id)) clear();
-  });
-  document.getElementById('pingForm').addEventListener('input',clear);
-  document.getElementById('pingForm').addEventListener('click', e => { if (e.target.closest('[data-ping-preset]')) clear(); });
-  document.querySelector('[data-ping-pane="long"]')?.addEventListener('click', () => queueMicrotask(clear));
-  el('Preview').onclick = async () => {
+  // A number field emits change again on blur. Keep the already previewed
+  // input valid so the operator's first mouse-down on Start reaches click.
+  $('pingForm').addEventListener('input', e => { if (!e.target.closest('#pingProfiles')) clear(); });
+  $('pingForm').addEventListener('click', e => { if (e.target.closest('[data-ping-preset]')) clear(); });
+  function preview() {
     clearTimeout(previewTimer);
-    const version = ++revision;
-    checked = null; buttons();
-    try {
-      const request = settings();
-      const p = await api(base+'/preview',request,undefined,15000);
-      if (revision !== version) return;
-      checked = request;
-      el('Estimate').textContent = p.pairs+'조합 × '+p.count+'회 = 총 '+p.total+'회 · 실제 동시 SSH '+p.effectiveConcurrency+
-        '개 · 최초 예상 '+time(p.initialEta)+' · 매회 Timeout 가정 '+time(p.timeoutEta)+' · 예상 종료 '+kst(p.estimatedFinish)+' · 한도 '+p.maxHours+'시간'+
-        (p.overDeadline ? ' · 예상시간이 실행 한도를 초과하여 목표 전에 끝날 수 있습니다.' : '');
-    } catch (err) { if (revision === version) el('Estimate').textContent = err.message; }
-    buttons();
-  };
+    if (checked) return Promise.resolve(estimate);
+    if (pendingPreview) return pendingPreview;
+    const version = revision;
+    pendingPreview = Promise.resolve().then(async () => {
+      try {
+        const request = settings();
+        const p = await api(base+'/preview',request,undefined,15000);
+        if (version !== revision) return null;
+        checked = request;
+        estimate = p;
+        el('Estimate').textContent = p.pairs+'조합 × '+p.count+'회 = 총 '+p.total+'회 · 동시 장비 최대 '+p.effectiveDevices+
+          '대 / SSH 최대 '+p.effectiveConcurrency+'세션 · 예상 '+time(p.initialEta)+' · 목표 간격 '+p.interval+'초'+
+          (p.overDeadline ? ' · 예상시간이 실행 한도를 초과합니다.' : '');
+        el('Timing').textContent = '예상 종료 '+kst(p.estimatedFinish)+' · 매회 응답 타임아웃 시 예상 소요 '+time(p.timeoutEta)+
+          ' · 실행 한도 '+p.maxHours+'시간';
+        return p;
+      } catch (err) {
+        if (version === revision) el('Estimate').textContent = err.message;
+        return null;
+      } finally {
+        if (version === revision) pendingPreview=null;
+      }
+    });
+    return pendingPreview;
+  }
   function countdown() {
     if (!last) return;
     const since = Math.floor((performance.now()-at)/1000);
@@ -101,12 +100,29 @@
   }
   function render(result) {
     if (result.id === uncertainStartId) { uncertainStartId=null; startFeedback(); }
-    last = result; fresh = true; freezeAt=null; at = performance.now();
+    last = result; discovered = fresh = true; freezeAt=null; at = performance.now();
+    if (!terminal.has(result.state) && lastRestored !== result.id) {
+      lastRestored = result.id;
+      window.pingMeasurement.markLatestResult(result.id);
+      window.pingMeasurement.restoreSchedule(result.settings);
+    }
+    window.pingMeasurement.showResults();
+    $('pingLongExports').hidden = !terminal.has(result.state);
+    if (terminal.has(result.state)) {
+      const exportBase = '/api/ping/analysis/export/'+encodeURIComponent(result.id);
+      el('Excel').href = exportBase+'.xlsx'; el('Csv').href = exportBase+'.csv';
+    }
     el('Status').textContent = (last.staleControl ? '다른 화면에서 상태가 변경되어 요청을 적용하지 않았습니다. · ' : '')+(labels[last.state] || last.state)+' · '+last.completed+'/'+last.target+
       '회 처리 · 성공 '+last.success+' · 확인된 손실 '+last.loss+' · 그 외 처리 '+(last.completed-last.success-last.loss)+
       ' · 미측정 '+last.gaps+(last.wait ? ' · 다른 장비 작업에 양보 중' : '')+
       (last.reason ? ' · '+last.reason : '')+(last.clockUncertain ? ' · 수집 PC 시각 변동 감지' : '');
     lastStatusText=el('Status').textContent;
+    if (!mount.hidden && !startNotice) {
+      const denied = last.reason === 'AUTH_FAILED' || last.reason === 'ENABLE_FAILED' ||
+        (last.state === 'failed' && last.series.some(row => ['AUTH_FAILED','ENABLE_FAILED'].includes(row.blockReason)));
+      if (denied) $('pingAccountSettings').hidden=false;
+      $('pingPreviewStatus').textContent = lastStatusText + (denied ? ' · SSH 계정과 권한을 확인하세요.' : '');
+    }
     el('Progress').max = Math.max(1,last.target);
     el('Progress').value = last.completed;
     countdown();
@@ -216,7 +232,7 @@
         throw err;
       }
     } else {
-      el('Status').textContent = '실행 중인 장시간 작업이 없습니다.';
+      el('Status').textContent = '실행 중인 측정이 없습니다.';
     }
   }
   function perform(fn,onError) {
@@ -225,22 +241,25 @@
       if (fresh) freezeAt=Math.min(15,Math.floor((performance.now()-at)/1000));
       fresh=false; countdown();
       el('Status').textContent = '상태 확인 필요 · '+err.message+(lastStatusText ? ' · 마지막 확인 '+lastStatusText : '');
+      if (!mount.hidden && !startNotice) $('pingPreviewStatus').textContent = el('Status').textContent;
       onError?.(err);
     }).finally(()=>{ operation=null; buttons(); });
     buttons();
     return operation;
   }
-  el('Start').onclick = async () => {
-    if (el('Start').disabled) return;
-    const reviewed=checked, previousId=known, requestNavigation=navigationRevision;
-    const stillRequested=()=>requestNavigation===navigationRevision &&
-      location.hash==='#ping' && !mount.hidden && checked===reviewed &&
-      known===previousId && (!last || terminal.has(last.state));
+  async function start() {
+    if (!available() || window.pingMeasurement.quickBlocked() || !$('pingForm').reportValidity()) return;
+    const previousId=known, version=revision, requestNavigation=navigationRevision;
+    const stillRequested=()=>version===revision && requestNavigation===navigationRevision &&
+      location.hash==='#ping' && !$('pingGeneralActions').hidden && Number($('pingInterval').value) &&
+      !window.pingMeasurement.quickBlocked() && known===previousId && (!last || terminal.has(last.state));
     discoveringAccount=true; buttons();
-    startFeedback('스위치 SSH 계정을 확인하고 있습니다.');
     try {
+      if (!await preview() || !stillRequested()) return;
+      const reviewed=checked;
+      startFeedback('스위치 SSH 계정을 확인하고 있습니다.');
       if (!await ensurePingSshAccount(stillRequested)) {
-        startFeedback(stillRequested() ? '계정 입력을 취소했습니다. 장시간 Ping을 시작하려면 시작을 다시 누르세요.' : '');
+        startFeedback(stillRequested() ? '계정 입력을 취소했습니다.' : '');
         return;
       }
       startFeedback();
@@ -251,7 +270,7 @@
         const current=await api(base+'/runs',undefined,undefined,10000);
         if (!stillRequested()) { startFeedback(); return; }
         if (current.id && current.id!==previousId) {
-          startFeedback('다른 화면에서 시작한 장시간 측정의 상태를 표시합니다.');
+          startFeedback('다른 화면의 측정 상태를 확인합니다.');
           remember(current.id); last=null;
           await read();
           return;
@@ -260,12 +279,20 @@
         const id=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');
         const previousResult=last;
         remember(id); last=null;
-        startFeedback('장시간 Ping 시작을 요청하고 있습니다.');
+        $('pingAccountSettings').hidden = true;
+        startFeedback('Ping 작업 접수 중…');
+        const status = $('pingPreviewStatus');
+        const bounds=status.getBoundingClientRect();
+        if (!document.hidden && (bounds.top<0 || bounds.bottom>innerHeight)) {
+          status.scrollIntoView({block:'center', behavior:'instant'});
+        }
         try {
           await api(base+'/runs',{requestId:id,settings:reviewed},undefined,15000);
+          window.pingMeasurement.markLatestResult(id);
         } catch (err) {
           if (err.serverRejection && [400,403,409,413,415].includes(err.status)) {
             remember(previousId); last=previousResult;
+            if (err.code==='SSH_ACCOUNT_REQUIRED') $('pingAccountSettings').hidden=false;
             startFeedback(err.message);
             return;
           }
@@ -278,7 +305,12 @@
       },err=>{ if (!uncertainStartId) startFeedback(err.message); });
     } catch (err) { startFeedback(err.message); }
     finally { discoveringAccount=false; buttons(); }
-  };
+  }
+  function live() { return !!last && !terminal.has(last.state); }
+  function available() {
+    return storageAvailable && discovered && !discoveringAccount && !live() && !(known && !last);
+  }
+  window.pingPeriodic = {start, preview, available, live, result:()=>last};
   for (const [id,action] of Object.entries(actions)) {
     el(id).onclick = () => perform(async () => { if (known) render(await api(base+'/runs/'+known+'/'+action,{revision:last.revision},undefined,10000)); });
   }
@@ -287,7 +319,8 @@
   setInterval(poll,5000);
   setInterval(countdown,1000);
   window.addEventListener('hashchange',()=>{ navigationRevision++; poll(); });
-  document.addEventListener('pingpane',e=>{ if (e.detail!=='long') navigationRevision++; });
+  document.addEventListener('pingpane',e=>{ if (e.detail!=='measure') navigationRevision++; });
   document.addEventListener('visibilitychange',poll);
+  window.addEventListener('aruba-session-ready',poll);
   buttons(); poll();
 })();
